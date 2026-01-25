@@ -1,0 +1,14 @@
+# 仮想環境フォルダを無視
+venv_fleetly/
+.venv_fleetly/
+
+# Pythonのキャッシュファイルを無視
+__pycache__/
+*.pyc
+
+# OS固有のファイルを無視
+.DS_Store
+Thumbs.db
+
+workflows/
+logs/
