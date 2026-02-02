@@ -1,0 +1,174 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>SQL Block Editor - Click to Active</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.13/mode/sql/sql.min.js"></script>
+    <style>
+        :root { --active-blue: #007bff; --bg-gray: #f0f2f5; }
+        body { font-family: sans-serif; margin: 0; background: var(--bg-gray); display: flex; flex-direction: column; height: 100vh; }
+        
+        .toolbar { padding: 12px 20px; background: #2c3e50; color: white; display: flex; gap: 15px; align-items: center; }
+        #main-view { flex: 1; overflow-y: auto; padding: 20px; }
+        .hidden { display: none !important; }
+
+        #full-editor-container { height: 85vh; border: 1px solid #ccc; background: white; }
+        .CodeMirror { height: 100% !important; font-size: 14px; }
+
+        /* ブロック単位 */
+        .block-unit { margin-bottom: 40px; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 6px rgba(0,0,0,0.1); background: white; }
+        .block-title-bar { background: #34495e; color: white; padding: 10px 15px; display: flex; justify-content: space-between; }
+        .branch-scroller { display: flex; overflow-x: auto; padding: 15px; gap: 20px; background: #dfe4ea; }
+        
+        /* ブランチカード */
+        .branch-card { 
+            min-width: 500px; background: white; border: 3px solid transparent; border-radius: 6px; 
+            display: flex; flex-direction: column; cursor: pointer; position: relative; transition: 0.2s;
+        }
+        .branch-card.active { border-color: var(--active-blue); box-shadow: 0 0 15px rgba(0,123,255,0.4); }
+        
+        /* Activeバッジ */
+        .active-badge {
+            position: absolute; top: -12px; left: 10px; background: var(--active-blue); color: white;
+            padding: 2px 10px; font-size: 10px; border-radius: 10px; font-weight: bold;
+            display: none; z-index: 10;
+        }
+        .branch-card.active .active-badge { display: block; }
+
+        .branch-card-header { padding: 8px 12px; background: #f1f2f6; border-bottom: 1px solid #ddd; display: flex; justify-content: flex-end; }
+        .block-editor-host { height: 250px; }
+        
+        button { padding: 6px 12px; cursor: pointer; border-radius: 4px; border: 1px solid #ccc; background: white; }
+        .btn-primary { background: var(--active-blue); color: white; border: none; }
+    </style>
+</head>
+<body>
+
+<div class="toolbar">
+    <button class="btn-primary" onclick="toggleMode()" id="toggle-btn">ブロック分割表示へ</button>
+    <button onclick="copyCurrentSQL()">SQLをコピー</button>
+</div>
+
+<div id="main-view">
+    <div id="full-editor-container">
+        <textarea id="raw-sql-textarea"></textarea>
+    </div>
+    <div id="block-editor-container" class="hidden">
+        <div id="blocks-list"></div>
+    </div>
+</div>
+
+<script>
+    let isBlockMode = false;
+    let fullEditor;
+
+    window.onload = () => {
+        fullEditor = CodeMirror.fromTextArea(document.getElementById('raw-sql-textarea'), {
+            mode: 'text/x-sql', lineNumbers: true, lineWrapping: true
+        });
+        fullEditor.setValue(`----------------\n-- 01_抽出\n----------------\nSELECT * FROM users;\n\n----------------\n-- 02_加工\n----------------\nSELECT * FROM {{01}};\n\n/* 非表示ブロック\nSELECT * FROM {{01}} WHERE age > 20;\n*/`);
+        setTimeout(() => fullEditor.refresh(), 100);
+    };
+
+    function toggleMode() {
+        if (!isBlockMode) {
+            renderBlocksFromSQL();
+            document.getElementById('full-editor-container').classList.add('hidden');
+            document.getElementById('block-editor-container').classList.remove('hidden');
+            document.getElementById('toggle-btn').innerText = "全体エディタへ戻る";
+        } else {
+            fullEditor.setValue(combineBlocksToSQL());
+            document.getElementById('full-editor-container').classList.remove('hidden');
+            document.getElementById('block-editor-container').classList.add('hidden');
+            document.getElementById('toggle-btn').innerText = "ブロック分割表示へ";
+            setTimeout(() => fullEditor.refresh(), 50);
+        }
+        isBlockMode = !isBlockMode;
+    }
+
+    function renderBlocksFromSQL() {
+        const list = document.getElementById('blocks-list');
+        list.innerHTML = '';
+        const sections = fullEditor.getValue().split(/-{5,}\n--\s*(.*)\n-{5,}/g);
+        
+        for (let i = 1; i < sections.length; i += 2) {
+            const title = sections[i].trim();
+            const body = sections[i + 1] || "";
+            const blockDiv = document.createElement('div');
+            blockDiv.className = 'block-unit';
+            blockDiv.innerHTML = `
+                <div class="block-title-bar"><span>-- ${title}</span><button onclick="addBranch(this)">＋ ブランチ追加</button></div>
+                <div class="branch-scroller"></div>
+            `;
+            list.appendChild(blockDiv);
+
+            const scroller = blockDiv.querySelector('.branch-scroller');
+            const activeContent = body.replace(/\/\* 非表示ブロック([\s\S]*?)\*\//g, "").trim();
+            const hiddenMatches = body.matchAll(/\/\* 非表示ブロック([\s\S]*?)\*\//g);
+
+            createBranchUI(scroller, activeContent, true);
+            for (const match of hiddenMatches) {
+                createBranchUI(scroller, match[1].trim(), false);
+            }
+        }
+    }
+
+    function createBranchUI(container, sql, isActive) {
+        const card = document.createElement('div');
+        card.className = `branch-card ${isActive ? 'active' : ''}`;
+        card.innerHTML = `
+            <div class="active-badge">ACTIVE</div>
+            <div class="branch-card-header">
+                <button onclick="this.closest('.branch-card').remove(); event.stopPropagation();" style="color:red; border:none;">削除</button>
+            </div>
+            <div class="block-editor-host"></div>
+        `;
+        
+        // カードのどこかをクリックしたらActiveにする
+        card.addEventListener('mousedown', () => activateCard(card), true);
+
+        container.appendChild(card);
+        const cm = CodeMirror(card.querySelector('.block-editor-host'), {
+            value: sql, mode: 'text/x-sql', lineNumbers: true, lineWrapping: true
+        });
+        setTimeout(() => cm.refresh(), 10);
+    }
+
+    function activateCard(targetCard) {
+        const scroller = targetCard.closest('.branch-scroller');
+        scroller.querySelectorAll('.branch-card').forEach(c => c.classList.remove('active'));
+        targetCard.classList.add('active');
+    }
+
+    function addBranch(btn) {
+        const scroller = btn.closest('.block-unit').querySelector('.branch-scroller');
+        createBranchUI(scroller, "-- New Pattern", false);
+    }
+
+    function combineBlocksToSQL() {
+        let fullSql = "";
+        document.querySelectorAll('.block-unit').forEach(block => {
+            const title = block.querySelector('.block-title-bar span').innerText;
+            fullSql += `----------------\n${title}\n----------------\n`;
+            const branches = block.querySelectorAll('.branch-card');
+            let activePart = "", hiddenParts = "";
+
+            branches.forEach(card => {
+                const code = card.querySelector('.CodeMirror').CodeMirror.getValue();
+                if (card.classList.contains('active')) activePart = code;
+                else hiddenParts += `\n/* 非表示ブロック\n${code}\n*/\n`;
+            });
+            fullSql += activePart + "\n" + hiddenParts + "\n";
+        });
+        return fullSql.trim();
+    }
+
+    function copyCurrentSQL() {
+        const sql = isBlockMode ? combineBlocksToSQL() : fullEditor.getValue();
+        navigator.clipboard.writeText(sql).then(() => alert("SQLをコピーしました"));
+    }
+</script>
+</body>
+</html>

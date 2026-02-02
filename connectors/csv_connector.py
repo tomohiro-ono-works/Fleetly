@@ -3,33 +3,7 @@ from connectors.base_connector import BaseConnector
 from typing import Any
 
 class CSVConnector(BaseConnector):
-    def get_definition(self) -> dict:
-        """GUIに表示する設定画面の定義"""
-        return {
-            "name": "📂 ファイル操作",
-            "color": "border-l-blue-500",
-            "actions": {
-                "read_csv": {
-                    "label": "CSV読み込み (詳細設定)",
-                    "fields": [
-                        {"id": "file_path", "label": "CSVファイルパス", "type": "string"},
-                        {"id": "encoding", "label": "文字コード", "type": "select", "options": ["utf-8", "cp932", "utf-8-sig"], "default": "utf-8"},
-                        {"id": "header_row", "label": "ヘッダー行 (1開始)", "type": "number", "default": 1},
-                        {"id": "data_start_row", "label": "データ開始行 (1開始)", "type": "number", "default": 2},
-                        {"id": "selected_columns", "label": "取得カラム (カンマ区切り / 空なら全取得)", "type": "string"}
-                    ]
-                },
-                "write_csv": {
-                    "label": "CSV書き出し",
-                    "fields": [
-                        {"id": "input_data", "label": "入力変数名", "type": "string"},
-                        {"id": "output_path", "label": "保存先パス", "type": "string"},
-                        {"id": "encoding", "label": "文字コード", "type": "select", "options": ["utf-8-sig", "cp932"]}
-                    ]
-                }
-            }
-        }
-
+    
     def execute(self, action, params, context) -> Any:
         if action == "read_csv":
             return self.read_csv(
@@ -40,7 +14,12 @@ class CSVConnector(BaseConnector):
                 selected_columns=params.get('selected_columns')
             )
         elif action == "write_csv":
-            return self.write_csv(params.get('input_data'), params.get('output_path'), params.get('encoding', 'utf-8-sig'), context)
+            return self.write_csv(
+                params.get('input_data'),
+                params.get('output_path'), 
+                params.get('encoding', 'utf-8-sig'), 
+                context
+            )
 
     # --- 内部ロジック ---
     def read_csv(self, path, encoding, header_row, data_start_row, selected_columns):
