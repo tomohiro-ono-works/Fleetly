@@ -1,295 +1,769 @@
-:root{
-  /* Trello寄せ（画像の平均色を目安に調整） */
-  --header: #40AAEA;          /* 上部バーのブルー */
+/* =========================================================
+   Color Palette (from reference image)
+========================================================= */
+:root {
+  /* Base */
+  --color-bg: #f9f9f9;
+  --white: #f9f9f9;
+  --color-text-main: #383838;
+  --color-text-sub: #4f4f4f;
+  --color-text-sub2: #949494;
 
-  --text: #172B4D;            /* Trello系の濃紺 */
-  --muted: #5E6C84;           /* サブ文字 */
-  --line: rgba(9, 30, 66, .14); /* 境界線 */
+  --base-color: #f2f2f2;
 
-  --panel: rgba(255,255,255,.92); /* カード面 */
-  --panel2: rgba(255,255,255,.86);
-  --input: rgba(255,255,255,.95);
+  /* Green (Main) */
+  --green-strong: #037a76;
+  --green-base: #037a76;
+  --green-soft: #A7D7C5;
+  --green-ultra-soft: #f7f7f7;
 
-  --accent: #0C66E4;          /* 強めのアクセント */
-  --danger: #FF3B30;          /* 強め赤 */
-  --success: #22C55E;         /* 緑 */
+  /* Orange (Sub) */
+  --orange-strong: #830dea;
+  --orange-base: #830dea;
+  --orange-soft: #f7a57f;
+  --orange-ultra-soft: #FAD2BF;
+
+  /* UI */
+  --border-light: #bfbfbf;
+  --shadow-soft: 0 6px 16px rgba(0,0,0,0.1);
 
   --radius: 12px;
   --pad: 14px;
-  --shadow: 0 8px 18px rgba(9, 30, 66, .12);
 
-  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
 }
 
-body{
-  margin:0;
-  font-family:var(--sans);
-  color:var(--text);
+/* =========================================================
+   Base
+========================================================= */
+* { box-sizing: border-box; }
 
-  /* 背景：上は淡いブルー、下は紫→ピンクのグラデ */
-  background:
-    radial-gradient(1200px 700px at 18% 88%, rgba(152,137,221,.85), rgba(152,137,221,0) 60%),
-    radial-gradient(1100px 650px at 86% 92%, rgba(252,214,240,.9), rgba(252,214,240,0) 60%),
-    linear-gradient(180deg, rgba(122,216,243,.55), rgba(240,242,247,.95) 38%, rgba(240,242,247,.98));
+body {
+  margin: 0;
+  font-family: var(--sans);
+  background-image: url('unnamed.jpg');
+  /* background: var(--color-bg); */
+  color: var(--color-text-main);
+  background-attachment: fixed;
+  width: 100%;
+    /* 縦横比を保ちつつ隙間なく表示する */
+  background-size: cover;
+  
+  /* 画像の中央を表示させる */
+  background-position: center;
 }
 
-/* ===== Header ===== */
-header{
-  position:sticky;
-  top:0;
-  z-index:50;
-
-  background: var(--header);
-  border-bottom: 1px solid rgba(255,255,255,.35);
-  box-shadow: 0 6px 16px rgba(9,30,66,.14);
+/* =========================================================
+   Header
+========================================================= */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--base-color);
+  color: var(--color-text-main);
+  border-bottom: 1px solid rgba(201, 201, 201, 0.921);
+  box-shadow: var(--shadow-soft);
 }
 
-.header-inner{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding: 10px 16px;
-  gap:12px;
+.header-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 18px;
 }
 
-.title{
-  display:flex;
-  flex-direction:column;
-  line-height:1.1;
-  color: #fff;
-}
-.title strong{ font-size:14px; letter-spacing:.2px; }
-.title span{ font-size:12px; color: rgba(255,255,255,.85); }
-
-/* ===== Buttons ===== */
-.actions{ display:flex; gap:10px; align-items:center; }
-
-button{
-  border: 1px solid rgba(255,255,255,.45);
-  background: rgba(255,255,255,.18);
-  color:#fff;
-  padding: 8px 12px;
-  border-radius: 10px;
-  cursor:pointer;
+.title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
 }
 
-button.primary{
-  background: rgba(255,255,255,.22);
-  border-color: rgba(255,255,255,.60);
-}
+.title strong { font-size: 15px; }
 
-button.danger{
-  background: rgba(255, 59, 48, .32);   /* 強め赤 */
-  border-color: rgba(255, 59, 48, .62);
-  color: #fff;
-}
-button.danger:hover{
-  background: rgba(255, 59, 48, .40);
-}
-
-button.success{
-  background: rgba(34,197,94,.28);        /* emerald */
-  border-color: rgba(34,197,94,.60);
-  color: #fff;
-}
-button.success:hover{
-  background: rgba(34,197,94,.36);
-}
-
-/* ===== Main ===== */
-main{
-  padding:16px;
-  max-width: 920px;
-  margin:0 auto;
-}
-
-.hint{
-  color: var(--muted);
+.title span {
   font-size: 12px;
-  margin: 10px 0 16px;
+  color: var(--color-text-sub);
 }
 
-/* ===== Node Card ===== */
-.node{
-  background: linear-gradient(180deg, var(--panel), var(--panel2));
-  border: 1px solid var(--line);
+/* =========================================================
+   Buttons
+========================================================= */
+button {
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: #fff;
+  color: var(--color-text-main);
+  cursor: pointer;
+}
+
+button:hover { background: #f9fafb; }
+
+/* Success (Add Node) */
+button.success {
+  background: var(--green-ultra-soft);
+  border-color: var(--green-soft);
+  color: var(--white);
+}
+button.success:hover { background: var(--green-soft); }
+
+/* Danger (Delete) */
+button.danger {
+  background: var(--orange-base);
+  border-color: var(--orange-strong);
+  color: var(--white);
+}
+button.danger:hover { background: var(--orange-soft); }
+
+/* =========================================================
+   Main
+========================================================= */
+main {
+  max-width: 980px;
+  margin: 0 auto;
+  padding: 18px;
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--color-text-sub);
+  margin-bottom: 16px;
+}
+
+/* =========================================================
+   Node Card
+========================================================= */
+.node {
+  background: #fff;
+  border: 1px solid var(--border-light);
   border-radius: var(--radius);
-  box-shadow: var(--shadow);
-  margin: 14px 0;
-  overflow:hidden;
+  box-shadow: var(--shadow-soft);
+  margin-bottom: 16px;
+  overflow: hidden;
+  opacity: 0.95;
 }
 
-.node-head{
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-  padding: 10px var(--pad);
-  border-bottom: 1px solid var(--line);
-  gap:10px;
-  background: rgba(255,255,255,.55);
+/* ---------- Node Head ---------- */
+.node-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px var(--pad);
+  background: var(--base-color);
+  border-bottom: 1px solid var(--border-light);
 }
 
-.node-head .left{ display:flex; align-items:center; gap:10px; min-width:0; }
+.node-head .left {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+}
 
-.badge{
+/* step badge */
+.badge {
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--muted);
-  border: 1px solid var(--line);
-  padding: 2px 8px;
+  padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(255,255,255,.7);
-  flex: 0 0 auto;
+  background: #fff;
+  border: 1px solid var(--border-light);
+  color: var(--color-text-sub);
+  margin-top: 8px; /* step位置を少し下げる */
 }
 
-.node-title{
-  font-size: 13px;
-  color: var(--muted);
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
+/* Connector / Action labels are hidden (要望：文言は無くしてOK) */
+.node-head .node-title,
+.node-head .head-label,
+.node-head label {
+  display: none !important;
 }
 
-.node-body{
-  padding: var(--pad);
-  display:grid;
-  gap:12px;
-}
-
-/* ===== Head selects: Connector / Action 横並び ===== */
-.head-selects{
+.head-selects {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 10px;
-  align-items: end;
 }
 
-.head-label{
-  font-size: 11px;
-  color: rgba(255,255,255,.88);
-  margin: 0 0 6px;
+/* right action buttons (上部配置) */
+.node-head-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
 }
 
-/* ヘッダー内selectは少しだけ明るく */
-.node-head select{
-  background: rgba(255,255,255,.92);
+/* ---------- Node Body ---------- */
+.node-body {
+  padding: var(--pad);
+  display: grid;
+  gap: 4px;
 }
 
-/* ===== Form ===== */
-.row{
-  display:grid;
+.row {
+  display: grid;
   grid-template-columns: 180px 1fr;
-  gap:12px;
-  align-items:start;
+  gap: 12px;
 }
 
-label{
-  font-size:12px;
-  color: var(--muted);
+label {
+  font-size: 12px;
+  color: var(--color-text-sub);
   padding-top: 8px;
 }
 
-select, input, textarea{
-  width:100%;
-  box-sizing:border-box;
-  border: 1px solid var(--line);
-  background: var(--input);
-  color: var(--text);
-  border-radius: 10px;
-  padding: 10px 10px;
+/* Inputs */
+input,
+textarea,
+select {
+  width: 100%;
+  padding: 5px 6px;
+  border-radius: 6px;
+  border: 1px solid var(--border-light);
   font-size: 13px;
-  outline:none;
+  font-family: var(--sans);
+  background: var(--green-ultra-soft);
 }
 
-select:focus, input:focus, textarea:focus{
-  border-color: rgba(12,102,228,.55);
-  box-shadow: 0 0 0 3px rgba(12,102,228,.14);
+input:focus,
+textarea:focus,
+select:focus {
+  outline: none;
+  border-color: var(--green-soft);
+  box-shadow: var(--shadow-soft);
 }
 
-textarea{
-  min-height:92px;
-  resize:vertical;
+textarea {
+  min-height: 90px;
+  resize: vertical;
   font-family: var(--mono);
 }
 
-.sub{
-  font-size:12px;
-  color: var(--muted);
-  margin-top:6px;
+.sub {
+  font-size: 11px;
+  color: var(--color-text-sub);
+  margin-top: 6px;
 }
 
-/* ===== Footer ===== */
-.node-foot{
-  padding: 10px var(--pad);
-  border-top: 1px solid var(--line);
-  display:flex;
-  justify-content:space-between;
-  align-items:center;
-  gap:10px;
-  background: rgba(255,255,255,.55);
+/* Divider */
+.divider {
+  height: 1px;
+  background: var(--border-light);
+  margin: 8px 0;
 }
 
-.foot-left{ display:flex; gap:8px; flex-wrap:wrap; }
+/* ---------- Node Footer ---------- */
+.node-foot {
+  display: flex;
+  justify-content: flex-start; /* 右側ボタンを消す前提で左寄せ */
+  align-items: center;
+  padding: 12px var(--pad);
+  background: #fafafa;
+  border-top: 1px solid var(--border-light);
+}
 
-.variables{
+/* 下部のボタンエリアがDOMに残っていても非表示 */
+.node-foot .actions,
+.node-bottom-actions {
+  display: none !important;
+}
+
+.variables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.var-chip {
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--muted);
-  display:flex;
-  gap:8px;
-  flex-wrap:wrap;
-}
-
-.var-chip{
-  border: 1px dashed rgba(12,102,228,.45);
   padding: 2px 8px;
   border-radius: 999px;
-  background: rgba(12,102,228,.08);
+  background: var(--green-ultra-soft);
+  color: var(--green-strong);
+  border: 1px dashed var(--green-soft);
 }
 
-.small{ font-size: 12px; color: var(--muted); }
-
-.divider{
-  height:1px;
-  background: var(--line);
-  margin: 6px 0;
+/* =========================================================
+   ${var} Suggest
+========================================================= */
+.suggest {
+  position: relative;
 }
 
-/* ===== Suggest (vars) ===== */
-.suggest{ position:relative; }
-
-.suggest-list{
-  position:absolute;
+.suggest-list {
+  position: absolute;
   top: calc(100% + 6px);
-  left:0; right:0;
-  background: rgba(255,255,255,.98);
-  border: 1px solid var(--line);
+  left: 0;
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--border-light);
   border-radius: 12px;
-  box-shadow: var(--shadow);
+  box-shadow: var(--shadow-soft);
   padding: 6px;
-  display:none;
+  display: none;
   max-height: 180px;
-  overflow:auto;
-  z-index:40;
+  overflow: auto;
+  z-index: 20;
 }
 
-.suggest-item{
+.suggest-item {
   padding: 8px 10px;
-  border-radius: 10px;
-  cursor:pointer;
+  border-radius: 8px;
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--text);
+  cursor: pointer;
 }
 
-.suggest-item:hover{
-  background: rgba(64,170,234,.14);
+.suggest-item:hover {
+  background: var(--green-ultra-soft);
+}
+/* ========================================
+   Node bottom cleanup
+======================================== */
+
+/* 下部の仕切り線を消す */
+.node .divider {
+  display: none !important;
 }
 
-/* ===== Responsive ===== */
-@media (max-width:720px){
-  .row{ grid-template-columns: 1fr; }
-  label{ padding-top:0; }
-  .head-selects{ grid-template-columns: 1fr; }
+/* node-foot 自体を消す（変数チップ含めて不要なら） */
+.node-foot {
+  display: none !important;
+}
+
+/* body 下端の余白を消す */
+.node-body {
+  padding-bottom: 0;
+}
+/* ========================================
+   Required label positioning
+======================================== */
+
+.row {
+  position: relative;
+}
+
+.sub {
+  position: absolute;
+  top: 4px;
+  left: 180px; /* ← label列幅と合わせる */
+  font-size: 11px;
+  color: var(--orange-strong);
+  background: #fff;
+  padding: 0 4px;
+}
+.sub {
+  left: 90px;
+  /* left: auto; */
+}
+/* ===============================
+   Head selects width = 150px
+   + responsive safe
+================================ */
+
+/* 2つのselectを並べるコンテナを「折り返し可能」に */
+.head-selects{
+  display: flex;          /* gridからflexへ上書き */
+  gap: 10px;
+  flex-wrap: wrap;        /* 横幅が狭いときに崩れず縦に落ちる */
+}
+
+/* select枠の幅 */
+.head-selects select{
+  width: 150px;
+}
+
+/* 左側全体も折り返しできるように */
+.node-head .left{
+  flex-wrap: wrap;
+}
+
+/* 画面が狭いときはselectを100%にして縦積みに（崩れ防止） */
+@media (max-width: 640px){
+  .head-selects{
+    width: 100%;
+  }
+  .head-selects select{
+    width: 100%;
+  }
+}
+/* ===============================
+   Node head responsive stability
+================================ */
+
+.node-head{
+  gap: 12px;
+  flex-wrap: wrap;        /* 左＋右が狭い時に折り返し */
+}
+
+.node-head-actions{
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+
+/* ===============================
+   Node footer: bring back (subtle)
+================================ */
+
+/* 前回の display:none を打ち消す */
+.node-foot{
+  display: flex !important;
+  justify-content: flex-start;
+  align-items: center;
+
+  padding: 10px var(--pad);
+  background: #fafafa;
+
+  border-top: 1px solid var(--border-light);
+  min-height: 10px;          /* ← 下部を少し大きく */
+}
+
+/* 仕切り線（divider）は引き続き不要なら非表示のまま */
+.node .divider{
+  display: none !important;
+}
+/* ===============================
+   Form width: give more space to inputs
+================================ */
+
+.row{
+  grid-template-columns: 100px 1fr;  /* ← 180px → 140px */
+  gap: 14px;
+}
+
+/* 必須バッジの位置も列幅に追従させる（以前の left:180px 対応） */
+.sub{
+  left: 80px;
+}
+
+/* =========================================================
+   Two Pane Layout (Flow top / Detail bottom)
+========================================================= */
+main {
+  max-width: 1200px;
+}
+
+.panel {
+  background: rgba(255, 255, 255, 0.92);
+  border: 1px solid var(--border-light);
+  border-radius: 14px;
+  box-shadow: var(--shadow-soft);
+  padding: 14px;
+  margin-bottom: 18px;
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--color-text-main);
+}
+
+.flow-panel {
+  overflow-x: auto;
+}
+
+.flow-track {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 100%;
+  padding: 4px 2px;
+}
+
+.flow-column {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-width: 92px;
+}
+
+.flow-branch-stack {
+  width: 100%;
+  min-height: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.flow-node {
+  width: 100%;
+  min-width: 92px;
+  text-align: left;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid #cfd5db;
+  background: linear-gradient(160deg, #ffffff 0%, #f3f5f8 100%);
+  color: var(--color-text-main);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.flow-node:hover {
+  border-color: #9ca8b5;
+}
+
+.flow-node.is-active {
+  border-color: var(--green-strong);
+  box-shadow: 0 0 0 2px rgba(3, 122, 118, 0.15), 0 6px 18px rgba(0, 0, 0, 0.12);
+}
+
+.flow-node-parallel {
+  border-style: dashed;
+  background: linear-gradient(160deg, #ffffff 0%, #f7fbff 100%);
+}
+
+.flow-step {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: #6f7780;
+  margin-bottom: 2px;
+}
+
+.flow-title {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 1px;
+}
+
+.flow-subtitle {
+  font-size: 10px;
+  color: #606770;
+}
+
+.flow-insert {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  border: 1px dashed #93a1b2;
+  background: #fff;
+  font-size: 12px;
+  line-height: 1;
+  color: #4b5563;
+  padding: 0;
+}
+
+.flow-insert:hover {
+  border-color: var(--green-strong);
+  color: var(--green-strong);
+  background: #eef6f5;
+}
+
+.flow-edge {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 18px;
+  margin-top: 16px;
+}
+
+.flow-edge-controls {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 2;
+}
+
+.flow-insert-edge {
+  position: static;
+}
+
+.flow-insert-tail {
+  position: static;
+}
+
+.flow-tail-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 2px;
+  margin-top: 16px;
+}
+
+.flow-insert-parallel {
+  border-color: #7f9bb8;
+  color: #38506a;
+  font-size: 9px;
+}
+
+.flow-edge-line {
+  display: block;
+  width: 100%;
+  height: 1px;
+  background: #8a95a3;
+}
+
+.flow-edge-head {
+  position: absolute;
+  right: -1px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 0;
+  height: 0;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 5px solid #8a95a3;
+}
+
+.detail-node {
+  margin-bottom: 0;
+}
+
+@media (max-width: 768px) {
+  .flow-node {
+    min-width: 84px;
+  }
+
+  .flow-column {
+    min-width: 84px;
+  }
+
+  .panel {
+    padding: 12px;
+  }
+}
+
+/* =========================================================
+   Flowchart Layout Fix (stable stage-based positioning)
+========================================================= */
+.flow-track {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: max-content;
+}
+
+.flow-stage {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.flow-column {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 96px;
+  min-width: 96px;
+  gap: 6px;
+}
+
+.flow-branch-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 8px;
+}
+
+.flow-node {
+  width: 100%;
+  min-height: 52px;
+}
+
+.flow-edge {
+  position: relative;
+  width: 42px;
+  min-width: 42px;
+  height: 52px;
+  margin-top: 0;
+  transform: none;
+}
+
+.flow-edge-controls {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 2;
+}
+
+.flow-edge-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 24px;
+  height: 1px;
+}
+
+.flow-edge-head {
+  position: absolute;
+  right: -1px;
+  top: 21px;
+  transform: none;
+}
+
+.flow-tail-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 0;
+  margin-top: 0;
+  min-height: 52px;
+}
+
+.flow-insert {
+  width: 16px;
+  height: 16px;
+  font-size: 11px;
+}
+
+.flow-insert-parallel {
+  font-size: 8px;
+}
+
+@media (max-width: 768px) {
+  .flow-column {
+    width: 88px;
+    min-width: 88px;
+  }
+
+  .flow-edge {
+    width: 36px;
+    min-width: 36px;
+  }
+}
+
+/* =========================================================
+   Canvas Flow Area
+========================================================= */
+.flow-panel {
+  overflow: auto;
+}
+
+#flowchart {
+  min-width: 980px;
+  min-height: 260px;
+  border: 1px solid #d0d7de;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(250, 252, 255, 0.95) 0%, rgba(244, 247, 252, 0.95) 100%);
+  padding: 6px;
+}
+
+.flow-canvas {
+  display: block;
+}
+
+.flow-fallback {
+  padding: 12px;
+  color: #8b1d1d;
+  font-size: 12px;
+}
+
+@media (max-width: 768px) {
+  #flowchart {
+    min-width: 760px;
+  }
 }

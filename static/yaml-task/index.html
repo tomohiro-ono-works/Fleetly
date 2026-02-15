@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>YAML Task Manager</title>
+  <link rel="stylesheet" href="styles.css" />
+
+  <!-- Libraries (CDN) -->
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.css" />
+  <script src="https://cdn.jsdelivr.net/npm/frappe-gantt@0.6.1/dist/frappe-gantt.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+</head>
+<body>
+  <header class="topbar compact">
+    
+      <div class="brand-sub">local / no server / import & download</div>
+    </div>
+
+    <div class="actions">
+      <label class="btn ghost">
+        YAMLをインポート
+        <input id="fileInput" type="file" accept=".yml,.yaml" hidden />
+      </label>
+      <button id="btnDownload" class="btn">YAMLをダウンロード</button>
+      <button id="btnNewTask" class="btn primary">＋ タスク追加</button>
+    </div>
+  </header>
+
+  <nav class="tabs" id="tabs">
+    <button class="tab active" data-view="list">リスト</button>
+    <button class="tab" data-view="gantt">ガント</button>
+    <button class="tab" data-view="kanban">カンバン</button>
+    <button class="tab" data-view="worklogs">工数</button>
+    <button class="tab" data-view="dashboard">ダッシュボード</button>
+    <div class="tabs-spacer"></div>
+    <div class="statusline" id="statusline">YAML未読込</div>
+  </nav>
+
+  <main class="main">
+    <section id="view-list" class="view"></section>
+    <section id="view-gantt" class="view hidden"></section>
+    <section id="view-kanban" class="view hidden"></section>
+    <section id="view-worklogs" class="view hidden"></section>
+    <section id="view-dashboard" class="view hidden"></section>
+  </main>
+
+  <!-- Modal -->
+  <div id="modalOverlay" class="modal-overlay hidden" role="dialog" aria-modal="true">
+    <div class="modal">
+      <div class="modal-head">
+        <div class="modal-title" id="modalTitle">タスク詳細</div>
+        <button class="icon-btn" id="modalClose" title="閉じる">×</button>
+      </div>
+      <div class="modal-body" id="modalBody"></div>
+      <div class="modal-foot">
+        <button class="btn ghost" id="modalCancel">閉じる</button>
+        <button class="btn primary" id="modalSave">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="footer">
+    <div class="foot-left">
+      <span class="muted">アラート:</span>
+      <span class="chip" id="alertA">A 0</span>
+      <span class="chip" id="alertB">B 0</span>
+      <span class="chip" id="alertD">D 0</span>
+    </div>
+    <div class="foot-right muted">※保存はダウンロード方式</div>
+  </footer>
+
+  <script src="js/app.js"></script>
+</body>
+</html>

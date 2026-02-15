@@ -1,10 +1,10 @@
 window.varsOps = {
+  // nodeIndex より上に存在する step 変数を返す
   getAvailableVars(state, nodeIndex) {
     const vars = [];
     for (let i = 0; i < nodeIndex; i++) {
-      const outs = state.nodes[i].outputs || [];
-      for (const v of outs) vars.push(v);
+      vars.push(`step${i + 1}`);
     }
-    return [...new Set(vars)];
+    return vars;
   }
 };

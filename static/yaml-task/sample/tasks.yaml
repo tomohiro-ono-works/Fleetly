@@ -1,0 +1,105 @@
+meta:
+  schema_version: "1.0"
+  last_task_seq: 3
+  semantic:
+    task_status_not_started: "01_未着手"
+    task_status_done: "03_完了"
+    todo_status_done: "03_完了"
+
+masters:
+  assignees:
+    - id_name: "01_トム"
+      slack: "@tom"
+    - id_name: "02_サンプル担当"
+      slack: "@sample"
+  task_statuses:
+    - id_name: "01_未着手"
+    - id_name: "02_進行中"
+    - id_name: "03_完了"
+  todo_statuses:
+    - id_name: "01_未着手"
+    - id_name: "02_進行中"
+    - id_name: "03_完了"
+  categories:
+    - id_name: "01_開発"
+    - id_name: "02_調査"
+    - id_name: "03_管理"
+  priorities:
+    - id_name: "01_高"
+    - id_name: "02_中"
+    - id_name: "03_低"
+  todo_actions:
+    - id_name: "01_検証"
+    - id_name: "02_改修"
+    - id_name: "03_調査"
+    - id_name: "04_管理"
+  phases:
+    - id_name: "01_Phase1"
+      start_date: "2026-02-01"
+      end_date: "2026-03-31"
+    - id_name: "02_Phase2"
+      start_date: "2026-04-01"
+      end_date: "2026-06-30"
+
+tasks:
+  - id: "0001"
+    name: "要件整理"
+    category: "03_管理"
+    priority: "02_中"
+    phase: "01_Phase1"
+    status: "02_進行中"
+    assignee: "01_トム"
+    start_date: "2026-02-03"
+    end_date: "2026-02-10"
+    memo: "タスク詳細はIDをダブルクリック"
+    todos:
+      - id: "t1"
+        name: "関係者ヒアリング"
+        action: "03_調査"
+        status: "02_進行中"
+      - id: "t2"
+        name: "仕様草案"
+        action: "04_管理"
+        status: "01_未着手"
+    urls:
+      - id: "u1"
+        name: "議事録"
+        url: "https://example.com/minutes"
+  - id: "0002"
+    name: "ガントUI確認"
+    category: "02_調査"
+    priority: "01_高"
+    phase: "01_Phase1"
+    status: "01_未着手"
+    assignee: "02_サンプル担当"
+    start_date: "2026-02-01"
+    end_date: "2026-02-05"
+    memo: ""
+    todos: []
+    urls: []
+  - id: "0003"
+    name: "Phase外タスク（Dアラート例）"
+    category: "01_開発"
+    priority: "03_低"
+    phase: "01_Phase1"
+    status: "01_未着手"
+    assignee: "01_トム"
+    start_date: "2026-04-01"
+    end_date: "2026-04-03"
+    memo: ""
+    todos: []
+    urls: []
+
+worklogs:
+  - date: "2026-02-09"
+    assignee: "01_トム"
+    task_id: "0001"
+    todo_id: "t1"
+    hours: 1.25
+    note: "ヒアリング"
+  - date: "2026-02-09"
+    assignee: "01_トム"
+    task_id: "0001"
+    todo_id: ""
+    hours: 0.75
+    note: "まとめ"

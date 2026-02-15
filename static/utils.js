@@ -12,7 +12,7 @@ window.utils = {
   },
 
   downloadText(filename, text) {
-    const blob = new Blob([text], { type: "application/json;charset=utf-8" });
+    const blob = new Blob([text], { type: "text/plain;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -21,5 +21,90 @@ window.utils = {
     a.click();
     a.remove();
     URL.revokeObjectURL(url);
+  },
+
+  // =========================================================
+  // YAML
+  // =========================================================
+  downloadYaml(filename, obj) {
+    const yaml = this.toYaml(obj);
+    const blob = new Blob([yaml], { type: "text/yaml;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
+
+  toYaml(obj) {
+    const indent = (n) => "  ".repeat(n);
+
+    const needsQuotes = (s) => {
+      if (s === "") return true;
+      // YAMLで紛らわしい文字や、先頭/末尾空白などはクオート
+      return /[:#\-\?\[\]\{\},&\*\!\|\>\<\=\%@`]/.test(s) || /^\s|\s$/.test(s);
+    };
+
+    const quote = (s) =>
+      `"${String(s)
+        .replace(/\\/g, "\\\\")
+        .replace(/"/g, '\\"')
+        .replace(/\r/g, "\\r")
+        .replace(/\n/g, "\\n")
+        .replace(/\t/g, "\\t")}"`;
+
+
+    const scalar = (v, lvl) => {
+      if (v === null || v === undefined) return "null";
+      if (typeof v === "number" || typeof v === "boolean") return String(v);
+
+      const s = String(v);
+
+      // 改行がある文字列は block scalar にする
+      if (s.includes("\n")) {
+        const lines = s.replace(/\r\n/g, "\n").split("\n");
+        const body = lines.map((ln) => indent(lvl + 1) + ln).join("\n");
+        return `|-\n${body}`;
+      }
+
+      return quote(s);
+    };
+
+    const dump = (v, lvl) => {
+      if (Array.isArray(v)) {
+        if (v.length === 0) return "[]";
+        return v
+          .map((item) => {
+            if (item && typeof item === "object") {
+              return `${indent(lvl)}- ${dump(item, lvl + 1).replace(/^\s+/, "")}`;
+            }
+            return `${indent(lvl)}- ${scalar(item, lvl)}`;
+          })
+          .join("\n");
+      }
+
+      if (v && typeof v === "object") {
+        const keys = Object.keys(v);
+        if (keys.length === 0) return "{}";
+        return keys
+          .map((k) => {
+            const vv = v[k];
+            if (Array.isArray(vv) || (vv && typeof vv === "object")) {
+              const rendered = dump(vv, lvl + 1);
+              return `${indent(lvl)}${k}:\n${rendered}`;
+            } else {
+              return `${indent(lvl)}${k}: ${scalar(vv, lvl)}`;
+            }
+          })
+          .join("\n");
+      }
+
+      return scalar(v, lvl);
+    };
+
+    return dump(obj, 0) + "\n";
   }
 };
