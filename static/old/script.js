@@ -52,7 +52,7 @@ function fullLayout() {
     canvas.style.width = window.innerWidth + 'px';
     canvas.style.height = Math.max(window.innerHeight - canvas.offsetTop, maxY) + 'px';
     
-    ctx.scale(dpr, dpr);
+    ctx.scale(dpr*2, dpr*2);
 
     if (typeof draw === 'function') draw();
 }

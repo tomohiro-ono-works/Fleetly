@@ -3,7 +3,7 @@
 ========================================================= */
 :root {
   /* Base */
-  --color-bg: #f9f9f9;
+  --color-bg: #e3e3e3;
   --white: #f9f9f9;
   --color-text-main: #383838;
   --color-text-sub: #4f4f4f;
@@ -37,13 +37,13 @@
 /* =========================================================
    Base
 ========================================================= */
-* { box-sizing: border-box; }
+* { box-sizing: border-box;
 
 body {
   margin: 0;
   font-family: var(--sans);
   background-image: url('unnamed.jpg');
-  /* background: var(--color-bg); */
+  background: var(--color-bg);
   color: var(--color-text-main);
   background-attachment: fixed;
   width: 100%;
@@ -123,7 +123,7 @@ button.danger:hover { background: var(--orange-soft); }
    Main
 ========================================================= */
 main {
-  max-width: 980px;
+  /* max-width: 980px; */
   margin: 0 auto;
   padding: 18px;
 }
@@ -444,7 +444,8 @@ textarea {
    Two Pane Layout (Flow top / Detail bottom)
 ========================================================= */
 main {
-  max-width: 1200px;
+  /* max-width: 1200px; */
+  /* padding: 10px 20px; */
 }
 
 .panel {
@@ -744,7 +745,7 @@ main {
 }
 
 #flowchart {
-  min-width: 980px;
+  /* min-width: 980px; */
   min-height: 260px;
   border: 1px solid #d0d7de;
   border-radius: 10px;

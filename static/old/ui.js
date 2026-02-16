@@ -8,7 +8,7 @@ function init() {
     const w = window.innerWidth, h = window.innerHeight - canvas.offsetTop;
     canvas.width = w * dpr; canvas.height = h * dpr;
     canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
-    ctx.scale(dpr, dpr);
+    ctx.scale(dpr*2, dpr*2);
 }
 window.addEventListener('resize', () => { init(); fullLayout(); });
 

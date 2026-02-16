@@ -3,15 +3,15 @@
   const { addNodeAfter, addParallelAfter, insertNodeAt, removeNode, setSelectedNode } = window.stateOps;
   const { renderField } = window.uiFields;
 
-  const NODE_W = 136;
-  const NODE_H = 52;
-  const LEVEL_MARGIN = 190;
+  const NODE_W = 90;
+  const NODE_H = 80;
+  const LEVEL_MARGIN = 130;
   const MIN_SIBLING_GAP = 14;
   const START_X = 44;
   const START_Y = 40;
-  const BTN_X_OFFSET = 18;
+  const BTN_X_OFFSET = 12;
   const BTN_GAP = 20;
-  const BTN_R = 10;
+  const BTN_R = 8;
   const EDGE_CURVE = 42;
 
   function jpLabel(x) {
@@ -126,8 +126,8 @@
   }
 
   function buildFlowModel(state, config) {
-    const start = createPseudoNode("__start__", "開始", "start");
-    const end = createPseudoNode("__end__", "終了", "end");
+    const start = createPseudoNode("__start__", "START", "start");
+    const end = createPseudoNode("__end__", "END", "end");
     const rawById = new Map();
     state.nodes.forEach((node) => {
       ensureNodeDefaults(config, node);
@@ -336,6 +336,27 @@
     ctx.quadraticCurveTo(x, y, x + r, y);
   }
 
+  function drawOneSideRoundedRect(ctx, x, y, w, h, side) {
+    const r = Math.min(h / 2, w / 2);
+    const cy = y + h / 2;
+
+    ctx.beginPath();
+    if (side === "left") {
+      const cx = x + r;
+      ctx.moveTo(x + w, y);
+      ctx.lineTo(x + r, y);
+      ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2, true);
+      ctx.lineTo(x + w, y + h);
+    } else {
+      const cx = x + w - r;
+      ctx.moveTo(x, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.arc(cx, cy, r, -Math.PI / 2, Math.PI / 2, false);
+      ctx.lineTo(x, y + h);
+    }
+    ctx.closePath();
+  }
+
   function drawArrowHead(ctx, x, y, angle, size, color) {
     ctx.fillStyle = color;
     ctx.beginPath();
@@ -398,12 +419,17 @@
 
     const { model, state } = runtime;
     const { canvas, ctx } = view;
-    const dpr = window.devicePixelRatio || 1;
+    const rawDpr = window.devicePixelRatio || 1;
+    const dpr = Math.max(1, Math.ceil(rawDpr));
     canvas.width = Math.floor(model.width * dpr);
     canvas.height = Math.floor(model.height * dpr);
     canvas.style.width = `${model.width}px`;
     canvas.style.height = `${model.height}px`;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.imageSmoothingEnabled = true;
+    ctx.imageSmoothingQuality = "high";
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
     ctx.clearRect(0, 0, model.width, model.height);
 
     model.edges.forEach((edge) => {
@@ -416,9 +442,9 @@
           edge.kind === "to-end" ? "#8d99aa" :
           edge.kind === "parallel" ? "#90a3b8" : "#6f7f94",
         width:
-          edge.kind === "to-end-main" ? 1.4 :
-          edge.kind === "to-end" ? 1.2 :
-          edge.kind === "parallel" ? 1.2 : 1.4,
+          edge.kind === "to-end-main" ? 2 :
+          edge.kind === "to-end" ? 1 :
+          edge.kind === "parallel" ? 1 : 2,
         dash:
           edge.kind === "to-end-main" ? [] :
           edge.kind === "to-end" ? [4, 3] :
@@ -447,30 +473,36 @@
       else ctx.fillStyle = "#ffffff";
 
       ctx.strokeStyle = isSelected ? "#037a76" : "#cbd5e0";
-      ctx.lineWidth = isSelected ? 2.2 : 1.2;
-      drawRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, 8);
+      ctx.lineWidth = isSelected ? 2 : 1;
+      if (isStart) {
+        drawOneSideRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, "left");
+      } else if (isEnd) {
+        drawOneSideRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, "right");
+      } else {
+        drawRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, 8);
+      }
       ctx.fill();
       ctx.stroke();
       ctx.setLineDash([]);
 
       ctx.fillStyle = isStart || isEnd ? "#ffffff" : "#2d3748";
-      ctx.font = "bold 11px sans-serif";
+      ctx.font = "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
       if (isStart || isEnd) {
         ctx.textBaseline = "middle";
         ctx.fillText(node.text, node.x + NODE_W / 2, node.y + NODE_H / 2);
         ctx.textBaseline = "alphabetic";
       } else {
-        ctx.fillText(node.nodeRef.stepName, node.x + NODE_W / 2, node.y + 15);
+        ctx.fillText(node.nodeRef.stepName, node.x + NODE_W / 2, node.y + 26);
       }
 
       if (isTask) {
-        ctx.font = "10px sans-serif";
+        ctx.font = "14px 'Segoe UI', 'Yu Gothic UI', sans-serif";
         const titleLines = wrapText(ctx, node.title, NODE_W - 16);
         const subtitleLines = wrapText(ctx, node.subtitle, NODE_W - 16);
         const lines = [...titleLines, ...subtitleLines].slice(0, 2);
         lines.forEach((line, idx) => {
-          ctx.fillText(line, node.x + NODE_W / 2, node.y + 29 + idx * 12);
+          ctx.fillText(line, node.x + NODE_W / 2, node.y + 56 + idx * 18);
         });
       }
     });
@@ -479,13 +511,13 @@
       const isHover = view.hoverControl === ctrl;
       ctx.fillStyle = "#ffffff";
       ctx.strokeStyle = isHover ? "#037a76" : "#8ea1b5";
-      ctx.lineWidth = isHover ? 1.8 : 1;
+      ctx.lineWidth = isHover ? 2 : 1;
       ctx.beginPath();
       ctx.arc(ctrl.x, ctrl.y, ctrl.r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
       ctx.fillStyle = isHover ? "#037a76" : "#41556b";
-      ctx.font = "bold 9px sans-serif";
+      ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(ctrl.label, ctrl.x, ctrl.y + 3);
     });
