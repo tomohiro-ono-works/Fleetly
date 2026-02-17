@@ -3,9 +3,9 @@
   const { addNodeAfter, addParallelAfter, insertNodeAt, removeNode, setSelectedNode } = window.stateOps;
   const { renderField } = window.uiFields;
 
-  const NODE_W = 90;
-  const NODE_H = 80;
-  const LEVEL_MARGIN = 130;
+  const NODE_W = 72;
+  const NODE_H = 62;
+  const LEVEL_MARGIN = 112;
   const MIN_SIBLING_GAP = 14;
   const START_X = 44;
   const START_Y = 40;
@@ -13,6 +13,7 @@
   const BTN_GAP = 20;
   const BTN_R = 8;
   const EDGE_CURVE = 42;
+  const ICON_CACHE = new Map();
 
   function jpLabel(x) {
     return (x && (x.label_jp || x.label)) || (x && x.id) || "";
@@ -367,6 +368,27 @@
     ctx.fill();
   }
 
+  function getConnectorIconSrc(connectorId) {
+    if (!connectorId) return null;
+    return `./img/${connectorId}.png`;
+  }
+
+  function ensureConnectorIcon(view, src) {
+    if (!src) return null;
+    if (ICON_CACHE.has(src)) return ICON_CACHE.get(src);
+
+    const img = new Image();
+    img.__failed = false;
+    img.onload = () => drawFlowCanvas(view);
+    img.onerror = () => {
+      img.__failed = true;
+      drawFlowCanvas(view);
+    };
+    img.src = src;
+    ICON_CACHE.set(src, img);
+    return img;
+  }
+
   function normalizedSigmoid(t, k, center) {
     const s = (x) => 1 / (1 + Math.exp(-x));
     const min = s((0 - center) * k);
@@ -485,6 +507,10 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
+      const iconSrc = isTask ? getConnectorIconSrc(node.nodeRef.connector) : null;
+      const icon = iconSrc ? ensureConnectorIcon(view, iconSrc) : null;
+      const hasIcon = !!(icon && !icon.__failed && icon.complete && icon.naturalWidth > 0);
+
       ctx.fillStyle = isStart || isEnd ? "#ffffff" : "#2d3748";
       ctx.font = "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
@@ -492,11 +518,21 @@
         ctx.textBaseline = "middle";
         ctx.fillText(node.text, node.x + NODE_W / 2, node.y + NODE_H / 2);
         ctx.textBaseline = "alphabetic";
-      } else {
+      } else if (!hasIcon) {
         ctx.fillText(node.nodeRef.stepName, node.x + NODE_W / 2, node.y + 26);
       }
 
-      if (isTask) {
+      if (isTask && hasIcon) {
+        const pad = 8;
+        const maxW = NODE_W - pad * 2;
+        const maxH = NODE_H - pad * 2;
+        const ratio = Math.min(maxW / icon.naturalWidth, maxH / icon.naturalHeight);
+        const w = Math.max(1, Math.floor(icon.naturalWidth * ratio));
+        const h = Math.max(1, Math.floor(icon.naturalHeight * ratio));
+        const x = Math.round(node.x + (NODE_W - w) / 2);
+        const y = Math.round(node.y + (NODE_H - h) / 2);
+        ctx.drawImage(icon, x, y, w, h);
+      } else if (isTask) {
         ctx.font = "14px 'Segoe UI', 'Yu Gothic UI', sans-serif";
         const titleLines = wrapText(ctx, node.title, NODE_W - 16);
         const subtitleLines = wrapText(ctx, node.subtitle, NODE_W - 16);

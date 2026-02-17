@@ -3,7 +3,7 @@
 ========================================================= */
 :root {
   /* Base */
-  --color-bg: #e3e3e3;
+  --color-bg: #ffffff;
   --white: #f9f9f9;
   --color-text-main: #383838;
   --color-text-sub: #4f4f4f;
@@ -747,10 +747,10 @@ main {
 #flowchart {
   /* min-width: 980px; */
   min-height: 260px;
-  border: 1px solid #d0d7de;
-  border-radius: 10px;
-  background: linear-gradient(180deg, rgba(250, 252, 255, 0.95) 0%, rgba(244, 247, 252, 0.95) 100%);
-  padding: 6px;
+  /* border: 1px solid #d0d7de; */
+  /* border-radius: 10px; */
+  /* background: linear-gradient(180deg, rgba(250, 252, 255, 0.95) 0%, rgba(244, 247, 252, 0.95) 100%); */
+  /* padding: 6px; */
 }
 
 .flow-canvas {
