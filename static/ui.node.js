@@ -3,10 +3,10 @@
   const { addNodeAfter, addParallelAfter, insertNodeAt, removeNode, setSelectedNode } = window.stateOps;
   const { renderField } = window.uiFields;
 
-  const NODE_W = 72;
-  const NODE_H = 62;
+  const NODE_W = 52;
+  const NODE_H = 52;
   const LEVEL_MARGIN = 112;
-  const MIN_SIBLING_GAP = 14;
+  const MIN_SIBLING_GAP = 44;
   const START_X = 44;
   const START_Y = 40;
   const BTN_X_OFFSET = 12;
@@ -20,18 +20,37 @@
   }
 
   function normalizeSteps(state) {
-    state.nodes.forEach((node, i) => {
-      node.stepName = `step${i + 1}`;
+    let next = Number(state.nextStepSeq) || 1;
+    state.nodes.forEach((node) => {
+      const m = String(node.stepName || "").match(/^step(\d+)$/);
+      if (m) {
+        const num = Number(m[1]);
+        if (Number.isFinite(num) && num >= next) next = num + 1;
+        return;
+      }
+      node.stepName = `step${next}`;
+      next += 1;
     });
+    state.nextStepSeq = next;
 
     if (!state.selectedNodeId && state.nodes.length) {
       state.selectedNodeId = state.nodes[0].id;
     }
   }
 
-  function getUpstreamSteps(state, idx) {
+  function getUpstreamSteps(state, nodeId) {
+    const byId = new Map(state.nodes.map((n) => [n.id, n]));
+    const target = byId.get(nodeId);
+    if (!target) return [];
+
     const out = [];
-    for (let i = 0; i < idx; i++) out.push(state.nodes[i].stepName);
+    let parentId = target.parentId || null;
+    while (parentId) {
+      const parent = byId.get(parentId);
+      if (!parent) break;
+      out.unshift(parent.stepName);
+      parentId = parent.parentId || null;
+    }
     return out;
   }
 
@@ -292,7 +311,7 @@
     taskViews.forEach((view) => addControls(view.id, view));
 
     const maxTaskY = Math.max(START_Y, ...taskViews.map((n) => n.y), end.y);
-    const width = Math.max(end.x + NODE_W + 36, START_X + NODE_W + LEVEL_MARGIN + 100);
+    const width = Math.max(end.x + NODE_W + 220, START_X + NODE_W + LEVEL_MARGIN + 240);
     const height = Math.max(220, maxTaskY + NODE_H + 40);
 
     return { start, end, taskViews, nodeMap, edges, controls, width, height };
@@ -507,6 +526,27 @@
       ctx.stroke();
       ctx.setLineDash([]);
 
+      if (isTask) {
+        const badgeText = String(node.nodeRef.stepName || "");
+        ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+        const tw = Math.ceil(ctx.measureText(badgeText).width);
+        const bw = Math.max(36, tw + 12);
+        const bh = 16;
+        const bx = Math.round(node.x + (NODE_W - bw) / 2);
+        const by = Math.round(node.y - Math.floor(bh / 2));
+        ctx.fillStyle = "#ffffff";
+        ctx.strokeStyle = "#d2c6de";
+        ctx.lineWidth = 1;
+        drawRoundedRect(ctx, bx, by, bw, bh, 8);
+        ctx.fill();
+        ctx.stroke();
+        ctx.fillStyle = "#150e3a";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(badgeText, bx + bw / 2, by + bh / 2);
+        ctx.textBaseline = "alphabetic";
+      }
+
       const iconSrc = isTask ? getConnectorIconSrc(node.nodeRef.connector) : null;
       const icon = iconSrc ? ensureConnectorIcon(view, iconSrc) : null;
       const hasIcon = !!(icon && !icon.__failed && icon.complete && icon.naturalWidth > 0);
@@ -519,14 +559,14 @@
         ctx.fillText(node.text, node.x + NODE_W / 2, node.y + NODE_H / 2);
         ctx.textBaseline = "alphabetic";
       } else if (!hasIcon) {
-        ctx.fillText(node.nodeRef.stepName, node.x + NODE_W / 2, node.y + 26);
+        ctx.fillText(node.nodeRef.stepName, node.x + NODE_W / 2, node.y + 32);
       }
 
       if (isTask && hasIcon) {
-        const pad = 8;
+        const pad = 14;
         const maxW = NODE_W - pad * 2;
         const maxH = NODE_H - pad * 2;
-        const ratio = Math.min(maxW / icon.naturalWidth, maxH / icon.naturalHeight);
+        const ratio = Math.min(maxW / icon.naturalWidth, maxH / icon.naturalHeight) * 1.5;
         const w = Math.max(1, Math.floor(icon.naturalWidth * ratio));
         const h = Math.max(1, Math.floor(icon.naturalHeight * ratio));
         const x = Math.round(node.x + (NODE_W - w) / 2);
@@ -540,6 +580,15 @@
         lines.forEach((line, idx) => {
           ctx.fillText(line, node.x + NODE_W / 2, node.y + 56 + idx * 18);
         });
+      }
+
+      if (isTask) {
+        ctx.fillStyle = "#4a5568";
+        ctx.font = "11px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "top";
+        ctx.fillText(`${node.title}/${node.subtitle}`, node.x + NODE_W / 2, node.y + NODE_H + 6);
+        ctx.textBaseline = "alphabetic";
       }
     });
 
@@ -579,6 +628,8 @@
     if (root.__flowView) return root.__flowView;
 
     root.innerHTML = "";
+    root.style.overflowX = "auto";
+    root.style.overflowY = "auto";
     const canvas = document.createElement("canvas");
     canvas.className = "flow-canvas";
     root.appendChild(canvas);
@@ -601,6 +652,36 @@
       view.hoverControl = null;
       canvas.style.cursor = "default";
       drawFlowCanvas(view);
+    });
+
+    root.addEventListener("wheel", (e) => {
+      // Hide scrollbar UI while still allowing horizontal navigation with wheel.
+      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      if (delta === 0) return;
+      root.scrollLeft += delta;
+      e.preventDefault();
+    }, { passive: false });
+
+    let isPanning = false;
+    let panStartX = 0;
+    let panStartScrollLeft = 0;
+    canvas.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      isPanning = true;
+      panStartX = e.clientX;
+      panStartScrollLeft = root.scrollLeft;
+      canvas.style.cursor = "grabbing";
+      e.preventDefault();
+    });
+    window.addEventListener("mousemove", (e) => {
+      if (!isPanning) return;
+      const dx = e.clientX - panStartX;
+      root.scrollLeft = panStartScrollLeft - dx;
+    });
+    window.addEventListener("mouseup", () => {
+      if (!isPanning) return;
+      isPanning = false;
+      canvas.style.cursor = "default";
     });
 
     canvas.addEventListener("click", (e) => {
@@ -676,7 +757,7 @@
     const node = state.nodes[idx];
     ensureNodeDefaults(config, node);
 
-    const upstreamSteps = getUpstreamSteps(state, idx);
+    const upstreamSteps = getUpstreamSteps(state, node.id);
     const schema = getFormSchema(config, node.connector, node.action);
 
     const headLeft = el("div", { class: "left" }, [
@@ -705,18 +786,6 @@
           }
         },
         [document.createTextNode("削除")]
-      ),
-      el(
-        "button",
-        {
-          class: "success",
-          type: "button",
-          onclick: () => {
-            addNodeAfter(state, idx);
-            onStateChanged();
-          }
-        },
-        [document.createTextNode("右に追加")]
       )
     ]);
 

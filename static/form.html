@@ -10,12 +10,16 @@
 <body>
   <header>
     <div class="header-inner">
-      <div class="title">
-        <strong>Flow Prototype</strong>
-        <span>設定駆動フォーム / 変数参照 / 保存</span>
+      <div class="header-left">
+        <img
+          src="./img/icon.png"
+          alt="App Icon"
+          class="app-icon"
+        />
+        <input id="flowName" class="flow-name-input" type="text" value="フロー１" />
       </div>
       <div class="actions">
-        <button id="btnReset" class="danger">リセット</button>
+        <button id="btnReset" class="danger">インポート</button>
         <button id="btnSave" class="primary">保存</button>
 
       </div>
@@ -34,7 +38,6 @@
     <!-- </section> -->
 
     <section class="panel detail-panel">
-      <h2>Node Details</h2>
       <div id="nodeDetail"></div>
     </section>
   </main>
@@ -47,6 +50,7 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
   <script src="./ui.suggest.js"></script>
   <script src="./ui.fields.js"></script>
   <script src="./ui.node.js"></script>

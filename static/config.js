@@ -5,15 +5,15 @@ window.CONFIG = {
     { id: "BQConnector",        label: "BigQuery" },
     { id: "CSVConnector",       label: "CSV" },
     { id: "ExcelConnector",     label: "Excel" },
+    { id: "PPTConnector",     label: "PowerPoint" },
     { id: "OperationConnector", label: "操作" },
+    { id: "DataintegrationConnector", label: "データ加工" },
     { id: "ShellConnector",     label: "シェル" },
     { id: "VectorConnector",     label: "VectorDB" },
     { id: "LLMConnector",     label: "LLM" },
-    { id: "PPTConnector",     label: "PowerPoint" },
     { id: "WebConnector",     label: "Web操作" },
     { id: "APIConnector",     label: "API実行" },
     { id: "PythonConnector",     label: "Python実行" }
-
   ],
 
   actions: {
@@ -28,33 +28,35 @@ window.CONFIG = {
     ],
     ExcelConnector: [
       { id: "read_excel",  label: "読み込み" },
-      { id: "write_excel", label: "書き込み" }
+      { id: "write_excel", label: "書き込み" },
+      { id: "read_excel_range",  label: "エリア指定読み込み" }
     ],
     OperationConnector: [
-      { id: "execute_rename", label: "変数名変更" }
+      { id: "execute_rename", label: "変数名変更" },
+      { id: "execute_move", label: "ファイル移動" }
     ],
     ShellConnector: [
       { id: "execute_bat", label: "バッチ実行" }
     ],
     VectorConnector: [
-      { id: "execute_bat", label: "Embedding" },
-      { id: "execute_bat", label: "VectorSearch" }
+      { id: "embedding_vector_db", label: "ベクトルDB構築" },
+      { id: "search_vector_db", label: "ベクトル検索" }
     ],
     LLMConnector: [
-      { id: "execute_bat", label: "プロンプト実行" }
+      { id: "execute_prompt", label: "プロンプト実行" }
     ],
     PPTConnector: [
-      { id: "execute_bat", label: "値挿入" },
-      { id: "execute_bat", label: "画像添付" }
+      { id: "slide_insert_value", label: "スライド値挿入" },
+      { id: "slide_insert_image", label: "スライド画像添付" }
     ],
     WebConnector: [
-      { id: "execute_bat", label: "クリック" }
+      { id: "click_to_web_object", label: "クリック" }
     ],
     APIConnector: [
-      { id: "execute_bat", label: "API実行" }
+      { id: "run_api", label: "API実行" }
     ],
     PythonConnector: [
-      { id: "execute_bat", label: "Python実行" }
+      { id: "execute_python", label: "Python実行" }
     ]
   },
 
@@ -69,7 +71,7 @@ window.CONFIG = {
       { key:"sql_file", label:"SQLファイル", kind:"file", required:true },
       { key:"encoding", label:"文字コード", kind:"combo", required:true, default:"utf8", options:["utf8","shift_jis"] }
     ],
-
+    
     "BQConnector.load_data": [
       { key:"project_id", label:"プロジェクトID", kind:"text", required:true, default:"defult_project", allowVars:true },
       { key:"dataset_id", label:"データセットID", kind:"text", required:true, default:"defult_dataset", allowVars:true },

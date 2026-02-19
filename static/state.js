@@ -1,10 +1,11 @@
 window.stateOps = {
   createDefaultState() {
     const first = createDefaultNode();
+    first.stepName = "step1";
     first.parentId = null; // child of "開始"
     first.parallelOf = null;
     first.parallelOrder = 1;
-    return { version: 3, nodes: [first], selectedNodeId: first.id };
+    return { version: 3, nodes: [first], selectedNodeId: first.id, nextStepSeq: 2 };
   },
 
   addNodeAfter(state, index) {
@@ -79,7 +80,7 @@ window.stateOps = {
 
 function insertAtAnchor(state, anchorId) {
   const right = getFirstChild(state, anchorId);
-  const newNode = createNewNode();
+  const newNode = createNewNode(allocateStepName(state));
   newNode.parentId = anchorId;
 
   if (!right) {
@@ -125,7 +126,7 @@ function addParallelAtAnchor(state, anchorId) {
   const right = getFirstChild(state, anchorId);
   if (!right) return;
 
-  const newNode = createNewNode();
+  const newNode = createNewNode(allocateStepName(state));
   newNode.parentId = anchorId;
   newNode.parallelOrder = getNextChildOrder(state, anchorId);
   newNode.parallelOf = right.id;
@@ -200,9 +201,10 @@ function createDefaultNode() {
   };
 }
 
-function createNewNode() {
+function createNewNode(stepName) {
   return {
     id: createId(),
+    stepName: stepName || "",
     connector: "CSVConnector",
     action: "read_csv",
     form: {},
@@ -211,4 +213,21 @@ function createNewNode() {
     parallelOrder: 1,
     outputs: []
   };
+}
+
+function allocateStepName(state) {
+  const current = Number(state.nextStepSeq) || inferNextStepSeq(state);
+  state.nextStepSeq = current + 1;
+  return `step${current}`;
+}
+
+function inferNextStepSeq(state) {
+  let max = 0;
+  state.nodes.forEach((node) => {
+    const m = String(node.stepName || "").match(/^step(\d+)$/);
+    if (!m) return;
+    const n = Number(m[1]);
+    if (Number.isFinite(n) && n > max) max = n;
+  });
+  return max + 1;
 }

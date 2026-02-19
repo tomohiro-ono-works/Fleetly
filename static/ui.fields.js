@@ -6,7 +6,7 @@
      combo input (datalist, free input)
   ========================================================= */
 
-  function renderComboInput({ node, field, current }) {
+  function renderComboInput({ node, field, current, onValueChanged }) {
     const listId = `combo_${node.id}_${field.key}`;
 
     const input = el("input", {
@@ -15,6 +15,7 @@
       placeholder: field.placeholder || "",
       oninput: (e) => {
         node.form[field.key] = e.target.value;
+        if (onValueChanged) onValueChanged();
       }
     });
     input.value = current;
@@ -25,6 +26,28 @@
     }
 
     return { input, wrapper: el("div", {}, [input, datalist]) };
+  }
+
+  function renderInputDataSelect({ node, field, current, upstreamSteps, onValueChanged }) {
+    const select = el("select", {
+      onchange: (e) => {
+        node.form[field.key] = e.target.value;
+        if (onValueChanged) onValueChanged();
+      }
+    });
+
+    const options = Array.from(new Set(upstreamSteps || []));
+    if (current && !options.includes(current)) options.push(current);
+
+    select.appendChild(el("option", { value: "" }, [document.createTextNode("選択してください")]));
+    options.forEach((step) => {
+      const opt = el("option", { value: step }, [document.createTextNode(step)]);
+      if (step === current) opt.selected = true;
+      select.appendChild(opt);
+    });
+
+    if (!current) select.value = "";
+    return { input: select, wrapper: select };
   }
 
   /* =========================================================
@@ -45,10 +68,24 @@
     let inputEl = null;
     let wrapper = null;
 
+    function updateRequiredState() {
+      if (!field.required || !inputEl) {
+        row.classList.remove("required-empty");
+        return;
+      }
+      const hasExplicitValue = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
+      const v = hasExplicitValue ? node.form[field.key] : field.default;
+      const empty = v === undefined || v === null || String(v).trim() === "";
+      row.classList.toggle("required-empty", empty);
+    }
+
     if (field.kind === "textarea") {
       inputEl = el("textarea", {
         placeholder: field.placeholder || "",
-        oninput: (e) => (node.form[field.key] = e.target.value)
+        oninput: (e) => {
+          node.form[field.key] = e.target.value;
+          updateRequiredState();
+        }
       });
       inputEl.value = current;
       wrapper = inputEl;
@@ -56,12 +93,25 @@
       inputEl = el("input", {
         type: "number",
         placeholder: field.placeholder || "",
-        oninput: (e) => (node.form[field.key] = e.target.value)
+        oninput: (e) => {
+          node.form[field.key] = e.target.value;
+          updateRequiredState();
+        }
       });
       inputEl.value = current;
       wrapper = inputEl;
+    } else if (field.key === "input_data") {
+      const r = renderInputDataSelect({
+        node,
+        field,
+        current,
+        upstreamSteps,
+        onValueChanged: updateRequiredState
+      });
+      inputEl = r.input;
+      wrapper = r.wrapper;
     } else if (field.kind === "combo") {
-      const r = renderComboInput({ node, field, current });
+      const r = renderComboInput({ node, field, current, onValueChanged: updateRequiredState });
       inputEl = r.input;
       wrapper = r.wrapper;
     } else if (field.kind === "file" || field.kind === "dir") {
@@ -69,7 +119,10 @@
         type: "text",
         placeholder:
           field.placeholder || (field.kind === "dir" ? "フォルダを選択" : "ファイルを選択"),
-        oninput: (e) => (node.form[field.key] = e.target.value)
+        oninput: (e) => {
+          node.form[field.key] = e.target.value;
+          updateRequiredState();
+        }
       });
       text.value = current;
 
@@ -105,6 +158,7 @@
           node.form[field.key] = top;
           text.value = node.form[field.key];
         }
+        updateRequiredState();
         onStateChanged();
       });
 
@@ -118,13 +172,16 @@
       inputEl = el("input", {
         type: "text",
         placeholder: field.placeholder || "",
-        oninput: (e) => (node.form[field.key] = e.target.value)
+        oninput: (e) => {
+          node.form[field.key] = e.target.value;
+          updateRequiredState();
+        }
       });
       inputEl.value = current;
       wrapper = inputEl;
     }
 
-    if (field.allowVars && inputEl) {
+    if (field.allowVars && inputEl && inputEl.tagName !== "SELECT") {
       wrapper = wrapWithVarSuggest(inputEl, upstreamSteps, onStateChanged);
     }
 
@@ -133,6 +190,7 @@
       right.appendChild(el("div", { class: "sub" }, [document.createTextNode("必須")]));
     }
     row.appendChild(right);
+    updateRequiredState();
     return row;
   }
 
