@@ -8,7 +8,6 @@
 
   function renderComboInput({ node, field, current, onValueChanged }) {
     const listId = `combo_${node.id}_${field.key}`;
-
     const input = el("input", {
       type: "text",
       list: listId,
@@ -18,12 +17,13 @@
         if (onValueChanged) onValueChanged();
       }
     });
-    input.value = current;
+    input.value = current || "";
 
     const datalist = el("datalist", { id: listId }, []);
-    for (const opt of field.options || []) {
-      datalist.appendChild(el("option", { value: opt }));
-    }
+    const options = Array.from(new Set(field.options || []));
+    options.forEach((optValue) => {
+      datalist.appendChild(el("option", { value: optValue }));
+    });
 
     return { input, wrapper: el("div", {}, [input, datalist]) };
   }
@@ -74,7 +74,8 @@
         return;
       }
       const hasExplicitValue = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
-      const v = hasExplicitValue ? node.form[field.key] : field.default;
+      const useDefaultWhenUnset = field.key !== "input_data";
+      const v = hasExplicitValue ? node.form[field.key] : (useDefaultWhenUnset ? field.default : "");
       const empty = v === undefined || v === null || String(v).trim() === "";
       row.classList.toggle("required-empty", empty);
     }
@@ -116,7 +117,11 @@
       inputEl = r.input;
       wrapper = r.wrapper;
     } else if (field.kind === "combo") {
-      const r = renderComboInput({ node, field, current, onValueChanged: notifyChanged });
+      const comboCurrent =
+        node.form && Object.prototype.hasOwnProperty.call(node.form, field.key)
+          ? node.form[field.key]
+          : (field.default !== undefined ? field.default : "");
+      const r = renderComboInput({ node, field, current: comboCurrent, onValueChanged: notifyChanged });
       inputEl = r.input;
       wrapper = r.wrapper;
     } else if (field.kind === "file" || field.kind === "dir") {

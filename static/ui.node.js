@@ -72,7 +72,8 @@
     for (const field of schema) {
       if (!field.required) continue;
       const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
-      const v = hasExplicit ? node.form[field.key] : field.default;
+      const useDefaultWhenUnset = field.key !== "input_data";
+      const v = hasExplicit ? node.form[field.key] : (useDefaultWhenUnset ? field.default : "");
       const empty = v === undefined || v === null || String(v) === "";
       if (empty) return true;
     }
@@ -639,6 +640,32 @@
     return null;
   }
 
+  function getControlTooltip(ctrl) {
+    if (!ctrl) return "";
+    if (ctrl.label === "I" || ctrl.kind === "insert") return "ステップを挿入";
+    if (ctrl.label === "P" || ctrl.kind === "parallel") return "ステップを並列で挿入";
+    return "";
+  }
+
+  function createImmediateTooltip() {
+    const tip = document.createElement("div");
+    tip.style.position = "fixed";
+    tip.style.left = "-9999px";
+    tip.style.top = "-9999px";
+    tip.style.pointerEvents = "none";
+    tip.style.zIndex = "9999";
+    tip.style.padding = "4px 8px";
+    tip.style.borderRadius = "6px";
+    tip.style.background = "#374151";
+    tip.style.color = "#ffffff";
+    tip.style.font = "12px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+    tip.style.whiteSpace = "nowrap";
+    tip.style.opacity = "0";
+    tip.style.transition = "opacity 80ms linear";
+    document.body.appendChild(tip);
+    return tip;
+  }
+
   function ensureFlowCanvas(root) {
     if (root.__flowView) return root.__flowView;
 
@@ -647,10 +674,31 @@
     root.style.overflowY = "auto";
     const canvas = document.createElement("canvas");
     canvas.className = "flow-canvas";
+    canvas.title = "";
     root.appendChild(canvas);
     const ctx = canvas.getContext("2d");
-    const view = { root, canvas, ctx, hoverControl: null };
+    const tooltipEl = createImmediateTooltip();
+    const view = { root, canvas, ctx, hoverControl: null, tooltipEl };
     root.__flowView = view;
+
+    function hideTooltip() {
+      tooltipEl.style.opacity = "0";
+      tooltipEl.style.left = "-9999px";
+      tooltipEl.style.top = "-9999px";
+      tooltipEl.textContent = "";
+    }
+
+    function showTooltip(ctrl, clientX, clientY) {
+      const text = getControlTooltip(ctrl);
+      if (!text) {
+        hideTooltip();
+        return;
+      }
+      tooltipEl.textContent = text;
+      tooltipEl.style.left = `${clientX + 12}px`;
+      tooltipEl.style.top = `${clientY + 12}px`;
+      tooltipEl.style.opacity = "1";
+    }
 
     canvas.addEventListener("mousemove", (e) => {
       const runtime = root.__flowRuntime;
@@ -659,12 +707,14 @@
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       view.hoverControl = hitControl(runtime.model, x, y);
+      showTooltip(view.hoverControl, e.clientX, e.clientY);
       canvas.style.cursor = view.hoverControl || hitTask(runtime.model, x, y) ? "pointer" : "default";
       drawFlowCanvas(view);
     });
 
     canvas.addEventListener("mouseleave", () => {
       view.hoverControl = null;
+      hideTooltip();
       canvas.style.cursor = "default";
       drawFlowCanvas(view);
     });
@@ -691,6 +741,7 @@
       if (e.button !== 0) return;
       isPanning = true;
       panMoved = false;
+      hideTooltip();
       panStartX = e.clientX;
       panStartY = e.clientY;
       panStartScrollLeft = root.scrollLeft;
@@ -718,6 +769,7 @@
 
     canvas.addEventListener("click", (e) => {
       if (Date.now() - lastPanAt < 180) return;
+      hideTooltip();
       const runtime = root.__flowRuntime;
       if (!runtime) return;
       const rect = canvas.getBoundingClientRect();

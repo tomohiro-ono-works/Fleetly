@@ -223,7 +223,8 @@
       const schema = getFormSchema(config, n.connector, n.action);
       const params = {};
       for (const field of schema) {
-        const v = n.form?.[field.key];
+        const hasExplicit = n.form && Object.prototype.hasOwnProperty.call(n.form, field.key);
+        const v = hasExplicit ? n.form[field.key] : undefined;
         if (v !== undefined && v !== "") {
           params[field.key] = v;
         } else if (field.default !== undefined) {
@@ -317,7 +318,8 @@
       schema.forEach((field) => {
         if (!field.required) return;
         const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
-        const v = hasExplicit ? node.form[field.key] : field.default;
+        const useDefaultWhenUnset = field.key !== "input_data";
+        const v = hasExplicit ? node.form[field.key] : (useDefaultWhenUnset ? field.default : "");
         const empty = v === undefined || v === null || String(v).trim() === "";
         if (empty) {
           errors.push(`${stepId}: ${field.label || field.key}`);
