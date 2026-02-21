@@ -5,23 +5,23 @@
   /* Base */
   --color-bg: #ffffff;
   --white: #f9f9f9;
-  --color-text-main: #383838;
-  --color-text-sub: #4f4f4f;
-  --color-text-sub2: #949494;
+  --color-text-main: #4c4c4c;
+  --color-text-sub: #bdbdbd;
+  --color-text-sub2: #bdbdbd;
 
   --base-color: #f2f2f2;
 
   /* Green (Main) */
-  --green-strong: #037a76;
-  --green-base: #037a76;
-  --green-soft: #A7D7C5;
-  --green-ultra-soft: #f7f7f7;
+  --green-strong: #15634b;
+  --green-base: #15634b;
+  --green-soft: #1a7259;
+  --green-ultra-soft: #c1dfbf;
 
   /* Orange (Sub) */
-  --orange-strong: #830dea;
-  --orange-base: #830dea;
-  --orange-soft: #f7a57f;
-  --orange-ultra-soft: #FAD2BF;
+  --orange-strong: #f65824;
+  --orange-base: #f65824;
+  --orange-soft: #fbb6c9;
+  --orange-ultra-soft: #fbb6c9;
 
   /* UI */
   --border-light: #bfbfbf;
@@ -37,7 +37,7 @@
 /* =========================================================
    Base
 ========================================================= */
-* { box-sizing: border-box;
+* { box-sizing: border-box; }
 
 body {
   margin: 0;
@@ -62,9 +62,9 @@ header {
   position: sticky;
   top: 0;
   z-index: 50;
-  background: #2F86BB;
-  color: var(--color-text-main);
-  border-bottom: 1px solid rgba(201, 201, 201, 0.921);
+  background: #1a7259;
+  color: #ffffff;
+  border-bottom: 0px solid rgba(201, 201, 201, 0.921);
   box-shadow: var(--shadow-soft);
 }
 
@@ -72,7 +72,7 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  /* padding: px 2px; */
+  padding: 0px 14px 0px 0px;
 }
 
 .header-left {
@@ -82,8 +82,8 @@ header {
 }
 
 .app-icon {
-  width: 48px;
-  height: 48px;
+  width: 52px;
+  height: 52px;
   object-fit: contain;
   flex: 0 0 auto;
 }
@@ -91,19 +91,30 @@ header {
 .flow-name-input {
   min-width: 220px;
   max-width: 420px;
-  border: 1px solid #dfe0eb;
-  background: #ffffff;
-  color: #150e3a;
-  font-size: 18px;
-  font-weight: 600;
-  padding: 8px 12px;
-  border-radius: 10px;
+  border: 0;
+  background: #17644e;
+  color: #ffffff;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 6px 12px;
+  border-radius: 8px;
 }
 
 .flow-name-input:focus {
   outline: none;
-  border-color: #99d4c4;
-  box-shadow: 0 0 0 2px rgba(153, 212, 196, 0.25);
+  border-color: transparent;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.18);
+}
+
+header .actions button {
+  background: #374151;
+  border: 0;
+  color: #ffffff;
+}
+
+header .actions button:hover {
+  background: #2b3340;
 }
 
 .title {
@@ -134,6 +145,15 @@ button {
 }
 
 button:hover { background: #f9fafb; }
+
+button.primary {
+  background: #374151;
+  border-color: #374151;
+  color: #ffffff;
+}
+button.primary:hover {
+  background: #2b3340;
+}
 
 /* Success (Add Node) */
 button.success {
@@ -203,7 +223,7 @@ main {
   border-radius: 999px;
   background: #fff;
   border: 1px solid var(--border-light);
-  color: var(--color-text-sub);
+  color: #848484;
   margin-top: 8px; /* step位置を少し下げる */
 }
 
@@ -242,7 +262,7 @@ main {
 
 label {
   font-size: 12px;
-  color: var(--color-text-sub);
+  color: #848484;
   padding-top: 8px;
 }
 
@@ -262,8 +282,8 @@ select {
 .row.required-empty input,
 .row.required-empty textarea,
 .row.required-empty select {
-  background: #fdecef;
-  border-color: #fac2d1;
+  background: rgba(251, 182, 201, 0.24);
+  border-color: #fbb6c9;
 }
 
 input:focus,
@@ -788,6 +808,11 @@ main {
   max-width: 100%;
   overflow-x: auto;
   overflow-y: auto;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(to right, #ececec 1px, transparent 1px),
+    linear-gradient(to bottom, #ececec 1px, transparent 1px);
+  background-size: 24px 24px;
   -ms-overflow-style: none;
   scrollbar-width: none;
   /* min-width: 980px; */
@@ -800,6 +825,11 @@ main {
 
 .flow-canvas {
   display: block;
+  background-color: #ffffff;
+  background-image:
+    linear-gradient(to right, #ececec 1px, transparent 1px),
+    linear-gradient(to bottom, #ececec 1px, transparent 1px);
+  background-size: 24px 24px;
 }
 
 .flow-fallback {
@@ -832,17 +862,48 @@ main {
   bottom: 0;
   z-index: 60;
   margin: 0;
-  border-top: 1px solid var(--border-light);
+  border: 1px solid var(--border-light);
   border-radius: 0;
   background: rgba(255, 255, 255, 0.96);
-  box-shadow: 0 -8px 20px rgba(21, 14, 58, 0.12);
+  box-shadow: 0 2px 10px rgba(21, 14, 58, 0.12);
   max-height: 300px;
-  overflow: auto;
+  overflow: hidden;
   padding: 0;
+  height: 300px;
+  max-height: calc(100vh - 84px);
+  min-height: 88px;
+  display: flex;
+  flex-direction: column;
 }
 
 .detail-panel h2 {
   margin: 10px 14px 8px;
+}
+
+.detail-resize-handle {
+  position: relative;
+  top: auto;
+  z-index: 2;
+  height: 12px;
+  flex: 0 0 12px;
+  cursor: ns-resize;
+  background: #f2f2f2;
+  border-bottom: 0;
+  user-select: none;
+}
+
+.detail-panel .node-head {
+  user-select: none;
+}
+
+.detail-resize-handle::after {
+  content: "";
+  display: block;
+  width: 54px;
+  height: 4px;
+  margin: 3px auto 0;
+  border-radius: 999px;
+  background: #374151;
 }
 
 .detail-panel .detail-node {
@@ -852,4 +913,36 @@ main {
   box-shadow: none;
   background: transparent;
   opacity: 1;
+}
+
+#nodeDetail {
+  flex: 1 1 auto;
+  overflow: auto;
+  background: transparent;
+}
+
+/* =========================================================
+   Node Detail Form Colors
+========================================================= */
+.detail-panel input,
+.detail-panel textarea,
+.detail-panel select {
+  background: #ffffff;
+}
+
+.detail-panel .row.required-empty input,
+.detail-panel .row.required-empty textarea,
+.detail-panel .row.required-empty select {
+  background: #fbb6c9;
+  border-color: #f65824;
+}
+
+.detail-panel .sub {
+  color: #f65824;
+}
+
+.detail-panel .badge {
+  background: #374151;
+  border: 0;
+  color: #ffffff;
 }

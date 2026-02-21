@@ -5,15 +5,15 @@ window.CONFIG = {
     { id: "BQConnector",        label: "BigQuery" },
     { id: "CSVConnector",       label: "CSV" },
     { id: "ExcelConnector",     label: "Excel" },
-    { id: "PPTConnector",     label: "PowerPoint" },
+    { id: "PPTConnector",       label: "PowerPoint" },
     { id: "OperationConnector", label: "操作" },
     { id: "DataintegrationConnector", label: "データ加工" },
     { id: "ShellConnector",     label: "シェル" },
-    { id: "VectorConnector",     label: "VectorDB" },
-    { id: "LLMConnector",     label: "LLM" },
-    { id: "WebConnector",     label: "Web操作" },
-    { id: "APIConnector",     label: "API実行" },
-    { id: "PythonConnector",     label: "Python実行" }
+    { id: "VectorConnector",    label: "VectorDB" },
+    { id: "LLMConnector",       label: "LLM" },
+    { id: "WebConnector",       label: "Web操作" },
+    { id: "APIConnector",       label: "API実行" },
+    { id: "PythonConnector",    label: "Python実行" }
   ],
 
   actions: {
@@ -32,8 +32,18 @@ window.CONFIG = {
       { id: "read_excel_range",  label: "エリア指定読み込み" }
     ],
     OperationConnector: [
-      { id: "execute_rename", label: "変数名変更" },
+      { id: "define_values", label: "変数定義" },
+      { id: "loop_tasks", label: "繰り返し処理" },
+      { id: "loop_tasks", label: "フォルダ内のファイルを取得" },
+      { id: "loop_tasks", label: "ファイル名を変更" },
       { id: "execute_move", label: "ファイル移動" }
+    ],
+    DataintegrationConnector: [
+      { id: "filter_fields", label: "列指定" },
+      { id: "filter_fields", label: "条件指定" },
+      { id: "rename_fields", label: "フィールド名変更" },
+      { id: "rename_field_list", label: "フィールド名をリストで変更" },
+      { id: "pivot_axis", label: "ピボット処理" }
     ],
     ShellConnector: [
       { id: "execute_bat", label: "バッチ実行" }
@@ -50,6 +60,11 @@ window.CONFIG = {
       { id: "slide_insert_image", label: "スライド画像添付" }
     ],
     WebConnector: [
+      { id: "lookat_pages", label: "ページを開く" },
+      { id: "lookat_page", label: "要素の取得" },
+      { id: "click_to_web_object", label: "クリック" },
+      { id: "click_to_web_object", label: "JavaScript実行" },
+      { id: "click_to_web_object", label: "クリック" },
       { id: "click_to_web_object", label: "クリック" }
     ],
     APIConnector: [
@@ -62,20 +77,20 @@ window.CONFIG = {
 
   forms: {
     "BQConnector.execute_sql": [
-      { key:"project_id", label:"プロジェクトID", kind:"combo", default:"defult_project", options:["defult_project","defult_project2"], required:true},
+      { key:"project_id", label:"プロジェクト", kind:"combo", default:"defult_project", options:["defult_project","defult_project2"], required:true},
       { key:"sql", label:"SQL", kind:"textarea", required:true, allowVars:true, placeholder:"SELECT ...\nFROM ..." }
     ],
 
     "BQConnector.execute_sql_file": [
-      { key:"project_id", label:"プロジェクトID", kind:"text", required:true, allowVars:true },
+      { key:"project_id", label:"プロジェクト", kind:"combo", default:"defult_project", options:["defult_project","defult_project2"], required:true},
       { key:"sql_file", label:"SQLファイル", kind:"file", required:true },
       { key:"encoding", label:"文字コード", kind:"combo", required:true, default:"utf8", options:["utf8","shift_jis"] }
     ],
     
     "BQConnector.load_data": [
-      { key:"project_id", label:"プロジェクトID", kind:"text", required:true, default:"defult_project", allowVars:true },
-      { key:"dataset_id", label:"データセットID", kind:"text", required:true, default:"defult_dataset", allowVars:true },
-      { key:"table_id", label:"テーブルID", kind:"text", required:true, default:"defult_table", allowVars:true },
+      { key:"project_id", label:"プロジェクト", kind:"combo", default:"defult_project", options:["defult_project","defult_project2"], required:true},
+      { key:"dataset_id", label:"データセット", kind:"combo", default:"defult_dataset", options:["defult_dataset","defult_dataset2"], required:true},
+      { key:"table_id", label:"テーブル", kind:"text", required:true, default:"defult_table", allowVars:true },
       { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" },
       { key:"write_disposition", label:"書き込みモード", kind:"combo", required:true, default:"create_or_replace", options:["create_or_replace","create_or_insert"] },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }

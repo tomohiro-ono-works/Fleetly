@@ -79,12 +79,17 @@
       row.classList.toggle("required-empty", empty);
     }
 
+    function notifyChanged() {
+      updateRequiredState();
+      if (onStateChanged) onStateChanged();
+    }
+
     if (field.kind === "textarea") {
       inputEl = el("textarea", {
         placeholder: field.placeholder || "",
         oninput: (e) => {
           node.form[field.key] = e.target.value;
-          updateRequiredState();
+          notifyChanged();
         }
       });
       inputEl.value = current;
@@ -95,7 +100,7 @@
         placeholder: field.placeholder || "",
         oninput: (e) => {
           node.form[field.key] = e.target.value;
-          updateRequiredState();
+          notifyChanged();
         }
       });
       inputEl.value = current;
@@ -106,12 +111,12 @@
         field,
         current,
         upstreamSteps,
-        onValueChanged: updateRequiredState
+        onValueChanged: notifyChanged
       });
       inputEl = r.input;
       wrapper = r.wrapper;
     } else if (field.kind === "combo") {
-      const r = renderComboInput({ node, field, current, onValueChanged: updateRequiredState });
+      const r = renderComboInput({ node, field, current, onValueChanged: notifyChanged });
       inputEl = r.input;
       wrapper = r.wrapper;
     } else if (field.kind === "file" || field.kind === "dir") {
@@ -121,7 +126,7 @@
           field.placeholder || (field.kind === "dir" ? "フォルダを選択" : "ファイルを選択"),
         oninput: (e) => {
           node.form[field.key] = e.target.value;
-          updateRequiredState();
+          notifyChanged();
         }
       });
       text.value = current;
@@ -158,8 +163,7 @@
           node.form[field.key] = top;
           text.value = node.form[field.key];
         }
-        updateRequiredState();
-        onStateChanged();
+        notifyChanged();
       });
 
       inputEl = text;
@@ -174,7 +178,7 @@
         placeholder: field.placeholder || "",
         oninput: (e) => {
           node.form[field.key] = e.target.value;
-          updateRequiredState();
+          notifyChanged();
         }
       });
       inputEl.value = current;

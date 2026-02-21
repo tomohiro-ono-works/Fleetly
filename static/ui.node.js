@@ -67,6 +67,18 @@
     if (!node.form) node.form = {};
   }
 
+  function hasMissingRequiredField(config, node) {
+    const schema = getFormSchema(config, node.connector, node.action);
+    for (const field of schema) {
+      if (!field.required) continue;
+      const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
+      const v = hasExplicit ? node.form[field.key] : field.default;
+      const empty = v === undefined || v === null || String(v) === "";
+      if (empty) return true;
+    }
+    return false;
+  }
+
   function getSelectedNodeIndex(state) {
     const idx = state.nodes.findIndex((n) => n.id === state.selectedNodeId);
     return idx >= 0 ? idx : 0;
@@ -458,7 +470,7 @@
     const runtime = view.root.__flowRuntime;
     if (!runtime) return;
 
-    const { model, state } = runtime;
+    const { model, state, config } = runtime;
     const { canvas, ctx } = view;
     const rawDpr = window.devicePixelRatio || 1;
     const dpr = Math.max(1, Math.ceil(rawDpr));
@@ -509,11 +521,12 @@
       if (isParallel) ctx.setLineDash([4, 2]);
       else ctx.setLineDash([]);
 
-      if (isStart) ctx.fillStyle = "#2f77c9";
-      else if (isEnd) ctx.fillStyle = "#374151";
+      if (isStart) ctx.fillStyle = "#f2f2f2";
+      else if (isEnd) ctx.fillStyle = "#f2f2f2";
+      else if (isTask && hasMissingRequiredField(config, node.nodeRef)) ctx.fillStyle = "#fbb6c9";
       else ctx.fillStyle = "#ffffff";
 
-      ctx.strokeStyle = isSelected ? "#037a76" : "#cbd5e0";
+      ctx.strokeStyle = isSelected ? "#15634b" : "#bdbdbd";
       ctx.lineWidth = isSelected ? 2 : 1;
       if (isStart) {
         drawOneSideRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, "left");
@@ -535,12 +548,12 @@
         const bx = Math.round(node.x + (NODE_W - bw) / 2);
         const by = Math.round(node.y - Math.floor(bh / 2));
         ctx.fillStyle = "#ffffff";
-        ctx.strokeStyle = "#d2c6de";
+        ctx.strokeStyle = "#c1dfbf";
         ctx.lineWidth = 1;
         drawRoundedRect(ctx, bx, by, bw, bh, 8);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = "#150e3a";
+        ctx.fillStyle = "#848484";
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(badgeText, bx + bw / 2, by + bh / 2);
@@ -551,8 +564,10 @@
       const icon = iconSrc ? ensureConnectorIcon(view, iconSrc) : null;
       const hasIcon = !!(icon && !icon.__failed && icon.complete && icon.naturalWidth > 0);
 
-      ctx.fillStyle = isStart || isEnd ? "#ffffff" : "#2d3748";
-      ctx.font = "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+      ctx.fillStyle = isStart || isEnd ? "#374151" : "#4c4c4c";
+      ctx.font = isStart || isEnd
+        ? "700 12px 'Segoe UI', 'Yu Gothic UI', sans-serif"
+        : "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
       if (isStart || isEnd) {
         ctx.textBaseline = "middle";
@@ -583,7 +598,7 @@
       }
 
       if (isTask) {
-        ctx.fillStyle = "#4a5568";
+        ctx.fillStyle = "#848484";
         ctx.font = "11px 'Segoe UI', 'Yu Gothic UI', sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
@@ -595,13 +610,13 @@
     model.controls.forEach((ctrl) => {
       const isHover = view.hoverControl === ctrl;
       ctx.fillStyle = "#ffffff";
-      ctx.strokeStyle = isHover ? "#037a76" : "#8ea1b5";
+      ctx.strokeStyle = isHover ? "#15634b" : "#bdbdbd";
       ctx.lineWidth = isHover ? 2 : 1;
       ctx.beginPath();
       ctx.arc(ctrl.x, ctrl.y, ctrl.r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = isHover ? "#037a76" : "#41556b";
+      ctx.fillStyle = isHover ? "#15634b" : "#4c4c4c";
       ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(ctrl.label, ctrl.x, ctrl.y + 3);
@@ -655,36 +670,54 @@
     });
 
     root.addEventListener("wheel", (e) => {
-      // Hide scrollbar UI while still allowing horizontal navigation with wheel.
-      const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+      // Horizontal wheel/Shift+wheel pans left-right.
+      // Normal vertical wheel is kept as-is for up/down scrolling.
+      const horizontalIntent = e.shiftKey || Math.abs(e.deltaX) > Math.abs(e.deltaY);
+      if (!horizontalIntent) return;
+      const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
       if (delta === 0) return;
       root.scrollLeft += delta;
       e.preventDefault();
     }, { passive: false });
 
     let isPanning = false;
+    let panMoved = false;
     let panStartX = 0;
+    let panStartY = 0;
     let panStartScrollLeft = 0;
+    let panStartScrollTop = 0;
+    let lastPanAt = 0;
     canvas.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       isPanning = true;
+      panMoved = false;
       panStartX = e.clientX;
+      panStartY = e.clientY;
       panStartScrollLeft = root.scrollLeft;
+      panStartScrollTop = root.scrollTop;
       canvas.style.cursor = "grabbing";
+      document.body.style.userSelect = "none";
       e.preventDefault();
     });
     window.addEventListener("mousemove", (e) => {
       if (!isPanning) return;
       const dx = e.clientX - panStartX;
+      const dy = e.clientY - panStartY;
+      if (Math.abs(dx) > 2 || Math.abs(dy) > 2) panMoved = true;
       root.scrollLeft = panStartScrollLeft - dx;
+      root.scrollTop = panStartScrollTop - dy;
     });
     window.addEventListener("mouseup", () => {
       if (!isPanning) return;
+      if (panMoved) lastPanAt = Date.now();
       isPanning = false;
+      panMoved = false;
       canvas.style.cursor = "default";
+      document.body.style.userSelect = "";
     });
 
     canvas.addEventListener("click", (e) => {
+      if (Date.now() - lastPanAt < 180) return;
       const runtime = root.__flowRuntime;
       if (!runtime) return;
       const rect = canvas.getBoundingClientRect();
@@ -737,7 +770,7 @@
       state.nodes.forEach((node) => ensureNodeDefaults(config, node));
       const model = buildFlowModel(state, config);
       const view = ensureFlowCanvas(root);
-      root.__flowRuntime = { state, model, onStateChanged };
+      root.__flowRuntime = { state, config, model, onStateChanged };
       drawFlowCanvas(view);
     } catch (err) {
       console.error("flowchart render failed", err);
@@ -804,12 +837,7 @@
       }
     }
 
-    const vars = el("div", { class: "variables" }, [
-      ...upstreamSteps.map((v) => el("span", { class: "var-chip" }, [document.createTextNode(`\${${v}}`)]))
-    ]);
-
-    const foot = el("div", { class: "node-foot" }, [vars]);
-    root.appendChild(el("section", { class: "node detail-node" }, [head, body, foot]));
+    root.appendChild(el("section", { class: "node detail-node" }, [head, body]));
   }
 
   window.uiNode = { normalizeSteps, renderFlowChart, renderNodeDetail };

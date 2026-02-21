@@ -51,6 +51,8 @@
   const btnSave = document.getElementById("btnSave");
   const btnReset = document.getElementById("btnReset");
   const flowNameInput = document.getElementById("flowName");
+  const detailPanel = document.querySelector(".detail-panel");
+  const mainRoot = document.querySelector("main");
 
   const CONNECTOR_EXPORT_ID = {
     BQConnector: "bigquery_connector",
@@ -337,6 +339,91 @@
       .trim();
     return safe || "フロー１";
   }
+
+  function getDetailPanelHeightBounds() {
+    const header = document.querySelector("header");
+    const headerH = header ? header.getBoundingClientRect().height : 64;
+    const minH = 88;
+    const maxH = Math.max(minH, Math.floor(window.innerHeight - headerH - 32));
+    const midH = Math.max(minH, Math.floor((minH + maxH) / 2));
+    return { minH, maxH, midH };
+  }
+
+  function applyDetailPanelHeight(px) {
+    if (!detailPanel) return;
+    const { minH, maxH } = getDetailPanelHeightBounds();
+    const h = Math.max(minH, Math.min(maxH, Math.floor(px)));
+    detailPanel.style.height = `${h}px`;
+    if (mainRoot) mainRoot.style.paddingBottom = `${h + 20}px`;
+    applyFlowViewportHeight();
+  }
+
+  function applyFlowViewportHeight() {
+    if (!flowRoot || !detailPanel) return;
+    const header = document.querySelector("header");
+    const headerH = header ? header.getBoundingClientRect().height : 64;
+    const detailH = detailPanel.getBoundingClientRect().height || 300;
+    const available = Math.floor(window.innerHeight - headerH - detailH - 28);
+    flowRoot.style.height = `${Math.max(180, available)}px`;
+  }
+
+  function toggleDetailPanelHeight() {
+    if (!detailPanel) return;
+    const { minH, midH } = getDetailPanelHeightBounds();
+    const current = detailPanel.getBoundingClientRect().height || midH;
+    const toMid = Math.abs(current - minH) <= 10;
+    applyDetailPanelHeight(toMid ? midH : minH);
+  }
+
+  function setupDetailPanelResizer() {
+    if (!detailPanel) return;
+    const handle = detailPanel.querySelector(".detail-resize-handle");
+    if (!handle) return;
+
+    applyDetailPanelHeight(detailPanel.getBoundingClientRect().height || 300);
+
+    let dragging = false;
+    let startY = 0;
+    let startH = 0;
+
+    handle.addEventListener("mousedown", (e) => {
+      dragging = true;
+      startY = e.clientY;
+      startH = detailPanel.getBoundingClientRect().height;
+      document.body.style.userSelect = "none";
+      e.preventDefault();
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!dragging) return;
+      const delta = startY - e.clientY;
+      applyDetailPanelHeight(startH + delta);
+    });
+
+    window.addEventListener("mouseup", () => {
+      if (!dragging) return;
+      dragging = false;
+      document.body.style.userSelect = "";
+    });
+
+    window.addEventListener("resize", () => {
+      const current = detailPanel.getBoundingClientRect().height || 300;
+      applyDetailPanelHeight(current);
+      applyFlowViewportHeight();
+    });
+
+    detailPanel.addEventListener("dblclick", (e) => {
+      const hitHandle = e.target.closest(".detail-resize-handle");
+      const hitNodeHead = e.target.closest(".node-head");
+      if (!hitHandle && !hitNodeHead) return;
+      e.preventDefault();
+      window.getSelection?.()?.removeAllRanges?.();
+      toggleDetailPanelHeight();
+    });
+  }
+
+  setupDetailPanelResizer();
+  applyFlowViewportHeight();
 
   if (btnSave) {
     btnSave.addEventListener("click", () => {
