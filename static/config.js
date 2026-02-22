@@ -34,8 +34,8 @@ window.CONFIG = {
     OperationConnector: [
       { id: "define_values", label: "変数定義" },
       { id: "loop_tasks", label: "繰り返し処理" },
-      { id: "loop_tasks", label: "フォルダ内のファイルを取得" },
-      { id: "loop_tasks", label: "ファイル名を変更" },
+      { id: "get_files", label: "フォルダ内のファイルを取得" },
+      { id: "rename_files", label: "ファイル名を変更" },
       { id: "execute_move", label: "ファイル移動" }
     ],
     DataintegrationConnector: [

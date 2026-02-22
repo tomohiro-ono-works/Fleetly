@@ -49,7 +49,36 @@
 
 
 
+# 操作
+## ローカルリポジトリで誤った修正をしたので、クラウドリポジトリからpullしてもとに戻したいです。
 
-上の名称を作る
+リモートの最新情報を取得する
+git fetch origin
 
-  name: "CLI動作テスト用フロー"
+ローカルブランチをリモートの状態に強制リセットする
+git reset --hard origin/main
+
+特定のファイルだけ戻したい場合
+git restore <ファイル名>
+
+または、リモートの状態から特定のファイルを取り出す：
+git checkout origin/main -- <ファイル名>
+
+修正を念のため残しておきたい場合
+git stash       # 修正を一時保存
+git pull        # 最新を取得
+
+新規作成した（追跡対象外の）ファイルも消したい場合
+git clean -fd
+
+
+
+git add .
+git commit -m "I/Pをマウスオーバーしたら表示できるようにしてください"
+git push origin main
+
+
+# codex用フォルダ
+
+## プロジェクトルートに作成
+mkdir .codex\skills

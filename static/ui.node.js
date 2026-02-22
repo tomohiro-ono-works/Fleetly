@@ -85,48 +85,398 @@
     return idx >= 0 ? idx : 0;
   }
 
+  function isLoopRootNode(node) {
+    return !!node && node.action === "loop_tasks" && !node.loopOwnerId;
+  }
+
+  function getChildrenByParent(state, parentId) {
+    return state.nodes
+      .filter((n) => (n.parentId ?? null) === (parentId ?? null))
+      .sort((a, b) => (Number(a.parallelOrder) || 1) - (Number(b.parallelOrder) || 1));
+  }
+
+  function getLoopFirstInternalChild(state, loopRootId) {
+    return getChildrenByParent(state, loopRootId).find((n) => n.loopOwnerId === loopRootId) || null;
+  }
+
+  function getLoopOutsideChildren(state, loopRootId) {
+    return getChildrenByParent(state, loopRootId).filter((n) => n.loopOwnerId !== loopRootId);
+  }
+
+  function normalizeChildrenForParent(state, parentId) {
+    const children = getChildrenByParent(state, parentId);
+    if (!children.length) return;
+    const first = children[0];
+    children.forEach((child, idx) => {
+      child.parallelOrder = idx + 1;
+      child.parallelOf = idx === 0 ? null : first.id;
+    });
+  }
+
+  function moveChildBefore(state, parentId, childId, beforeId) {
+    const children = getChildrenByParent(state, parentId);
+    const target = children.find((n) => n.id === childId);
+    if (!target) return;
+    const rest = children.filter((n) => n.id !== childId);
+    const pos = rest.findIndex((n) => n.id === beforeId);
+    const ordered = pos >= 0
+      ? [...rest.slice(0, pos), target, ...rest.slice(pos)]
+      : [...rest, target];
+    if (!ordered.length) return;
+    const first = ordered[0];
+    ordered.forEach((node, idx) => {
+      node.parallelOrder = idx + 1;
+      node.parallelOf = idx === 0 ? null : first.id;
+    });
+  }
+
+  function moveChildToFirst(state, parentId, childId) {
+    const children = getChildrenByParent(state, parentId);
+    if (!children.length) return;
+    const firstId = children[0].id;
+    if (firstId === childId) return;
+    moveChildBefore(state, parentId, childId, firstId);
+  }
+
+  function createNodeAtParentEnd(state, parentId) {
+    const before = new Set(state.nodes.map((n) => n.id));
+    const siblings = getChildrenByParent(state, parentId);
+    if (siblings.length) {
+      const sourceIndex = state.nodes.findIndex((n) => n.id === siblings[0].id);
+      if (sourceIndex >= 0) addParallelAfter(state, sourceIndex, { parentId });
+    } else if (parentId === null) {
+      insertNodeAt(state, 0);
+    } else {
+      const parentIndex = state.nodes.findIndex((n) => n.id === parentId);
+      if (parentIndex >= 0) addNodeAfter(state, parentIndex);
+    }
+    return state.nodes.find((n) => !before.has(n.id)) || null;
+  }
+
+  function runAndFindNewNode(state, fn) {
+    const before = new Set(state.nodes.map((n) => n.id));
+    fn();
+    return state.nodes.find((n) => !before.has(n.id)) || null;
+  }
+
+  function createNodeAfterAnchor(state, anchorId) {
+    if (!anchorId) {
+      return runAndFindNewNode(state, () => insertNodeAt(state, 0));
+    }
+    const anchorIndex = state.nodes.findIndex((n) => n.id === anchorId);
+    if (anchorIndex < 0) return null;
+    return runAndFindNewNode(state, () => addNodeAfter(state, anchorIndex));
+  }
+
+  function createParallelNodeAtParent(state, parentId, sourceId) {
+    const sourceIndex = state.nodes.findIndex((n) => n.id === sourceId);
+    if (sourceIndex < 0) return null;
+    return runAndFindNewNode(state, () => addParallelAfter(state, sourceIndex, { parentId }));
+  }
+
+  function insertLoopInternalAtAnchor(state, loopRootId, anchorId) {
+    if (!loopRootId || !anchorId) return null;
+    const internalNext = getChildrenByParent(state, anchorId).find((n) => n.loopOwnerId === loopRootId) || null;
+    let newNode = null;
+
+    if (internalNext) {
+      moveChildToFirst(state, anchorId, internalNext.id);
+      newNode = createNodeAfterAnchor(state, anchorId);
+    } else {
+      newNode = createNodeAtParentEnd(state, anchorId);
+    }
+    if (!newNode) return null;
+
+    newNode.loopOwnerId = loopRootId;
+    normalizeChildrenForParent(state, anchorId);
+    normalizeChildrenForParent(state, newNode.id);
+    return newNode;
+  }
+
+  function insertAfterLoopEnd(state, loopRootId, rightId) {
+    if (!loopRootId) return null;
+    const right = rightId ? state.nodes.find((n) => n.id === rightId) : null;
+
+    let newNode = null;
+    if (right && (right.parentId ?? null) === loopRootId) {
+      moveChildToFirst(state, loopRootId, right.id);
+      newNode = createNodeAfterAnchor(state, loopRootId);
+    } else {
+      newNode = createNodeAtParentEnd(state, loopRootId);
+    }
+    if (!newNode) return null;
+
+    delete newNode.loopOwnerId;
+    normalizeChildrenForParent(state, loopRootId);
+    normalizeChildrenForParent(state, newNode.id);
+    return newNode;
+  }
+
+  function addParallelAfterLoopEnd(state, loopRootId, rightId) {
+    if (!loopRootId || !rightId) return null;
+    const right = state.nodes.find((n) => n.id === rightId);
+    if (!right || (right.parentId ?? null) !== loopRootId) return null;
+
+    const newNode = createParallelNodeAtParent(state, loopRootId, right.id);
+    if (!newNode) return null;
+    delete newNode.loopOwnerId;
+    normalizeChildrenForParent(state, loopRootId);
+    return newNode;
+  }
+
   function getActionLabel(config, connectorId, actionId) {
     const actions = config.actions?.[connectorId] || [];
     const action = actions.find((a) => a.id === actionId);
     return jpLabel(action || { id: actionId });
   }
 
-  function renderConnectorSelect({ config, node, onStateChanged }) {
-    const s = el("select", {
-      onchange: (e) => {
-        node.connector = e.target.value;
-        const actions = (config.actions && config.actions[node.connector]) || [];
-        node.action = actions[0]?.id || "";
-        node.form = {};
-        onStateChanged();
-      }
-    });
-
-    const connectors = config.connectors || [];
-    for (const c of connectors) {
-      const opt = el("option", { value: c.id }, [document.createTextNode(jpLabel(c))]);
-      if (c.id === node.connector) opt.selected = true;
-      s.appendChild(opt);
+  const CONNECTOR_CATEGORY_GROUPS = [
+    {
+      id: "data",
+      label: "データ操作",
+      connectorIds: ["BQConnector", "CSVConnector", "ExcelConnector", "DataintegrationConnector"]
+    },
+    {
+      id: "process",
+      label: "プロセス系",
+      connectorIds: ["OperationConnector", "WebConnector", "PPTConnector"]
+    },
+    {
+      id: "science",
+      label: "サイエンス系",
+      connectorIds: ["PythonConnector", "VectorConnector", "LLMConnector", "APIConnector", "ShellConnector"]
     }
-    return s;
+  ];
+
+  function connectorDisplayLabel(connector) {
+    if (!connector) return "";
+    const label = jpLabel(connector);
+    const id = connector.id || "";
+    return label || id;
   }
 
-  function renderActionSelect({ config, node, onStateChanged }) {
-    const s = el("select", {
-      onchange: (e) => {
-        node.action = e.target.value;
-        node.form = {};
-        onStateChanged();
+  function buildConnectorGroups(config, selectedConnectorId) {
+    const connectors = config.connectors || [];
+    const byId = new Map(connectors.map((c) => [c.id, c]));
+    const used = new Set();
+
+    const groups = CONNECTOR_CATEGORY_GROUPS
+      .map((group) => {
+        const items = group.connectorIds.map((id) => byId.get(id)).filter(Boolean);
+        items.forEach((item) => used.add(item.id));
+        return { id: group.id, label: group.label, items };
+      })
+      .filter((group) => group.items.length);
+
+    const others = connectors.filter((c) => !used.has(c.id));
+    if (others.length) {
+      groups.push({ id: "others", label: "その他", items: others });
+    }
+
+    if (!groups.length) {
+      groups.push({ id: "all", label: "コネクタ", items: connectors });
+    }
+
+    if (selectedConnectorId && !connectors.some((c) => c.id === selectedConnectorId)) {
+      groups.push({
+        id: `adhoc_${selectedConnectorId}`,
+        label: "その他",
+        items: [{ id: selectedConnectorId, label: selectedConnectorId }]
+      });
+    }
+
+    return groups;
+  }
+
+  function findConnectorGroupId(groups, connectorId) {
+    if (!connectorId) return groups[0]?.id || "";
+    const hit = groups.find((group) => group.items.some((item) => item.id === connectorId));
+    return hit?.id || groups[0]?.id || "";
+  }
+
+  function renderConnectorSelect({ config, node, onStateChanged }) {
+    const groups = buildConnectorGroups(config, node.connector);
+    let activeGroupId = findConnectorGroupId(groups, node.connector);
+    let activeConnectorId = node.connector || (groups[0]?.items?.[0]?.id || "");
+
+    const wrapper = el("div", { class: "connector-flyout" });
+    const trigger = el("button", { class: "connector-flyout-trigger", type: "button" });
+    const menu = el("div", { class: "connector-flyout-menu" });
+    const groupPane = el("div", { class: "connector-flyout-groups" });
+    const itemPane = el("div", { class: "connector-flyout-items" });
+    const actionPane = el("div", { class: "connector-flyout-actions" });
+    menu.appendChild(groupPane);
+    menu.appendChild(itemPane);
+    menu.appendChild(actionPane);
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(menu);
+
+    let open = false;
+    let outsideHandler = null;
+    function getThemeGroupId(groupId) {
+      if (groupId === "data" || groupId === "process" || groupId === "science") return groupId;
+      return "neutral";
+    }
+
+    function updateMenuTheme() {
+      wrapper.setAttribute("data-active-group", getThemeGroupId(activeGroupId));
+    }
+
+    function updateTriggerLabel() {
+      const selected =
+        (config.connectors || []).find((c) => c.id === node.connector) ||
+        groups.flatMap((g) => g.items).find((c) => c.id === node.connector) ||
+        { id: node.connector || "", label: node.connector || "" };
+      const connectorText = connectorDisplayLabel(selected) || "コネクタを選択";
+      const actionText = getActionLabel(config, node.connector, node.action) || "";
+      const merged = actionText ? `${connectorText} / ${actionText}` : connectorText;
+      trigger.textContent = merged;
+      trigger.title = merged;
+    }
+
+    function getActiveGroup() {
+      return groups.find((g) => g.id === activeGroupId) || groups[0] || null;
+    }
+
+    function normalizeActiveConnector() {
+      const group = getActiveGroup();
+      if (!group || !group.items.length) {
+        activeConnectorId = "";
+        return;
       }
+      if (!group.items.some((item) => item.id === activeConnectorId)) {
+        activeConnectorId = group.items[0].id;
+      }
+    }
+
+    function setOpen(next) {
+      if (open === next) return;
+      open = next;
+      wrapper.classList.toggle("is-open", open);
+      if (open) {
+        outsideHandler = (ev) => {
+          if (!wrapper.contains(ev.target)) setOpen(false);
+        };
+        document.addEventListener("pointerdown", outsideHandler);
+      } else if (outsideHandler) {
+        document.removeEventListener("pointerdown", outsideHandler);
+        outsideHandler = null;
+      }
+    }
+
+    function renderGroups() {
+      groupPane.innerHTML = "";
+      groups.forEach((group) => {
+        const btn = el(
+          "button",
+          {
+            type: "button",
+            "data-group": group.id,
+            class: `connector-group-btn${group.id === activeGroupId ? " is-active" : ""}`,
+            onclick: () => {
+              activeGroupId = group.id;
+              updateMenuTheme();
+              normalizeActiveConnector();
+              renderGroups();
+              renderItems();
+              renderActions();
+            }
+          },
+          [document.createTextNode(group.label)]
+        );
+        groupPane.appendChild(btn);
+      });
+    }
+
+    function selectConnectorAction(connectorId, actionId) {
+      const changed = node.connector !== connectorId || node.action !== actionId;
+      node.connector = connectorId;
+      node.action = actionId || "";
+      if (changed) node.form = {};
+      setOpen(false);
+      onStateChanged();
+    }
+
+    function renderItems() {
+      itemPane.innerHTML = "";
+      const group = getActiveGroup();
+      if (!group || !group.items.length) {
+        itemPane.appendChild(el("div", { class: "connector-item-empty" }, [document.createTextNode("コネクタがありません")]));
+        return;
+      }
+
+      group.items.forEach((connector) => {
+        const isSelected = connector.id === activeConnectorId;
+        const btn = el(
+          "button",
+          {
+            type: "button",
+            class: `connector-item-btn${isSelected ? " is-active" : ""}`,
+            onclick: () => {
+              activeConnectorId = connector.id;
+              renderItems();
+              renderActions();
+            }
+          },
+          [document.createTextNode(connectorDisplayLabel(connector))]
+        );
+        itemPane.appendChild(btn);
+      });
+    }
+
+    function renderActions() {
+      actionPane.innerHTML = "";
+      if (!activeConnectorId) {
+        actionPane.appendChild(el("div", { class: "connector-action-empty" }, [document.createTextNode("アクションがありません")]));
+        return;
+      }
+      const actions = (config.actions && config.actions[activeConnectorId]) || [];
+      if (!actions.length) {
+        actionPane.appendChild(
+          el(
+            "button",
+            {
+              type: "button",
+              class: `connector-action-btn${node.connector === activeConnectorId && !node.action ? " is-active" : ""}`,
+              onclick: () => selectConnectorAction(activeConnectorId, "")
+            },
+            [document.createTextNode("このコネクタを選択")]
+          )
+        );
+        return;
+      }
+
+      actions.forEach((action) => {
+        const isSelected = node.connector === activeConnectorId && node.action === action.id;
+        const btn = el(
+          "button",
+          {
+            type: "button",
+            class: `connector-action-btn${isSelected ? " is-active" : ""}`,
+            onclick: () => selectConnectorAction(activeConnectorId, action.id)
+          },
+          [document.createTextNode(jpLabel(action || { id: action.id }))]
+        );
+        actionPane.appendChild(btn);
+      });
+    }
+
+    trigger.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setOpen(!open);
+    });
+    wrapper.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") setOpen(false);
     });
 
-    const actions = (config.actions && config.actions[node.connector]) || [];
-    for (const a of actions) {
-      const opt = el("option", { value: a.id }, [document.createTextNode(jpLabel(a))]);
-      if (a.id === node.action) opt.selected = true;
-      s.appendChild(opt);
-    }
-    return s;
+    normalizeActiveConnector();
+    updateMenuTheme();
+    updateTriggerLabel();
+    renderGroups();
+    renderItems();
+    renderActions();
+    return wrapper;
   }
 
   function createPseudoNode(id, text, kind) {
@@ -170,14 +520,14 @@
     const normalizedNodes = state.nodes.map((node, idx) => {
       let parentId = node.parentId || null;
       if (parentId && !rawById.has(parentId)) parentId = null;
-
       const parallelOrder = Number(node.parallelOrder) || idx + 1;
       return { ...node, parentId, parallelOrder };
     });
 
+    const parentKey = (parentId) => parentId || start.id;
     const childrenByParent = new Map();
     function pushChild(parentId, node) {
-      const key = parentId || start.id;
+      const key = parentKey(parentId);
       if (!childrenByParent.has(key)) childrenByParent.set(key, []);
       childrenByParent.get(key).push(node);
     }
@@ -190,67 +540,121 @@
         return 0;
       });
     });
+    function getChildren(parentId) {
+      return childrenByParent.get(parentKey(parentId)) || [];
+    }
 
     const viewById = new Map();
     normalizedNodes.forEach((node) => viewById.set(node.id, createTaskView(node, config)));
 
+    const loopMetaByRootId = new Map();
+    const loopOwnerByNodeId = new Map();
+    const loopRootIdByLoopEndId = new Map();
+
+    normalizedNodes.filter((n) => isLoopRootNode(n)).forEach((rootNode) => {
+      const chainIds = [];
+      const seen = new Set([rootNode.id]);
+      let currentId = rootNode.id;
+      while (true) {
+        const next = getChildren(currentId).find((c) => c.loopOwnerId === rootNode.id);
+        if (!next || seen.has(next.id)) break;
+        chainIds.push(next.id);
+        loopOwnerByNodeId.set(next.id, rootNode.id);
+        seen.add(next.id);
+        currentId = next.id;
+      }
+
+      const outsideIds = getChildren(rootNode.id)
+        .filter((c) => c.loopOwnerId !== rootNode.id)
+        .map((c) => c.id);
+      const loopEndId = `__loop_end__${rootNode.id}`;
+      const meta = {
+        rootId: rootNode.id,
+        loopEndId,
+        chainIds,
+        chainSet: new Set(chainIds),
+        outsideIds
+      };
+      loopMetaByRootId.set(rootNode.id, meta);
+      loopRootIdByLoopEndId.set(loopEndId, rootNode.id);
+      viewById.set(loopEndId, createPseudoNode(loopEndId, "繰り返し終了", "loop-end"));
+    });
+
+    const displayChildren = new Map();
+    const setDisplayChildren = (id, ids) => displayChildren.set(id, (ids || []).filter(Boolean));
+
+    setDisplayChildren(start.id, getChildren(null).map((n) => n.id));
+
+    normalizedNodes.forEach((node) => {
+      if (isLoopRootNode(node) && loopMetaByRootId.has(node.id)) {
+        const meta = loopMetaByRootId.get(node.id);
+        const firstInner = meta.chainIds[0] || null;
+        setDisplayChildren(node.id, [firstInner || meta.loopEndId]);
+        setDisplayChildren(meta.loopEndId, meta.outsideIds.slice());
+        return;
+      }
+
+      const ownerRootId = loopOwnerByNodeId.get(node.id);
+      if (ownerRootId) {
+        const meta = loopMetaByRootId.get(ownerRootId);
+        const chain = meta?.chainIds || [];
+        const idx = chain.indexOf(node.id);
+        const nextInChain = idx >= 0 ? chain[idx + 1] : null;
+        const realChildren = getChildren(node.id).map((c) => c.id);
+        const extraChildren = realChildren.filter((id) => id !== nextInChain);
+        setDisplayChildren(node.id, [nextInChain || meta.loopEndId, ...extraChildren]);
+        return;
+      }
+
+      setDisplayChildren(node.id, getChildren(node.id).map((n) => n.id));
+    });
+
+    loopMetaByRootId.forEach((meta) => {
+      if (!displayChildren.has(meta.loopEndId)) {
+        setDisplayChildren(meta.loopEndId, meta.outsideIds.slice());
+      }
+    });
+
     start.x = START_X;
     start.y = START_Y;
 
-    const depthById = new Map();
-    const yById = new Map();
+    const depthById = new Map([[start.id, 0]]);
+    const nodeMap = new Map([[start.id, start], ...Array.from(viewById.entries()), [end.id, end]]);
 
-    function layoutChildren(parentId, parentDepth, startY) {
-      const key = parentId || start.id;
-      const children = childrenByParent.get(key) || [];
-      let yCursor = startY;
-      children.forEach((child, idx) => {
-        const view = viewById.get(child.id);
-        if (!view) return;
+    function layoutNode(nodeId, depth, y, visiting) {
+      const view = nodeMap.get(nodeId);
+      if (!view) return y + NODE_H;
+      if (visiting.has(nodeId)) return y + NODE_H;
 
-        const depth = parentDepth + 1;
-        depthById.set(child.id, depth);
-        yById.set(child.id, yCursor);
-        view.x = START_X + LEVEL_MARGIN * depth;
-        view.y = yCursor;
-        view.children = [];
+      visiting.add(nodeId);
+      view.x = START_X + LEVEL_MARGIN * depth;
+      view.y = y;
+      depthById.set(nodeId, depth);
 
-        // Next sibling goes one row down. Descendants are always further right.
-        yCursor += NODE_H + MIN_SIBLING_GAP;
-
-        // Child subtree starts from the same Y as the child itself.
-        layoutChildren(child.id, depth, view.y);
-
-        // Option 11=3: keep global stacking by using the furthest used Y so far.
-        yCursor = Math.max(yCursor, getMaxBottom(childrenByParent, yById, child.id));
-
-        // When parent has no right node, only I should be visible (handled in controls).
-        if (idx === 0 && parentId === null) {
-          start.children = [child.id];
-        }
+      const children = displayChildren.get(nodeId) || [];
+      let bottom = y + NODE_H;
+      let childY = y;
+      children.forEach((childId) => {
+        const childBottom = layoutNode(childId, depth + 1, childY, visiting);
+        bottom = Math.max(bottom, childBottom);
+        childY = childBottom + MIN_SIBLING_GAP;
       });
+      visiting.delete(nodeId);
+      return bottom;
     }
 
-    function getMaxBottom(childrenMap, yMap, rootId) {
-      let max = (yMap.get(rootId) || START_Y) + NODE_H + MIN_SIBLING_GAP;
-      const queue = [rootId];
-      while (queue.length) {
-        const id = queue.shift();
-        const y = yMap.get(id);
-        if (y !== undefined) max = Math.max(max, y + NODE_H + MIN_SIBLING_GAP);
-        const children = childrenMap.get(id) || [];
-        children.forEach((n) => queue.push(n.id));
-      }
-      return max;
-    }
+    const rootChildren = displayChildren.get(start.id) || [];
+    let yCursor = START_Y;
+    rootChildren.forEach((childId) => {
+      const subtreeBottom = layoutNode(childId, 1, yCursor, new Set([start.id]));
+      yCursor = subtreeBottom + MIN_SIBLING_GAP;
+    });
 
-    layoutChildren(null, 0, START_Y);
-
-    const taskViews = normalizedNodes
-      .map((node) => viewById.get(node.id))
+    const taskViews = normalizedNodes.map((node) => viewById.get(node.id)).filter(Boolean);
+    const loopEndViews = Array.from(loopMetaByRootId.values())
+      .map((meta) => viewById.get(meta.loopEndId))
       .filter(Boolean);
 
-    const nodeMap = new Map([[start.id, start], ...taskViews.map((v) => [v.id, v]), [end.id, end]]);
     const edges = [];
     const edgeKeys = new Set();
     const pushEdge = (from, to, kind) => {
@@ -261,73 +665,191 @@
       edges.push({ from, to, kind });
     };
 
-    // Parent->child edges only (parentId based).
-    normalizedNodes.forEach((node) => {
-      const fromId = node.parentId || start.id;
-      const siblings = childrenByParent.get(node.parentId || start.id) || [];
-      const firstSibling = siblings[0];
-      const edgeKind = firstSibling && firstSibling.id === node.id ? "tree" : "parallel";
-      pushEdge(fromId, node.id, edgeKind);
+    displayChildren.forEach((children, parentId) => {
+      children.forEach((childId, idx) => {
+        const edgeKind = idx === 0 ? "tree" : "parallel";
+        pushEdge(parentId, childId, edgeKind);
+      });
     });
 
-    // Leaves -> end
-    const hasChildren = new Set();
-    normalizedNodes.forEach((n) => hasChildren.add(n.parentId || start.id));
-    const leaves = normalizedNodes.filter((n) => !hasChildren.has(n.id));
-    leaves.forEach((leaf) => pushEdge(leaf.id, end.id, "to-end"));
-    if (!leaves.length) pushEdge(start.id, end.id, "to-end");
+    const leaves = [...taskViews, ...loopEndViews]
+      .filter((view) => (displayChildren.get(view.id) || []).length === 0);
+    leaves.forEach((leaf) => {
+      const edgeKind = leaf.kind === "loop-end" ? "to-end-main" : "to-end";
+      pushEdge(leaf.id, end.id, edgeKind);
+    });
+    if (!leaves.length) pushEdge(start.id, end.id, "to-end-main");
 
     const maxDepth = Math.max(1, ...Array.from(depthById.values()));
     end.x = START_X + LEVEL_MARGIN * (maxDepth + 1);
-    end.y = START_Y; // fixed to top
+    end.y = START_Y;
 
     const controls = [];
-    function addControls(anchorId, anchorView) {
-      const children = childrenByParent.get(anchorId || start.id) || [];
-      const right = children.length ? children[0] : null;
+    function pushInsertControl({ anchorId, rightId, x, y, mode, loopRootId }) {
+      controls.push({
+        kind: "insert",
+        anchorId,
+        rightId: rightId || null,
+        x,
+        y,
+        r: BTN_R,
+        label: "I",
+        mode: mode || "normal",
+        loopRootId: loopRootId || null
+      });
+    }
+    function pushParallelControl({ anchorId, rightId, x, y, mode, loopRootId }) {
+      controls.push({
+        kind: "parallel",
+        anchorId,
+        rightId: rightId || null,
+        x,
+        y,
+        r: BTN_R,
+        label: "P",
+        mode: mode || "normal",
+        loopRootId: loopRootId || null
+      });
+    }
+
+    function addNormalControls(anchorId, anchorView) {
+      const children = displayChildren.get(anchorId) || [];
+      const rightId = children[0] || null;
       const centerY = anchorView.y + NODE_H / 2;
       const cx = anchorView.x + NODE_W + BTN_X_OFFSET;
 
-      if (right) {
-        controls.push({
-          kind: "insert",
-          anchorId: anchorId || start.id,
-          rightId: right.id,
-          x: cx,
-          y: centerY - BTN_GAP / 2,
-          r: BTN_R,
-          label: "I"
-        });
-        controls.push({
-          kind: "parallel",
-          anchorId: anchorId || start.id,
-          rightId: right.id,
-          x: cx,
-          y: centerY + BTN_GAP / 2,
-          r: BTN_R,
-          label: "P"
-        });
+      if (rightId) {
+        pushInsertControl({ anchorId, rightId, x: cx, y: centerY - BTN_GAP / 2 });
+        pushParallelControl({ anchorId, rightId, x: cx, y: centerY + BTN_GAP / 2 });
       } else {
-        controls.push({
-          kind: "insert",
-          anchorId: anchorId || start.id,
-          rightId: null,
-          x: cx,
-          y: centerY,
-          r: BTN_R,
-          label: "I"
-        });
+        pushInsertControl({ anchorId, rightId: null, x: cx, y: centerY });
       }
     }
 
-    addControls(null, start);
-    taskViews.forEach((view) => addControls(view.id, view));
+    addNormalControls(start.id, start);
+    taskViews.forEach((view) => {
+      const node = view.nodeRef;
+      const cx = view.x + NODE_W + BTN_X_OFFSET;
+      const centerY = view.y + NODE_H / 2;
+      if (isLoopRootNode(node)) {
+        const meta = loopMetaByRootId.get(node.id);
+        const rightId = meta?.chainIds?.[0] || meta?.loopEndId || null;
+        pushInsertControl({
+          anchorId: node.id,
+          rightId,
+          x: cx,
+          y: centerY,
+          mode: "loop-root",
+          loopRootId: node.id
+        });
+        return;
+      }
 
-    const maxTaskY = Math.max(START_Y, ...taskViews.map((n) => n.y), end.y);
-    const width = Math.max(end.x + NODE_W + 220, START_X + NODE_W + LEVEL_MARGIN + 240);
-    const height = Math.max(220, maxTaskY + NODE_H + 40);
+      const ownerRootId = loopOwnerByNodeId.get(node.id);
+      if (ownerRootId) {
+        const meta = loopMetaByRootId.get(ownerRootId);
+        const idx = meta?.chainIds?.indexOf(node.id) ?? -1;
+        const nextId = idx >= 0 ? (meta.chainIds[idx + 1] || meta.loopEndId) : meta?.loopEndId;
+        pushInsertControl({
+          anchorId: node.id,
+          rightId: nextId || null,
+          x: cx,
+          y: centerY,
+          mode: "loop-internal",
+          loopRootId: ownerRootId
+        });
+        return;
+      }
 
-    return { start, end, taskViews, nodeMap, edges, controls, width, height };
+      addNormalControls(node.id, view);
+    });
+
+    loopEndViews.forEach((view) => {
+      const loopRootId = loopRootIdByLoopEndId.get(view.id) || null;
+      const children = displayChildren.get(view.id) || [];
+      const rightId = children[0] || null;
+      const centerY = view.y + NODE_H / 2;
+      const cx = view.x + NODE_W + BTN_X_OFFSET;
+
+      if (rightId) {
+        pushInsertControl({
+          anchorId: view.id,
+          rightId,
+          x: cx,
+          y: centerY - BTN_GAP / 2,
+          mode: "loop-end",
+          loopRootId
+        });
+        pushParallelControl({
+          anchorId: view.id,
+          rightId,
+          x: cx,
+          y: centerY + BTN_GAP / 2,
+          mode: "loop-end",
+          loopRootId
+        });
+      } else {
+        pushInsertControl({
+          anchorId: view.id,
+          rightId: null,
+          x: cx,
+          y: centerY,
+          mode: "loop-end",
+          loopRootId
+        });
+      }
+    });
+
+    const loopFrames = [];
+    loopMetaByRootId.forEach((meta) => {
+      const ids = [meta.rootId, ...meta.chainIds, meta.loopEndId];
+      const views = ids.map((id) => nodeMap.get(id)).filter(Boolean);
+      if (!views.length) return;
+      let minX = Infinity;
+      let minY = Infinity;
+      let maxX = -Infinity;
+      let maxY = -Infinity;
+      views.forEach((v) => {
+        minX = Math.min(minX, v.x);
+        minY = Math.min(minY, v.y);
+        maxX = Math.max(maxX, v.x + NODE_W);
+        maxY = Math.max(maxY, v.y + NODE_H);
+      });
+      const padX = 24;
+      const padY = 20;
+      loopFrames.push({
+        loopRootId: meta.rootId,
+        x: minX - padX,
+        y: minY - padY,
+        w: (maxX - minX) + padX * 2,
+        h: (maxY - minY) + padY * 2
+      });
+    });
+
+    const drawableNodes = [start, ...taskViews, ...loopEndViews, end];
+    const maxNodeX = Math.max(START_X, ...drawableNodes.map((n) => n.x));
+    const maxNodeY = Math.max(START_Y, ...drawableNodes.map((n) => n.y));
+    const maxFrameX = loopFrames.length
+      ? Math.max(...loopFrames.map((f) => f.x + f.w))
+      : 0;
+    const maxFrameY = loopFrames.length
+      ? Math.max(...loopFrames.map((f) => f.y + f.h))
+      : 0;
+    const width = Math.max(end.x + NODE_W + 220, maxNodeX + NODE_W + 220, maxFrameX + 220);
+    const height = Math.max(220, maxNodeY + NODE_H + 48, maxFrameY + 48);
+
+    return {
+      start,
+      end,
+      taskViews,
+      loopEndViews,
+      nodeMap,
+      edges,
+      controls,
+      loopFrames,
+      width,
+      height
+    };
   }
 
   function wrapText(ctx, text, maxWidth) {
@@ -486,6 +1008,17 @@
     ctx.lineCap = "round";
     ctx.clearRect(0, 0, model.width, model.height);
 
+    (model.loopFrames || []).forEach((frame) => {
+      ctx.fillStyle = "#eef8ee";
+      drawRoundedRect(ctx, frame.x, frame.y, frame.w, frame.h, 12);
+      ctx.fill();
+      ctx.strokeStyle = "#1a7259";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([]);
+      drawRoundedRect(ctx, frame.x, frame.y, frame.w, frame.h, 12);
+      ctx.stroke();
+    });
+
     model.edges.forEach((edge) => {
       const from = model.nodeMap.get(edge.from);
       const to = model.nodeMap.get(edge.to);
@@ -511,11 +1044,12 @@
       });
     });
 
-    const nodesToDraw = [model.start, ...model.taskViews, model.end];
+    const nodesToDraw = [model.start, ...model.taskViews, ...(model.loopEndViews || []), model.end];
     nodesToDraw.forEach((node) => {
       const isStart = node.kind === "start";
       const isEnd = node.kind === "end";
       const isTask = node.kind === "task";
+      const isLoopEnd = node.kind === "loop-end";
       const isSelected = isTask && state.selectedNodeId === node.id;
       const isParallel = isTask && !!node.nodeRef.parallelOf;
 
@@ -524,7 +1058,7 @@
 
       if (isStart) ctx.fillStyle = "#f2f2f2";
       else if (isEnd) ctx.fillStyle = "#f2f2f2";
-      else if (isTask && hasMissingRequiredField(config, node.nodeRef)) ctx.fillStyle = "#fbb6c9";
+      else if (isTask && hasMissingRequiredField(config, node.nodeRef)) ctx.fillStyle = "#fffadd";
       else ctx.fillStyle = "#ffffff";
 
       ctx.strokeStyle = isSelected ? "#15634b" : "#bdbdbd";
@@ -571,6 +1105,11 @@
         : "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
       if (isStart || isEnd) {
+        ctx.textBaseline = "middle";
+        ctx.fillText(node.text, node.x + NODE_W / 2, node.y + NODE_H / 2);
+        ctx.textBaseline = "alphabetic";
+      } else if (isLoopEnd) {
+        ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
         ctx.textBaseline = "middle";
         ctx.fillText(node.text, node.x + NODE_W / 2, node.y + NODE_H / 2);
         ctx.textBaseline = "alphabetic";
@@ -708,7 +1247,9 @@
       const y = e.clientY - rect.top;
       view.hoverControl = hitControl(runtime.model, x, y);
       showTooltip(view.hoverControl, e.clientX, e.clientY);
-      canvas.style.cursor = view.hoverControl || hitTask(runtime.model, x, y) ? "pointer" : "default";
+      const hoverTask = hitTask(runtime.model, x, y);
+      const selectableTask = !!(hoverTask && !isLoopRootNode(hoverTask.nodeRef));
+      canvas.style.cursor = view.hoverControl || selectableTask ? "pointer" : "default";
       drawFlowCanvas(view);
     });
 
@@ -778,6 +1319,39 @@
 
       const control = hitControl(runtime.model, x, y);
       if (control) {
+        if (control.mode === "loop-root" || control.mode === "loop-internal") {
+          if (control.kind === "insert") {
+            const created = insertLoopInternalAtAnchor(
+              runtime.state,
+              control.loopRootId || control.anchorId,
+              control.anchorId
+            );
+            if (created) runtime.onStateChanged();
+          }
+          return;
+        }
+
+        if (control.mode === "loop-end") {
+          if (control.kind === "insert") {
+            const created = insertAfterLoopEnd(
+              runtime.state,
+              control.loopRootId,
+              control.rightId || null
+            );
+            if (created) runtime.onStateChanged();
+            return;
+          }
+          if (control.kind === "parallel") {
+            const created = addParallelAfterLoopEnd(
+              runtime.state,
+              control.loopRootId,
+              control.rightId || null
+            );
+            if (created) runtime.onStateChanged();
+            return;
+          }
+        }
+
         const rightIndex = control.rightId
           ? runtime.state.nodes.findIndex((n) => n.id === control.rightId)
           : -1;
@@ -807,6 +1381,7 @@
 
       const task = hitTask(runtime.model, x, y);
       if (task) {
+        if (isLoopRootNode(task.nodeRef)) return;
         setSelectedNode(runtime.state, task.id);
         runtime.onStateChanged();
       }
@@ -838,8 +1413,16 @@
     root.innerHTML = "";
     if (!state.nodes.length) return;
 
-    const idx = getSelectedNodeIndex(state);
-    const node = state.nodes[idx];
+    let idx = getSelectedNodeIndex(state);
+    let node = state.nodes[idx];
+    if (!node) return;
+    if (isLoopRootNode(node)) {
+      const fallback = state.nodes.find((n) => !isLoopRootNode(n));
+      if (!fallback) return;
+      node = fallback;
+      idx = state.nodes.findIndex((n) => n.id === node.id);
+      state.selectedNodeId = node.id;
+    }
     ensureNodeDefaults(config, node);
 
     const upstreamSteps = getUpstreamSteps(state, node.id);
@@ -851,9 +1434,6 @@
         el("div", { class: "head-selects" }, [
           el("div", { class: "head-select" }, [
             renderConnectorSelect({ config, node, onStateChanged })
-          ]),
-          el("div", { class: "head-select" }, [
-            renderActionSelect({ config, node, onStateChanged })
           ])
         ])
       ])
