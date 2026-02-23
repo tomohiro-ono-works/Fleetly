@@ -1,0 +1,97 @@
+﻿/* =========================================================
+   Base
+========================================================= */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  color: var(--text-primary);
+
+  /* 背景色 + 背景画像（画像を使わないなら background-image を削除） */
+  background-color: var(--surface-page);
+  background-image: url('unnamed.jpg');
+  background-size: cover;
+  background-position: center;
+  background-attachment: fixed;
+
+  overflow-x: hidden;
+  width: 100%;
+}
+
+
+/* =========================================================
+   Buttons
+========================================================= */
+button {
+  font-family: var(--sans);
+  font-size: 13px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-page);
+  color: var(--text-primary);
+  cursor: pointer;
+}
+button:hover { background: var(--surface-hover); }
+
+button.primary {
+  background: var(--surface-strong);
+  border-color: var(--surface-strong);
+  color: var(--surface-page);
+}
+button.primary:hover { background: var(--surface-strong-hover); }
+
+/* Success (Add Node) */
+button.success {
+  background: var(--brand-100);
+  border-color: var(--brand-600);
+  color: var(--brand-700);
+}
+button.success:hover {
+  background: var(--brand-600);
+  color: var(--surface-page);
+}
+
+/* Danger (Delete) */
+button.danger {
+  background: var(--brand-500);
+  border-color: var(--brand-500);
+  color: var(--surface-page);
+}
+button.danger:hover { background: var(--brand-200); }
+
+/* =========================================================
+   Main
+========================================================= */
+main {
+  margin: 0 auto;
+  padding: 18px;
+  padding-bottom: 320px; /* detail-panel 固定表示の逃げ */
+}
+
+.hint {
+  font-size: 12px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+/* =========================================================
+   Panels (Flow top / Detail bottom)
+========================================================= */
+.panel {
+  background: var(--alpha-white-94);
+  border: 1px solid var(--border-default);
+  border-radius: 14px;
+  box-shadow: var(--shadow-soft);
+  padding: 14px;
+  margin-bottom: 18px;
+}
+
+.panel h2 {
+  margin: 0 0 12px;
+  font-size: 14px;
+  letter-spacing: 0.02em;
+  color: var(--text-primary);
+}
+

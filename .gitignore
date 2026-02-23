@@ -9,6 +9,11 @@ __pycache__/
 # OS固有のファイルを無視
 .DS_Store
 Thumbs.db
+*.ipynb
+*.bat
 
 workflows/
 logs/
+static/old
+.codex/
+docs/

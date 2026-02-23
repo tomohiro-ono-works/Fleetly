@@ -1,0 +1,23 @@
+﻿/* =========================================================
+   Responsive
+========================================================= */
+@media (max-width: 768px) {
+  .panel { padding: 12px; }
+  .flow-column { width: 88px; min-width: 88px; }
+  .flow-edge { width: 36px; min-width: 36px; }
+  #flowchart { min-width: 760px; }
+}
+
+@media (max-width: 640px) {
+  .head-selects { width: 100%; }
+  .head-selects select { width: 100%; }
+
+  .connector-flyout,
+  .connector-flyout-trigger { width: 100%; }
+
+  .connector-flyout-menu {
+    width: min(96vw, 272px);
+    grid-template-columns: 78px 83px 1fr;
+  }
+}
+

@@ -10,7 +10,7 @@ class ExcelConnector(BaseConnector):
 
     def execute(self, action, params, context) -> Any:
         if action == "read_excel":
-            path_val = str(params.get('file_path', ""))
+            path_val = self.normalize_file_path(params.get('file_path')) or ""
             sheet_val = str(params.get('sheet_name', ""))
             # 必須チェック（パスが空ならここでエラーにする）
             if not path_val:
@@ -24,13 +24,14 @@ class ExcelConnector(BaseConnector):
         elif action == "write_excel":
             return self.write_excel(
                 params.get('input_data'),
-                params.get('output_path'),
+                self.normalize_file_path(params.get('output_path')),
                 params.get('sheet_name', 'Sheet1'),
                 context)
 
     # --- 内部ロジック ---
 
     def read_excel(self, path: str, sheet_name: str, header_row: int, data_start_row: int):
+            path = self.normalize_file_path(path)
             if not path or not os.path.exists(path):
                 raise FileNotFoundError(f"ファイルが見つかりません: {path}")
             
@@ -84,6 +85,7 @@ class ExcelConnector(BaseConnector):
         'create_or_replace': 指定シートを「初期化」して書き込む（他のシートは維持）
         'insert_or_replace': 指定シートの「末尾に追記」して書き込む（他のシートは維持）
         """
+        output_path = self.normalize_file_path(output_path)
         data = context.get(input_var)
         if not data:
             raise ValueError("データが空です")

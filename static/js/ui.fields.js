@@ -6,7 +6,7 @@
      combo input (datalist, free input)
   ========================================================= */
 
-  function renderComboInput({ node, field, current, onValueChanged }) {
+  function renderComboInput({ node, field, current, onInputChanged, onCommitChanged }) {
     const listId = `combo_${node.id}_${field.key}`;
     const input = el("input", {
       type: "text",
@@ -14,7 +14,11 @@
       placeholder: field.placeholder || "",
       oninput: (e) => {
         node.form[field.key] = e.target.value;
-        if (onValueChanged) onValueChanged();
+        if (onInputChanged) onInputChanged();
+      },
+      onchange: (e) => {
+        node.form[field.key] = e.target.value;
+        if (onCommitChanged) onCommitChanged();
       }
     });
     input.value = current || "";
@@ -80,7 +84,11 @@
       row.classList.toggle("required-empty", empty);
     }
 
-    function notifyChanged() {
+    function notifyLocalChanged() {
+      updateRequiredState();
+    }
+
+    function notifyCommitted() {
       updateRequiredState();
       if (onStateChanged) onStateChanged();
     }
@@ -90,7 +98,11 @@
         placeholder: field.placeholder || "",
         oninput: (e) => {
           node.form[field.key] = e.target.value;
-          notifyChanged();
+          notifyLocalChanged();
+        },
+        onchange: (e) => {
+          node.form[field.key] = e.target.value;
+          notifyCommitted();
         }
       });
       inputEl.value = current;
@@ -101,7 +113,11 @@
         placeholder: field.placeholder || "",
         oninput: (e) => {
           node.form[field.key] = e.target.value;
-          notifyChanged();
+          notifyLocalChanged();
+        },
+        onchange: (e) => {
+          node.form[field.key] = e.target.value;
+          notifyCommitted();
         }
       });
       inputEl.value = current;
@@ -112,7 +128,7 @@
         field,
         current,
         upstreamSteps,
-        onValueChanged: notifyChanged
+        onValueChanged: notifyCommitted
       });
       inputEl = r.input;
       wrapper = r.wrapper;
@@ -121,7 +137,13 @@
         node.form && Object.prototype.hasOwnProperty.call(node.form, field.key)
           ? node.form[field.key]
           : (field.default !== undefined ? field.default : "");
-      const r = renderComboInput({ node, field, current: comboCurrent, onValueChanged: notifyChanged });
+      const r = renderComboInput({
+        node,
+        field,
+        current: comboCurrent,
+        onInputChanged: notifyLocalChanged,
+        onCommitChanged: notifyCommitted
+      });
       inputEl = r.input;
       wrapper = r.wrapper;
     } else if (field.kind === "file" || field.kind === "dir") {
@@ -131,7 +153,11 @@
           field.placeholder || (field.kind === "dir" ? "フォルダを選択" : "ファイルを選択"),
         oninput: (e) => {
           node.form[field.key] = e.target.value;
-          notifyChanged();
+          notifyLocalChanged();
+        },
+        onchange: (e) => {
+          node.form[field.key] = e.target.value;
+          notifyCommitted();
         }
       });
       text.value = current;
@@ -168,7 +194,7 @@
           node.form[field.key] = top;
           text.value = node.form[field.key];
         }
-        notifyChanged();
+        notifyCommitted();
       });
 
       inputEl = text;
@@ -183,7 +209,11 @@
         placeholder: field.placeholder || "",
         oninput: (e) => {
           node.form[field.key] = e.target.value;
-          notifyChanged();
+          notifyLocalChanged();
+        },
+        onchange: (e) => {
+          node.form[field.key] = e.target.value;
+          notifyCommitted();
         }
       });
       inputEl.value = current;

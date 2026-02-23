@@ -1,13 +1,13 @@
-# Fleetly
+# mokuromi
 迅速にデータ加工できるETLツール。隹（ふるとり）
 
-![説明文](docs/fleetly_logo.png)
+![説明文](docs/mokuromi_logo.png)
 
 
 # アプリケーション要件定義書
 
 ## 1. サービス概要
-*   **アプリ名：** Fleetly
+*   **アプリ名：** mokuromi
 *   **コンセプト：** (迅速にデータ加工できるETLツール。隹（ふるとり）)
 *   **ターゲットユーザー：** 非エンジニアでBI業務を行う方
 *   **解決したい課題：** 定常業務の短縮と作業簡素化
@@ -82,3 +82,9 @@ git push origin main
 
 ## プロジェクトルートに作成
 mkdir .codex\skills
+
+
+すべてのaddを取り出す
+git rm -r --cached .
+git restore --staged .
+

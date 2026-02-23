@@ -1,0 +1,67 @@
+﻿/* =========================================================
+   Color Palette (from reference image)
+========================================================= */
+:root {
+  /* Base */
+  --surface-page: #ffffff;
+  --surface-hover: #f9fafb;
+  --text-primary: #4c4c4c;
+  --text-secondary: #bdbdbd;
+  --text-muted: #848484;
+  --text-tertiary: #6f7780;
+  --text-quaternary: #606770;
+
+  --surface-base: #f2f2f2;
+  --surface-subtle: #fafafa;
+  --border-grid: #ececec;
+
+  /* Green */
+  --brand-700: #15634b;
+  --brand-600: #1a7259;
+  --brand-100: #c1dfbf;
+  --interactive-hover-bg: #eef6f5;
+  --surface-header: #17644e;
+
+  /* Orange / Error */
+  --brand-500: #f65824;
+  --brand-200: #fbb6c9;
+  --semantic-warning-bg: #fffadd;
+  --semantic-error-fg: #8b1d1d;
+
+  /* Blue / lines */
+  --brand-650: #407bde;
+  --brand-300: #7f9bb8;
+  --brand-800: #38506a;
+  --border-muted: #93a1b2;
+  --border-strong: #8a95a3;
+
+  /* Neutral UI */
+  --border-default: #bfbfbf;
+  --border-node: #cfd5db;
+  --border-hover: #9ca8b5;
+  --border-divider: #e5e7eb;
+  --text-ui: #4b5563;
+  --surface-strong: #374151;
+  --surface-strong-hover: #2b3340;
+  --text-strong: #1f2937;
+
+  /* shadow */
+  --alpha-shadow-10: rgba(0, 0, 0, 0.1);
+  --alpha-shadow-12: rgba(0, 0, 0, 0.12);
+  --alpha-white-18: rgba(255, 255, 255, 0.18);
+  --alpha-white-94: rgba(255, 255, 255, 0.94);
+  --alpha-accent-24: rgba(251, 182, 201, 0.24);
+  --alpha-brand-15: rgba(3, 122, 118, 0.15);
+
+  --shadow-soft: 0 6px 16px var(--alpha-shadow-10);
+
+  --radius: 12px;
+  --pad: 14px;
+
+  /* Layout constants */
+  --label-col: 100px; /* .row の左列幅（ラベル列） */
+
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
+}
+

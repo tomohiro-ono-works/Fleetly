@@ -4,27 +4,33 @@ from datetime import datetime, date  # date型もインポート
 import re
 
 from google.cloud import bigquery
-from google.api_core.exceptions import Forbidden
 from google.auth.exceptions import DefaultCredentialsError
 
 from connectors.base_connector import BaseConnector
 
 class BQConnector(BaseConnector):
     def __init__(self):
-        # 認証設定が済んでいれば、引数なしでクライアントを初期化可能
-        self.client = None
+        # project_id ごとにクライアントを再利用する
+        self.clients: Dict[str, bigquery.Client] = {}
 
     def _get_client(self, project_id):
-            """クライアント取得を試み、認証エラーがあればログインを実行してリトライする"""
-            try:
-                client = bigquery.Client(project=project_id)
-                # 試しに簡単な通信をして認証が生きているか確認（実際のリクエストまで待っても良い）
-                return client
-            except (DefaultCredentialsError, Forbidden):
-                print("認証情報が見つからないか、期限が切れています。")
-                self.google_auth_login()
-                # ログイン後に再度クライアントを作成して返す
-                return bigquery.Client(project=project_id)
+        """project_id ごとのクライアントを取得する（未作成時のみ生成）"""
+        if not project_id:
+            raise ValueError("project_id は必須です。")
+
+        cached_client = self.clients.get(project_id)
+        if cached_client is not None:
+            return cached_client
+
+        try:
+            client = bigquery.Client(project=project_id)
+        except DefaultCredentialsError:
+            print("認証情報が見つからないか、期限が切れています。")
+            self.google_auth_login()
+            client = bigquery.Client(project=project_id)
+
+        self.clients[project_id] = client
+        return client
 
     def google_auth_login(self):
         """gcloud auth application-default login を実行"""
@@ -32,7 +38,7 @@ class BQConnector(BaseConnector):
         import sys
         print("Google Cloudの認証を開始します...")
         try:
-            subprocess.run(["gcloud", "auth", "application-default", "login"], check=True, shell=True)
+            subprocess.run(["gcloud", "auth", "application-default", "login"], check=True)
             print("認証が完了しました。")
         except Exception as e:
             print(f"認証の自動起動に失敗しました。手動で 'gcloud auth application-default login' を実行してください。: {e}", file=sys.stderr)
@@ -85,9 +91,10 @@ class BQConnector(BaseConnector):
         # 3. ここに来る時点で XORチェックにより「sql_file は絶対に None ではない」が確定する
         # しかし、静的解析ツールのために明示的に型を絞り込む
         if sql_file is not None:
+            sql_file = self.normalize_file_path(sql_file)
             if not os.path.exists(sql_file):
                 raise FileNotFoundError(f"SQLファイルが見つかりません: {sql_file}")
-                
+                 
             with open(sql_file, 'r', encoding=encoding) as f:
                 return f.read()
 

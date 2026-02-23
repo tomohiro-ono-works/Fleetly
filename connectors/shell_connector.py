@@ -15,6 +15,7 @@ class ShellConnector(BaseConnector):
             raise ValueError(f"Unknown action: {action}")
 
     def execute_bat(self, file_path, args):
+        file_path = self.normalize_file_path(file_path)
         if not os.path.exists(file_path):
             raise FileNotFoundError(f"BATファイルが見つかりません: {file_path}")
 

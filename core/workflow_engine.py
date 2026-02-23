@@ -1,47 +1,48 @@
 import os
+import warnings
 import yaml
 import importlib
-import pkgutil
 import inspect
 from connectors.base_connector import BaseConnector
+
+warnings.filterwarnings("ignore")
 
 class WorkflowEngine:
     def __init__(self, logger):
         self.logger = logger
         self.context = {}  # データを一時保持するメモリ空間
-        self.connectors = self._load_connectors()
+        self.connectors = {}  # 必要になった時点で遅延ロード
 
-    def _load_connectors(self):
+    def _get_or_load_connector(self, conn_name):
         """
-        connectorsフォルダから、BaseConnectorを継承したクラスを自動ロードする
+        指定されたコネクタを遅延ロードして返す（2回目以降はキャッシュを返す）
         """
-        connectors_dict = {}
-        
-        # 1. connectorsパッケージのパスを取得
-        import connectors
-        package_path = os.path.dirname(str(connectors.__file__))
+        if not conn_name:
+            raise ValueError("コネクタ名が指定されていません。")
 
-        # 2. パッケージ内のモジュール（ファイル）をループ
-        for loader, module_name, is_pkg in pkgutil.iter_modules([package_path]):
-            # base_connector自体はスキップ
-            if module_name == "base_connector":
-                continue
+        # 既にインスタンス化済みなら再利用
+        connector = self.connectors.get(conn_name)
+        if connector:
+            return connector
 
-            # 3. モジュールを動的にインポート
-            full_module_name = f"connectors.{module_name}"
+        full_module_name = f"connectors.{conn_name}"
+        try:
             module = importlib.import_module(full_module_name)
+        except ModuleNotFoundError as e:
+            # コネクタ自身が存在しない場合のみ分かりやすいメッセージに変換
+            if e.name == full_module_name:
+                raise Exception(f"コネクタ '{conn_name}' が見つかりません。") from e
+            raise
 
-            # 4. モジュール内のクラスを走査
-            for name, obj in inspect.getmembers(module, inspect.isclass):
-                # BaseConnectorを継承しており、かつBaseConnector自体ではないクラスを探す
-                if issubclass(obj, BaseConnector) and obj is not BaseConnector:
-                    # キー名はファイル名にする（例: "file_connector"）
-                    # クラスをインスタンス化して格納
-                    connectors_dict[module_name] = obj()
-                    self.logger.info(f"コネクタをロードしました: {module_name}")
-                    break # 1ファイル1コネクタ前提
+        for name, obj in inspect.getmembers(module, inspect.isclass):
+            # BaseConnectorを継承しており、かつBaseConnector自体ではないクラスを探す
+            if issubclass(obj, BaseConnector) and obj is not BaseConnector:
+                connector = obj()
+                self.connectors[conn_name] = connector
+                self.logger.info(f"コネクタをロードしました: {conn_name}")
+                return connector
 
-        return connectors_dict
+        raise Exception(f"コネクタ '{conn_name}' は見つかりましたが、BaseConnector実装がありません。")
 
     def run_workflow(self, yaml_path):
         if not os.path.exists(yaml_path):
@@ -64,9 +65,7 @@ class WorkflowEngine:
             self.logger.info(f"[{sid}] 実行中: {conn_name} -> {action}")
 
             try:
-                connector = self.connectors.get(conn_name)
-                if not connector:
-                    raise Exception(f"コネクタ '{conn_name}' が登録されていません。")
+                connector = self._get_or_load_connector(conn_name)
 
                 # 実行
                 result = connector.execute(action, params, self.context)

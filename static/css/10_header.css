@@ -1,0 +1,72 @@
+﻿/* =========================================================
+   Header
+========================================================= */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: var(--brand-600);
+  color: var(--surface-page);
+  border-bottom: 0;
+  box-shadow: var(--shadow-soft);
+}
+
+.header-inner {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0 14px 0 0;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-icon {
+  width: 52px;
+  height: 52px;
+  object-fit: contain;
+  flex: 0 0 auto;
+}
+
+.flow-name-input {
+  min-width: 220px;
+  max-width: 420px;
+  border: 0;
+  background: var(--surface-header);
+  color: var(--surface-page);
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.2;
+  padding: 6px 12px;
+  border-radius: 8px;
+}
+
+.flow-name-input:focus {
+  outline: none;
+  border-color: transparent;
+  box-shadow: 0 0 0 2px var(--alpha-white-18);
+}
+
+header .actions button {
+  background: var(--surface-strong);
+  border: 0;
+  color: var(--surface-page);
+}
+header .actions button:hover { background: var(--surface-strong-hover); }
+
+.title {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.title strong { font-size: 15px; }
+.title span {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+

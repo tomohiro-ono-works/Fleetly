@@ -1,0 +1,181 @@
+﻿/* =========================================================
+   Flowchart (stage-based positioning)
+========================================================= */
+.flow-panel { overflow: auto; }
+
+.flow-track {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: max-content;
+  padding: 4px 2px;
+}
+
+.flow-stage {
+  display: inline-flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.flow-column {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 96px;
+  min-width: 96px;
+  gap: 6px;
+}
+
+.flow-branch-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 8px;
+}
+
+.flow-node {
+  width: 100%;
+  min-height: 52px;
+  text-align: left;
+  padding: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-node);
+  background: linear-gradient(160deg, var(--surface-page) 0%, var(--surface-base) 100%);
+  color: var(--text-primary);
+  box-shadow: 0 2px 8px var(--alpha-shadow-10);
+}
+
+.flow-node:hover { border-color: var(--border-hover); }
+
+.flow-node.is-active {
+  border-color: var(--brand-700);
+  box-shadow: 0 0 0 2px var(--alpha-brand-15), 0 6px 18px var(--alpha-shadow-12);
+}
+
+.flow-node-parallel {
+  border-style: dashed;
+  background: linear-gradient(160deg, var(--surface-page) 0%, var(--surface-subtle) 100%);
+}
+
+.flow-step {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--text-tertiary);
+  margin-bottom: 2px;
+}
+
+.flow-title {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 1px;
+}
+
+.flow-subtitle {
+  font-size: 10px;
+  color: var(--text-quaternary);
+}
+
+.flow-edge {
+  position: relative;
+  width: 42px;
+  min-width: 42px;
+  height: 52px;
+  margin-top: 0;
+}
+
+.flow-edge-controls {
+  position: absolute;
+  left: 50%;
+  top: 0;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  z-index: 2;
+}
+
+.flow-edge-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 24px;
+  height: 1px;
+  background: var(--border-strong);
+}
+
+.flow-edge-head {
+  position: absolute;
+  right: -1px;
+  top: 21px;
+  width: 0;
+  height: 0;
+  border-top: 3px solid transparent;
+  border-bottom: 3px solid transparent;
+  border-left: 5px solid var(--border-strong);
+}
+
+.flow-tail-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-left: 0;
+  margin-top: 0;
+  min-height: 52px;
+}
+
+.flow-insert {
+  width: 16px;
+  height: 16px;
+  border-radius: 999px;
+  border: 1px dashed var(--border-muted);
+  background: var(--surface-page);
+  font-size: 11px;
+  line-height: 1;
+  color: var(--text-ui);
+  padding: 0;
+}
+
+.flow-insert:hover {
+  border-color: var(--brand-700);
+  color: var(--brand-700);
+  background: var(--interactive-hover-bg);
+}
+
+.flow-insert-parallel {
+  border-color: var(--brand-300);
+  color: var(--brand-800);
+  font-size: 8px;
+}
+
+/* Canvas Flow Area */
+#flowchart {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: auto;
+  background-color: var(--surface-page);
+  background-image:
+    linear-gradient(to right, var(--border-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+  min-height: 260px;
+}
+#flowchart::-webkit-scrollbar { display: none; }
+
+.flow-canvas {
+  display: block;
+  background-color: var(--surface-page);
+  background-image:
+    linear-gradient(to right, var(--border-grid) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-grid) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+
+.flow-fallback {
+  padding: 12px;
+  color: var(--semantic-error-fg);
+  font-size: 12px;
+}
+

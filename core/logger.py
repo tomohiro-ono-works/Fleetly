@@ -21,7 +21,7 @@ def setup_logger():
     if not os.path.exists('logs'):
         os.makedirs('logs')
     
-    logger = logging.getLogger("Fleetly")
+    logger = logging.getLogger("mokuromi")
     logger.setLevel(logging.INFO)
     logger.handlers = [] # 重複防止
 

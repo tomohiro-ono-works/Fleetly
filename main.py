@@ -12,7 +12,7 @@ from core.workflow_engine import WorkflowEngine
 from core.logger import setup_logger, log_queue
 
 # アプリケーション初期化
-app = FastAPI(title="Fleetly API")
+app = FastAPI(title="mokuromi API")
 logger = setup_logger()
 engine = WorkflowEngine(logger)
 

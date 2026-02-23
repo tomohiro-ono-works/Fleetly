@@ -23,6 +23,7 @@ class CSVConnector(BaseConnector):
 
     # --- 内部ロジック ---
     def read_csv(self, path, encoding, header_row, data_start_row, selected_columns):
+        path = self.normalize_file_path(path)
         result = []
         with open(path, 'r', encoding=encoding) as f:
             reader = csv.reader(f)
@@ -48,6 +49,7 @@ class CSVConnector(BaseConnector):
         return result
 
     def write_csv(self, input_var, output_path, encoding, context):
+        output_path = self.normalize_file_path(output_path)
         data = context.get(input_var)
         if not data: raise ValueError("データが空です")
         with open(output_path, 'w', encoding=encoding, newline='') as f:
