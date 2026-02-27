@@ -3,6 +3,8 @@ import warnings
 import yaml
 import importlib
 import inspect
+import pkgutil
+import re
 from connectors.base_connector import BaseConnector
 
 warnings.filterwarnings("ignore")
@@ -12,6 +14,52 @@ class WorkflowEngine:
         self.logger = logger
         self.context = {}  # データを一時保持するメモリ空間
         self.connectors = {}  # 必要になった時点で遅延ロード
+
+    def _to_snake_case(self, name: str) -> str:
+        text = str(name or "")
+        text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", text)
+        text = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", text)
+        return text.lower()
+
+    def _connector_module_candidates(self, conn_name: str):
+        raw = str(conn_name or "").strip()
+        snake = self._to_snake_case(raw)
+        candidates = []
+        for name in [raw, snake, f"{snake}_connector" if snake and not snake.endswith("_connector") else snake]:
+            if name and name not in candidates:
+                candidates.append(name)
+        return candidates
+
+    def _instantiate_connector_from_module(self, module, cache_keys=None):
+        for name, obj in inspect.getmembers(module, inspect.isclass):
+            if issubclass(obj, BaseConnector) and obj is not BaseConnector:
+                connector = obj()
+                for key in (cache_keys or []):
+                    if key:
+                        self.connectors[key] = connector
+                return connector
+        return None
+
+    def _load_connector_by_class_name_scan(self, conn_name: str):
+        import connectors
+
+        package_path = os.path.dirname(str(connectors.__file__))
+        for _, module_name, is_pkg in pkgutil.iter_modules([package_path]):
+            if is_pkg or module_name == "base_connector":
+                continue
+
+            full_module_name = f"connectors.{module_name}"
+            module = importlib.import_module(full_module_name)
+            for name, obj in inspect.getmembers(module, inspect.isclass):
+                if obj is BaseConnector or not issubclass(obj, BaseConnector):
+                    continue
+                if name == conn_name:
+                    connector = obj()
+                    self.connectors[conn_name] = connector
+                    self.connectors[module_name] = connector
+                    return connector, module_name
+
+        return None, None
 
     def _get_or_load_connector(self, conn_name):
         """
@@ -25,24 +73,27 @@ class WorkflowEngine:
         if connector:
             return connector
 
-        full_module_name = f"connectors.{conn_name}"
-        try:
-            module = importlib.import_module(full_module_name)
-        except ModuleNotFoundError as e:
-            # コネクタ自身が存在しない場合のみ分かりやすいメッセージに変換
-            if e.name == full_module_name:
-                raise Exception(f"コネクタ '{conn_name}' が見つかりません。") from e
-            raise
+        for module_name in self._connector_module_candidates(conn_name):
+            full_module_name = f"connectors.{module_name}"
+            try:
+                module = importlib.import_module(full_module_name)
+            except ModuleNotFoundError as e:
+                if e.name == full_module_name:
+                    continue
+                raise
 
-        for name, obj in inspect.getmembers(module, inspect.isclass):
-            # BaseConnectorを継承しており、かつBaseConnector自体ではないクラスを探す
-            if issubclass(obj, BaseConnector) and obj is not BaseConnector:
-                connector = obj()
-                self.connectors[conn_name] = connector
-                self.logger.info(f"コネクタをロードしました: {conn_name}")
+            connector = self._instantiate_connector_from_module(module, cache_keys=[conn_name, module_name])
+            if connector:
+                self.logger.info(f"コネクタをロードしました: {conn_name} (module: {module_name})")
                 return connector
+            raise Exception(f"コネクタ '{conn_name}' は見つかりましたが、BaseConnector実装がありません。")
 
-        raise Exception(f"コネクタ '{conn_name}' は見つかりましたが、BaseConnector実装がありません。")
+        connector, resolved_module = self._load_connector_by_class_name_scan(conn_name)
+        if connector:
+            self.logger.info(f"コネクタをロードしました: {conn_name} (module: {resolved_module})")
+            return connector
+
+        raise Exception(f"コネクタ '{conn_name}' が見つかりません。")
 
     def run_workflow(self, yaml_path):
         if not os.path.exists(yaml_path):

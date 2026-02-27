@@ -2,18 +2,19 @@ window.CONFIG = {
   version: 3,
 
   connectors: [
-    { id: "BQConnector",        label: "BigQuery" },
-    { id: "CSVConnector",       label: "CSV" },
-    { id: "ExcelConnector",     label: "Excel" },
-    { id: "PPTConnector",       label: "PowerPoint" },
-    { id: "OperationConnector", label: "操作" },
-    { id: "DataintegrationConnector", label: "データ加工" },
-    { id: "ShellConnector",     label: "シェル" },
-    { id: "VectorConnector",    label: "VectorDB" },
-    { id: "LLMConnector",       label: "LLM" },
-    { id: "WebConnector",       label: "Web操作" },
-    { id: "APIConnector",       label: "API実行" },
-    { id: "PythonConnector",    label: "Python実行" }
+    { id: "BQConnector",        label: "BigQuery", exportId: "bigquery_connector" },
+    { id: "CSVConnector",       label: "CSV", exportId: "csv_connector" },
+    { id: "ExcelConnector",     label: "Excel", exportId: "excel_connector" },
+    { id: "PlotlyConnector",    label: "Plotly", exportId: "plotly_connector" },
+    { id: "PPTConnector",       label: "PowerPoint", exportId: "ppt_connector" },
+    { id: "OperationConnector", label: "操作", exportId: "operation_connector" },
+    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector" },
+    { id: "ShellConnector",     label: "シェル", exportId: "shell_connector" },
+    { id: "VectorConnector",    label: "VectorDB", exportId: "vector_connector" },
+    { id: "LLMConnector",       label: "LLM", exportId: "llm_connector" },
+    { id: "WebConnector",       label: "Web操作", exportId: "web_connector" },
+    { id: "APIConnector",       label: "API実行", exportId: "api_connector" },
+    { id: "PythonConnector",    label: "Python実行", exportId: "python_connector" }
   ],
 
   actions: {
@@ -27,9 +28,29 @@ window.CONFIG = {
       { id: "write_csv", label: "書き込み" }
     ],
     ExcelConnector: [
-      { id: "read_excel",  label: "読み込み" },
+      {
+        id: "read_excel",
+        label: "読み込み",
+        detailModal: {
+          type: "excel",
+          label: "Excelモーダルを開く",
+          resultFieldMap: {
+            fileName: "file_path",
+            sheetName: "sheet_name",
+            headerRow: "header_row",
+            dataStartRow: "data_start_row"
+          }
+        }
+      },
       { id: "write_excel", label: "書き込み" },
       { id: "read_excel_range",  label: "エリア指定読み込み" }
+    ],
+    PlotlyConnector: [
+      { id: "plot_combined_bar_line", label: "棒＋折れ線グラフ" },
+      { id: "plot_stacked_bar", label: "積み上げ棒グラフ" },
+      { id: "plot_scorecard", label: "スコアカード" },
+      { id: "plot_funnel", label: "ファネルチャート" },
+      { id: "plot_radar", label: "レーダーチャート" }
     ],
     OperationConnector: [
       { id: "define_values", label: "変数定義" },
@@ -122,6 +143,57 @@ window.CONFIG = {
       { key:"output_path", label:"出力ファイル", kind:"file", required:true },
       { key:"sheet_name", label:"シート名", kind:"text", required:true, default:"シート1", allowVars:true },
       { key:"mode", label:"書き込みモード", kind:"combo", required:true, default:"create_or_replace", options:["create_or_replace","create_or_insert"] }
+    ],
+
+    "PlotlyConnector.plot_combined_bar_line": [
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" },
+      { key:"x_col", label:"X列", kind:"text", required:true, allowVars:true },
+      { key:"bar_col", label:"棒グラフ列", kind:"text", required:true, allowVars:true },
+      { key:"line_col", label:"折れ線列", kind:"text", required:true, allowVars:true },
+      { key:"title", label:"タイトル", kind:"text", required:false, allowVars:true, default:"棒グラフ＋折れ線グラフ" },
+      { key:"output_folder", label:"出力フォルダ", kind:"dir", required:true },
+      { key:"file_name", label:"出力ファイル名", kind:"text", required:true, default:"combined_bar_line", allowVars:true },
+      { key:"mode", label:"出力形式", kind:"combo", required:true, default:"png", options:["png","html","jpg","jpeg","pdf","svg"] }
+    ],
+
+    "PlotlyConnector.plot_stacked_bar": [
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" },
+      { key:"x_col", label:"X列", kind:"text", required:true, allowVars:true },
+      { key:"y_cols", label:"積み上げ列", kind:"text", required:true, allowVars:true, placeholder:"例: cost,profit" },
+      { key:"is_percent", label:"100%積み上げ", kind:"combo", required:false, default:"", options:["","1"] },
+      { key:"title", label:"タイトル", kind:"text", required:false, allowVars:true, default:"積み上げ棒グラフ" },
+      { key:"output_folder", label:"出力フォルダ", kind:"dir", required:true },
+      { key:"file_name", label:"出力ファイル名", kind:"text", required:true, default:"stacked_bar", allowVars:true },
+      { key:"mode", label:"出力形式", kind:"combo", required:true, default:"png", options:["png","html","jpg","jpeg","pdf","svg"] }
+    ],
+
+    "PlotlyConnector.plot_scorecard": [
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" },
+      { key:"value_col", label:"値列", kind:"text", required:true, allowVars:true },
+      { key:"title", label:"タイトル", kind:"text", required:false, allowVars:true, default:"スコアカード" },
+      { key:"output_folder", label:"出力フォルダ", kind:"dir", required:true },
+      { key:"file_name", label:"出力ファイル名", kind:"text", required:true, default:"scorecard", allowVars:true },
+      { key:"mode", label:"出力形式", kind:"combo", required:true, default:"png", options:["png","html","jpg","jpeg","pdf","svg"] }
+    ],
+
+    "PlotlyConnector.plot_funnel": [
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" },
+      { key:"stage_col", label:"ステージ列", kind:"text", required:true, allowVars:true },
+      { key:"value_col", label:"値列", kind:"text", required:true, allowVars:true },
+      { key:"title", label:"タイトル", kind:"text", required:false, allowVars:true, default:"ファネルチャート" },
+      { key:"output_folder", label:"出力フォルダ", kind:"dir", required:true },
+      { key:"file_name", label:"出力ファイル名", kind:"text", required:true, default:"funnel", allowVars:true },
+      { key:"mode", label:"出力形式", kind:"combo", required:true, default:"png", options:["png","html","jpg","jpeg","pdf","svg"] }
+    ],
+
+    "PlotlyConnector.plot_radar": [
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" },
+      { key:"value_cols", label:"値列（カンマ区切り）", kind:"text", required:true, allowVars:true, placeholder:"例: sales,profit,cost" },
+      { key:"name", label:"系列名", kind:"text", required:false, allowVars:true, default:"series" },
+      { key:"title", label:"タイトル", kind:"text", required:false, allowVars:true, default:"レーダーチャート" },
+      { key:"output_folder", label:"出力フォルダ", kind:"dir", required:true },
+      { key:"file_name", label:"出力ファイル名", kind:"text", required:true, default:"radar", allowVars:true },
+      { key:"mode", label:"出力形式", kind:"combo", required:true, default:"png", options:["png","html","jpg","jpeg","pdf","svg"] }
     ],
 
     "OperationConnector.execute_rename": [

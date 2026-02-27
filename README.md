@@ -74,7 +74,7 @@ git clean -fd
 
 
 git add .
-git commit -m "I/Pをマウスオーバーしたら表示できるようにしてください"
+git commit -m "gitルール、AGENTルールの修正、フロントエンド、バックエンドの全体的な修正を実施"
 git push origin main
 
 

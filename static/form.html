@@ -12,6 +12,8 @@
   <link rel="stylesheet" href="./css/30_flowchart.css">
   <link rel="stylesheet" href="./css/40_detail-panel.css">
   <link rel="stylesheet" href="./css/90_responsive.css">
+  <link rel="stylesheet" href="./modal/modal_core.css">
+  <link rel="stylesheet" href="./modal/excel_modal.css">
 </head>
 <body>
   <header>
@@ -49,6 +51,37 @@
     </section>
   </main>
 
+  <div id="excelModal" class="mdl" aria-hidden="true">
+    <div class="mdl__backdrop" data-mdl-close></div>
+
+    <div class="mdl__panel" role="dialog" aria-modal="true" aria-labelledby="excelTitle">
+      <div class="mdl__header">
+        <div class="mdl__title" id="excelTitle">Excel Viewer</div>
+        <button class="mbtn" type="button" data-mdl-close>閉じる</button>
+      </div>
+
+      <div class="mdl__bar">
+        <input id="xFile" class="minput" type="file" accept=".xlsx,.xlsm" />
+        <label class="mdl__hint">シート:
+          <select id="xSheet" class="mselect" disabled></select>
+        </label>
+
+        <span class="mdl__hint" id="xStatus"></span>
+        <span class="mdl__hint">クリック: ヘッダー行 / ダブルクリック: データ開始行（上から30行）</span>
+      </div>
+
+      <div id="xTableWrap" class="mdl__tablewrap"></div>
+
+      <div class="mdl__footer">
+        <span class="mdl__hint" id="xPicked"></span>
+        <div class="mdl__actions">
+          <button class="mbtn" type="button" data-mdl-close>キャンセル</button>
+          <button class="mbtn mbtn--primary" type="button" id="xOk">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- B方式：モジュール不使用。順番が命 -->
   <script src="./js/config.js"></script>
   <script src="./js/utils.js"></script>
@@ -58,6 +91,9 @@
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="./modal/modal_core.js"></script>
+  <script src="./modal/excel_modal.js"></script>
   <script src="./js/ui.suggest.js"></script>
   <script src="./js/ui.fields.js"></script>
   <script src="./js/ui.node.js"></script>

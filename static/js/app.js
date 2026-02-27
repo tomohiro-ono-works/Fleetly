@@ -54,13 +54,31 @@
   const detailPanel = document.querySelector(".detail-panel");
   const mainRoot = document.querySelector("main");
 
-  const CONNECTOR_EXPORT_ID = {
-    BQConnector: "bigquery_connector",
-    CSVConnector: "csv_connector",
-    ExcelConnector: "excel_connector",
-    OperationConnector: "operation_connector",
-    ShellConnector: "shell_connector"
-  };
+  function toConnectorExportId(connectorId) {
+    return String(connectorId || "")
+      .replace(/([A-Z]+)([A-Z][a-z])/g, "$1_$2")
+      .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+      .toLowerCase();
+  }
+
+  function buildConnectorExportIdMap(config) {
+    const out = {};
+    const connectors = Array.isArray(config?.connectors) ? config.connectors : [];
+
+    connectors.forEach((connector) => {
+      const uiId = String(connector?.id || "").trim();
+      if (!uiId) return;
+
+      const exportId = String(connector?.exportId || toConnectorExportId(uiId)).trim();
+      if (!exportId) return;
+
+      out[uiId] = exportId;
+    });
+
+    return out;
+  }
+
+  const CONNECTOR_EXPORT_ID = buildConnectorExportIdMap(CONFIG);
   const IMPORT_CONNECTOR_ID = Object.fromEntries(
     Object.entries(CONNECTOR_EXPORT_ID).map(([uiId, exportId]) => [exportId, uiId])
   );

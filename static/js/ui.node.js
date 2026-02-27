@@ -58,6 +58,43 @@
     return (config.forms && config.forms[`${connector}.${action}`]) || [];
   }
 
+  function getActionConfig(config, connector, action) {
+    const actions = (config.actions && config.actions[connector]) || [];
+    return actions.find((a) => a.id === action) || null;
+  }
+
+  function applyModalResultToNodeForm(node, detailModal, result) {
+    if (!node) return;
+    if (!node.form) node.form = {};
+    const fieldMap = (detailModal && detailModal.resultFieldMap) || {};
+
+    Object.entries(fieldMap).forEach(([resultKey, formKey]) => {
+      if (!formKey) return;
+      if (!result || !Object.prototype.hasOwnProperty.call(result, resultKey)) return;
+      node.form[formKey] = result[resultKey];
+    });
+  }
+
+  function openConfiguredDetailModal({ node, detailModal, onStateChanged }) {
+    if (!detailModal || !detailModal.type) return;
+
+    if (detailModal.type === "excel") {
+      if (!window.ExcelModal || typeof window.ExcelModal.open !== "function") {
+        alert("Excelモーダルを読み込めませんでした。");
+        return;
+      }
+      window.ExcelModal.open({
+        onOk: (result) => {
+          applyModalResultToNodeForm(node, detailModal, result);
+          if (onStateChanged) onStateChanged();
+        }
+      });
+      return;
+    }
+
+    alert(`未対応のモーダル種別です: ${detailModal.type}`);
+  }
+
   function ensureNodeDefaults(config, node) {
     if (!node.connector) node.connector = config.connectors?.[0]?.id || "";
     if (!node.action) {
@@ -1044,6 +1081,10 @@
       });
     });
 
+    const rootStyles = getComputedStyle(document.documentElement);
+    const warningNodeFill =
+      rootStyles.getPropertyValue("--brand-200").trim();
+
     const nodesToDraw = [model.start, ...model.taskViews, ...(model.loopEndViews || []), model.end];
     nodesToDraw.forEach((node) => {
       const isStart = node.kind === "start";
@@ -1058,7 +1099,7 @@
 
       if (isStart) ctx.fillStyle = "#f2f2f2";
       else if (isEnd) ctx.fillStyle = "#f2f2f2";
-      else if (isTask && hasMissingRequiredField(config, node.nodeRef)) ctx.fillStyle = "#fffadd";
+      else if (isTask && hasMissingRequiredField(config, node.nodeRef)) ctx.fillStyle = warningNodeFill;
       else ctx.fillStyle = "#ffffff";
 
       ctx.strokeStyle = isSelected ? "#15634b" : "#bdbdbd";
@@ -1427,6 +1468,8 @@
 
     const upstreamSteps = getUpstreamSteps(state, node.id);
     const schema = getFormSchema(config, node.connector, node.action);
+    const actionConfig = getActionConfig(config, node.connector, node.action);
+    const detailModal = actionConfig && actionConfig.detailModal;
 
     const headLeft = el("div", { class: "left" }, [
       el("div", { class: "badge" }, [document.createTextNode(`{${node.stepName}}`)]),
@@ -1439,7 +1482,22 @@
       ])
     ]);
 
-    const headActions = el("div", { class: "node-head-actions" }, [
+    const headActionItems = [];
+
+    if (detailModal && detailModal.label) {
+      headActionItems.push(
+        el(
+          "button",
+          {
+            type: "button",
+            onclick: () => openConfiguredDetailModal({ node, detailModal, onStateChanged })
+          },
+          [document.createTextNode(detailModal.label)]
+        )
+      );
+    }
+
+    headActionItems.push(
       el(
         "button",
         {
@@ -1452,7 +1510,9 @@
         },
         [document.createTextNode("削除")]
       )
-    ]);
+    );
+
+    const headActions = el("div", { class: "node-head-actions" }, headActionItems);
 
     const head = el("div", { class: "node-head" }, [headLeft, headActions]);
     const body = el("div", { class: "node-body" }, []);
