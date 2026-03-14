@@ -153,10 +153,10 @@
   max-width: 100%;
   overflow-x: auto;
   overflow-y: auto;
-  background-color: var(--surface-page);
+  background-color: var(--surface-subtle);
   background-image:
-    linear-gradient(to right, var(--border-grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--border-grid) 1px, transparent 1px);
+    linear-gradient(to right, var(--border-grid-flow, var(--border-grid)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-grid-flow, var(--border-grid)) 1px, transparent 1px);
   background-size: 24px 24px;
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -166,10 +166,10 @@
 
 .flow-canvas {
   display: block;
-  background-color: var(--surface-page);
+  background-color: var(--surface-subtle);
   background-image:
-    linear-gradient(to right, var(--border-grid) 1px, transparent 1px),
-    linear-gradient(to bottom, var(--border-grid) 1px, transparent 1px);
+    linear-gradient(to right, var(--border-grid-flow, var(--border-grid)) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--border-grid-flow, var(--border-grid)) 1px, transparent 1px);
   background-size: 24px 24px;
 }
 

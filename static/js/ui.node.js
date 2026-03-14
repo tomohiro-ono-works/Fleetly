@@ -267,23 +267,78 @@
     return jpLabel(action || { id: actionId });
   }
 
-  const CONNECTOR_CATEGORY_GROUPS = [
-    {
-      id: "data",
-      label: "データ操作",
-      connectorIds: ["BQConnector", "CSVConnector", "ExcelConnector", "DataintegrationConnector"]
-    },
-    {
-      id: "process",
-      label: "プロセス系",
-      connectorIds: ["OperationConnector", "WebConnector", "PPTConnector"]
-    },
-    {
-      id: "science",
-      label: "サイエンス系",
-      connectorIds: ["PythonConnector", "VectorConnector", "LLMConnector", "APIConnector", "ShellConnector"]
+  function buildNodeYamlSettings(node) {
+    const out = {
+      step: String(node.stepName || ""),
+      connector: String(node.connector || ""),
+      action: String(node.action || ""),
+      form: { ...(node.form || {}) }
+    };
+    if (node.parentId) out.parent_id = node.parentId;
+    if (node.parallelOf) out.parallel_of = node.parallelOf;
+    if (node.parallelOrder !== undefined && node.parallelOrder !== null) {
+      const num = Number(node.parallelOrder);
+      out.parallel_order = Number.isFinite(num) ? num : node.parallelOrder;
     }
+    if (node.loopOwnerId) out.loop_owner_id = node.loopOwnerId;
+    return out;
+  }
+
+  function dumpYamlSafe(value) {
+    const parser = window.jsyaml;
+    if (parser && typeof parser.dump === "function") {
+      try {
+        return parser.dump(value, { lineWidth: -1, noRefs: true });
+      } catch (err) {
+        console.warn("yaml dump failed, fallback to internal yaml serializer", err);
+      }
+    }
+    if (window.utils && typeof window.utils.toYaml === "function") {
+      return window.utils.toYaml(value);
+    }
+    return JSON.stringify(value, null, 2);
+  }
+
+  function toLogText(value) {
+    if (value === undefined || value === null) return "";
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean") return String(value);
+    try {
+      return JSON.stringify(value);
+    } catch (err) {
+      return String(value);
+    }
+  }
+
+  function getNodeLogLines(node) {
+    const src = Array.isArray(node.logs)
+      ? node.logs
+      : Array.isArray(node.runtimeLogs)
+        ? node.runtimeLogs
+        : [];
+    return src
+      .map((item) => toLogText(item).trim())
+      .filter((line) => line.length > 0);
+  }
+
+  const CONNECTOR_CATEGORY_GROUPS = [
+    { id: "data", label: "データ操作" },
+    { id: "process", label: "プロセス系" },
+    { id: "science", label: "サイエンス系" }
   ];
+
+  function normalizeConnectorCategory(category) {
+    return CONNECTOR_CATEGORY_GROUPS.some((group) => group.id === category)
+      ? category
+      : "others";
+  }
+
+  function isDataConnector(connectorId, config) {
+    const connectors = config?.connectors || [];
+    const connector = connectors.find((item) => item.id === connectorId);
+    if (!connector) return false;
+    return normalizeConnectorCategory(connector.category) === "data";
+  }
 
   function connectorDisplayLabel(connector) {
     if (!connector) return "";
@@ -294,18 +349,23 @@
 
   function buildConnectorGroups(config, selectedConnectorId) {
     const connectors = config.connectors || [];
-    const byId = new Map(connectors.map((c) => [c.id, c]));
-    const used = new Set();
+    const bucketByCategory = new Map();
+    CONNECTOR_CATEGORY_GROUPS.forEach((group) => bucketByCategory.set(group.id, []));
+    const others = [];
+
+    connectors.forEach((connector) => {
+      const category = normalizeConnectorCategory(connector.category);
+      if (category === "others") {
+        others.push(connector);
+        return;
+      }
+      bucketByCategory.get(category).push(connector);
+    });
 
     const groups = CONNECTOR_CATEGORY_GROUPS
-      .map((group) => {
-        const items = group.connectorIds.map((id) => byId.get(id)).filter(Boolean);
-        items.forEach((item) => used.add(item.id));
-        return { id: group.id, label: group.label, items };
-      })
+      .map((group) => ({ id: group.id, label: group.label, items: bucketByCategory.get(group.id) || [] }))
       .filter((group) => group.items.length);
 
-    const others = connectors.filter((c) => !used.has(c.id));
     if (others.length) {
       groups.push({ id: "others", label: "その他", items: others });
     }
@@ -1056,19 +1116,31 @@
       ctx.stroke();
     });
 
+    const rootStyles = getComputedStyle(document.documentElement);
+    const warningNodeFill = rootStyles.getPropertyValue("--brand-200").trim() || "#f9c4df";
+    const flowEdgeMain = rootStyles.getPropertyValue("--flow-edge-main").trim() || "#5c6f88";
+    const flowEdgeSecondary = rootStyles.getPropertyValue("--flow-edge-secondary").trim() || "#74859d";
+    const flowEdgeParallel = rootStyles.getPropertyValue("--flow-edge-parallel").trim() || "#6e829c";
+    const flowNodeBorder = rootStyles.getPropertyValue("--flow-node-border").trim() || "#9aa5b6";
+    const flowNodeBorderSelected = rootStyles.getPropertyValue("--flow-node-border-selected").trim() || "#0f5e47";
+    const flowNodeSubtext = rootStyles.getPropertyValue("--flow-node-subtext").trim() || "#626b7b";
+    const flowNodeShadow = rootStyles.getPropertyValue("--alpha-shadow-10").trim() || "rgba(79, 67, 67, 0.68)";
+    const surfaceStrong = rootStyles.getPropertyValue("--surface-strong").trim() || "#4b4e63";
+    const surfacePage = rootStyles.getPropertyValue("--surface-page").trim() || "#f2f2f2";
+
     model.edges.forEach((edge) => {
       const from = model.nodeMap.get(edge.from);
       const to = model.nodeMap.get(edge.to);
       if (!from || !to) return;
       drawEdge(ctx, from, to, {
         color:
-          edge.kind === "to-end-main" ? "#6f7f94" :
-          edge.kind === "to-end" ? "#8d99aa" :
-          edge.kind === "parallel" ? "#90a3b8" : "#6f7f94",
+          edge.kind === "to-end-main" ? flowEdgeMain :
+          edge.kind === "to-end" ? flowEdgeSecondary :
+          edge.kind === "parallel" ? flowEdgeParallel : flowEdgeMain,
         width:
-          edge.kind === "to-end-main" ? 2 :
-          edge.kind === "to-end" ? 1 :
-          edge.kind === "parallel" ? 1 : 2,
+          edge.kind === "to-end-main" ? 2.2 :
+          edge.kind === "to-end" ? 1.3 :
+          edge.kind === "parallel" ? 1.3 : 2.2,
         dash:
           edge.kind === "to-end-main" ? [] :
           edge.kind === "to-end" ? [4, 3] :
@@ -1080,10 +1152,6 @@
         arrowSize: edge.kind === "parallel" ? 5 : edge.kind === "to-end" ? 5 : 6
       });
     });
-
-    const rootStyles = getComputedStyle(document.documentElement);
-    const warningNodeFill =
-      rootStyles.getPropertyValue("--brand-200").trim();
 
     const nodesToDraw = [model.start, ...model.taskViews, ...(model.loopEndViews || []), model.end];
     nodesToDraw.forEach((node) => {
@@ -1097,12 +1165,16 @@
       if (isParallel) ctx.setLineDash([4, 2]);
       else ctx.setLineDash([]);
 
-      if (isStart) ctx.fillStyle = "#f2f2f2";
-      else if (isEnd) ctx.fillStyle = "#f2f2f2";
+      if (isStart) ctx.fillStyle = surfaceStrong;
+      else if (isEnd) ctx.fillStyle = surfaceStrong;
       else if (isTask && hasMissingRequiredField(config, node.nodeRef)) ctx.fillStyle = warningNodeFill;
       else ctx.fillStyle = "#ffffff";
 
-      ctx.strokeStyle = isSelected ? "#15634b" : "#bdbdbd";
+      ctx.shadowColor = flowNodeShadow;
+      ctx.shadowBlur = isSelected ? 7 : 5;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 2;
+      ctx.strokeStyle = isSelected ? flowNodeBorderSelected : flowNodeBorder;
       ctx.lineWidth = isSelected ? 2 : 1;
       if (isStart) {
         drawOneSideRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, "left");
@@ -1114,6 +1186,10 @@
       ctx.fill();
       ctx.stroke();
       ctx.setLineDash([]);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
 
       if (isTask) {
         const badgeText = String(node.nodeRef.stepName || "");
@@ -1140,7 +1216,7 @@
       const icon = iconSrc ? ensureConnectorIcon(view, iconSrc) : null;
       const hasIcon = !!(icon && !icon.__failed && icon.complete && icon.naturalWidth > 0);
 
-      ctx.fillStyle = isStart || isEnd ? "#374151" : "#4c4c4c";
+      ctx.fillStyle = isStart || isEnd ? surfacePage : "#4c4c4c";
       ctx.font = isStart || isEnd
         ? "700 12px 'Segoe UI', 'Yu Gothic UI', sans-serif"
         : "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
@@ -1179,7 +1255,7 @@
       }
 
       if (isTask) {
-        ctx.fillStyle = "#848484";
+        ctx.fillStyle = flowNodeSubtext;
         ctx.font = "11px 'Segoe UI', 'Yu Gothic UI', sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
@@ -1471,17 +1547,6 @@
     const actionConfig = getActionConfig(config, node.connector, node.action);
     const detailModal = actionConfig && actionConfig.detailModal;
 
-    const headLeft = el("div", { class: "left" }, [
-      el("div", { class: "badge" }, [document.createTextNode(`{${node.stepName}}`)]),
-      el("div", {}, [
-        el("div", { class: "head-selects" }, [
-          el("div", { class: "head-select" }, [
-            renderConnectorSelect({ config, node, onStateChanged })
-          ])
-        ])
-      ])
-    ]);
-
     const headActionItems = [];
 
     if (detailModal && detailModal.label) {
@@ -1496,6 +1561,43 @@
         )
       );
     }
+
+    function requestNodeRun(mode) {
+      if (!Array.isArray(node.runtimeLogs)) node.runtimeLogs = [];
+      const timestamp = new Date().toISOString();
+      const modeLabel = mode === "through" ? "フロー実行" : "ステップ実行";
+      node.runtimeLogs.push(`[${timestamp}] ${modeLabel} をリクエストしました（未実装）`);
+      window.dispatchEvent(
+        new CustomEvent("fleetly:node-run-request", {
+          detail: { mode, nodeId: node.id, stepName: node.stepName, connector: node.connector, action: node.action }
+        })
+      );
+      onStateChanged();
+    }
+
+    headActionItems.push(
+      el(
+        "button",
+        {
+          class: "run-btn",
+          type: "button",
+          onclick: () => requestNodeRun("single")
+        },
+        [document.createTextNode("ステップ実行")]
+      )
+    );
+
+    headActionItems.push(
+      el(
+        "button",
+        {
+          class: "run-btn",
+          type: "button",
+          onclick: () => requestNodeRun("through")
+        },
+        [document.createTextNode("フロー実行")]
+      )
+    );
 
     headActionItems.push(
       el(
@@ -1513,9 +1615,79 @@
     );
 
     const headActions = el("div", { class: "node-head-actions" }, headActionItems);
-
-    const head = el("div", { class: "node-head" }, [headLeft, headActions]);
     const body = el("div", { class: "node-body" }, []);
+    const tabBar = el("div", { class: "node-tabs", role: "tablist", "aria-label": "ノード詳細タブ" }, []);
+    const detailTabBtn = el(
+      "button",
+      { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "detail" },
+      [document.createTextNode("ノード詳細")]
+    );
+    const yamlTabBtn = el(
+      "button",
+      { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "yaml" },
+      [document.createTextNode("YAML設定")]
+    );
+    const dataTabBtn = el(
+      "button",
+      { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "data" },
+      [document.createTextNode("データ")]
+    );
+    const logTabBtn = el(
+      "button",
+      { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "log" },
+      [document.createTextNode("ログ")]
+    );
+    tabBar.appendChild(detailTabBtn);
+    tabBar.appendChild(yamlTabBtn);
+    tabBar.appendChild(dataTabBtn);
+    tabBar.appendChild(logTabBtn);
+    const tabsHead = el("div", { class: "node-tabs-head" }, [tabBar, headActions]);
+
+    const detailPane = el("div", { class: "node-tab-pane", "data-tab-key": "detail" }, [body]);
+    const yamlText = el("textarea", {
+      class: "node-yaml-editor",
+      readonly: "readonly",
+      spellcheck: "false",
+      "aria-label": "ノード設定YAML"
+    });
+    const yamlPane = el("div", { class: "node-tab-pane", "data-tab-key": "yaml" }, [yamlText]);
+    const dataTableBody = el("tbody", {}, []);
+    const dataTable = el("table", { class: "node-data-table" }, [
+      el("thead", {}, [
+        el("tr", {}, [
+          el("th", {}, [document.createTextNode("項目")]),
+          el("th", {}, [document.createTextNode("値")])
+        ])
+      ]),
+      dataTableBody
+    ]);
+    const dataTableWrap = el("div", { class: "node-data-wrap" }, [dataTable]);
+    const dataUnsupportedNote = el("div", { class: "node-data-note" }, [
+      document.createTextNode("データコネクタではないため対応していません。")
+    ]);
+    const dataPane = el("div", { class: "node-tab-pane", "data-tab-key": "data" }, [
+      dataUnsupportedNote,
+      dataTableWrap
+    ]);
+    const logText = el("textarea", {
+      class: "node-log-view",
+      readonly: "readonly",
+      spellcheck: "false",
+      "aria-label": "処理ログ"
+    });
+    const logPane = el("div", { class: "node-tab-pane", "data-tab-key": "log" }, [
+      el("div", { class: "node-log-wrap" }, [logText])
+    ]);
+
+    const detailMeta = el("div", { class: "node-detail-meta" }, [
+      el("div", { class: "badge" }, [document.createTextNode(`{${node.stepName}}`)]),
+      el("div", { class: "head-selects" }, [
+        el("div", { class: "head-select" }, [
+          renderConnectorSelect({ config, node, onStateChanged })
+        ])
+      ])
+    ]);
+    body.appendChild(detailMeta);
 
     if (!schema.length) {
       body.appendChild(
@@ -1529,7 +1701,87 @@
       }
     }
 
-    root.appendChild(el("section", { class: "node detail-node" }, [head, body]));
+    function syncYamlView() {
+      yamlText.value = dumpYamlSafe(buildNodeYamlSettings(node)).trimEnd();
+    }
+
+    function syncDataView() {
+      const dataConnector = isDataConnector(node.connector, config);
+      dataUnsupportedNote.hidden = dataConnector;
+      dataTableWrap.hidden = !dataConnector;
+      dataTableBody.innerHTML = "";
+      if (!dataConnector) return;
+      dataTableBody.appendChild(
+        el("tr", {}, [
+          el("td", {}, [document.createTextNode("状態")]),
+          el("td", { class: "node-data-value" }, [document.createTextNode("データがないです。")])
+        ])
+      );
+    }
+
+    function syncLogView() {
+      const lines = getNodeLogLines(node);
+      if (!lines.length) {
+        logText.value = "ログがないです。";
+        return;
+      }
+      logText.value = lines.join("\n");
+    }
+
+    const activeTabByRoot = ["detail", "yaml", "data", "log"].includes(root.__nodeDetailActiveTab)
+      ? root.__nodeDetailActiveTab
+      : "detail";
+    function setActiveTab(tabKey) {
+      const activeTab = ["yaml", "data", "log"].includes(tabKey) ? tabKey : "detail";
+      root.__nodeDetailActiveTab = activeTab;
+      const showDetail = activeTab === "detail";
+      const showYaml = activeTab === "yaml";
+      const showData = activeTab === "data";
+      const showLog = activeTab === "log";
+
+      detailTabBtn.classList.toggle("is-active", showDetail);
+      detailTabBtn.setAttribute("aria-selected", showDetail ? "true" : "false");
+
+      yamlTabBtn.classList.toggle("is-active", showYaml);
+      yamlTabBtn.setAttribute("aria-selected", showYaml ? "true" : "false");
+
+      dataTabBtn.classList.toggle("is-active", showData);
+      dataTabBtn.setAttribute("aria-selected", showData ? "true" : "false");
+
+      logTabBtn.classList.toggle("is-active", showLog);
+      logTabBtn.setAttribute("aria-selected", showLog ? "true" : "false");
+
+      detailPane.classList.toggle("is-active", showDetail);
+      yamlPane.classList.toggle("is-active", showYaml);
+      dataPane.classList.toggle("is-active", showData);
+      logPane.classList.toggle("is-active", showLog);
+      detailPane.hidden = !showDetail;
+      yamlPane.hidden = !showYaml;
+      dataPane.hidden = !showData;
+      logPane.hidden = !showLog;
+
+      if (showYaml) syncYamlView();
+      if (showData) syncDataView();
+      if (showLog) syncLogView();
+    }
+
+    detailTabBtn.addEventListener("click", () => setActiveTab("detail"));
+    yamlTabBtn.addEventListener("click", () => setActiveTab("yaml"));
+    dataTabBtn.addEventListener("click", () => setActiveTab("data"));
+    logTabBtn.addEventListener("click", () => setActiveTab("log"));
+
+    body.addEventListener("input", syncYamlView);
+    body.addEventListener("change", syncYamlView);
+    body.addEventListener("input", syncDataView);
+    body.addEventListener("change", syncDataView);
+    body.addEventListener("input", syncLogView);
+    body.addEventListener("change", syncLogView);
+    syncYamlView();
+    syncDataView();
+    syncLogView();
+    setActiveTab(activeTabByRoot);
+
+    root.appendChild(el("section", { class: "node detail-node" }, [tabsHead, detailPane, yamlPane, dataPane, logPane]));
   }
 
   window.uiNode = { normalizeSteps, renderFlowChart, renderNodeDetail };

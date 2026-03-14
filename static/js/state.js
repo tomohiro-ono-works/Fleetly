@@ -188,11 +188,30 @@ function createId() {
   return `node_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
 }
 
+function getConfigObject() {
+  return window.CONFIG || {};
+}
+
+function getDefaultConnectorId() {
+  const cfg = getConfigObject();
+  const connectors = Array.isArray(cfg.connectors) ? cfg.connectors : [];
+  return connectors[0]?.id || "";
+}
+
+function getDefaultActionId(connectorId) {
+  const cfg = getConfigObject();
+  const byConnector = (cfg.actions && connectorId) ? cfg.actions[connectorId] : null;
+  const actions = Array.isArray(byConnector) ? byConnector : [];
+  return actions[0]?.id || "";
+}
+
 function createDefaultNode() {
+  const connectorId = getDefaultConnectorId();
+  const actionId = getDefaultActionId(connectorId);
   return {
     id: createId(),
-    connector: "BQConnector",
-    action: "execute_sql",
+    connector: connectorId,
+    action: actionId,
     form: {},
     parentId: null,
     parallelOf: null,
@@ -202,11 +221,13 @@ function createDefaultNode() {
 }
 
 function createNewNode(stepName) {
+  const connectorId = getDefaultConnectorId();
+  const actionId = getDefaultActionId(connectorId);
   return {
     id: createId(),
     stepName: stepName || "",
-    connector: "CSVConnector",
-    action: "read_csv",
+    connector: connectorId,
+    action: actionId,
     form: {},
     parentId: null,
     parallelOf: null,

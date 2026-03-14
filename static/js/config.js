@@ -2,19 +2,19 @@ window.CONFIG = {
   version: 3,
 
   connectors: [
-    { id: "BQConnector",        label: "BigQuery", exportId: "bigquery_connector" },
-    { id: "CSVConnector",       label: "CSV", exportId: "csv_connector" },
-    { id: "ExcelConnector",     label: "Excel", exportId: "excel_connector" },
-    { id: "PlotlyConnector",    label: "Plotly", exportId: "plotly_connector" },
-    { id: "PPTConnector",       label: "PowerPoint", exportId: "ppt_connector" },
-    { id: "OperationConnector", label: "操作", exportId: "operation_connector" },
-    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector" },
-    { id: "ShellConnector",     label: "シェル", exportId: "shell_connector" },
-    { id: "VectorConnector",    label: "VectorDB", exportId: "vector_connector" },
-    { id: "LLMConnector",       label: "LLM", exportId: "llm_connector" },
-    { id: "WebConnector",       label: "Web操作", exportId: "web_connector" },
-    { id: "APIConnector",       label: "API実行", exportId: "api_connector" },
-    { id: "PythonConnector",    label: "Python実行", exportId: "python_connector" }
+    { id: "BQConnector",              label: "BigQuery", exportId: "bigquery_connector", category: "data" },
+    { id: "CSVConnector",             label: "CSV", exportId: "csv_connector", category: "data" },
+    { id: "ExcelConnector",           label: "Excel", exportId: "excel_connector", category: "data" },
+    { id: "PlotlyConnector",          label: "Plotly", exportId: "plotly_connector" },
+    { id: "PPTConnector",             label: "PowerPoint", exportId: "ppt_connector", category: "process" },
+    { id: "OperationConnector",       label: "操作", exportId: "operation_connector", category: "process" },
+    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector", category: "data" },
+    { id: "ShellConnector",           label: "シェル", exportId: "shell_connector", category: "science" },
+    { id: "VectorConnector",          label: "VectorDB", exportId: "vector_connector", category: "science" },
+    { id: "LLMConnector",             label: "LLM", exportId: "llm_connector", category: "science" },
+    { id: "WebConnector",             label: "Web操作", exportId: "web_connector", category: "process" },
+    { id: "APIConnector",             label: "API実行", exportId: "api_connector", category: "science" },
+    { id: "PythonConnector",          label: "Python実行", exportId: "python_connector", category: "science" }
   ],
 
   actions: {

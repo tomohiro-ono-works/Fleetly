@@ -3,7 +3,7 @@
 ========================================================= */
 :root {
   /* Base */
-  --surface-page: #f2f2f2;
+  --surface-page: #fffefe;
   --surface-hover: #ececf4;
   --text-primary: #4b4e63;
   --text-secondary: #9ca0b5;
@@ -14,6 +14,15 @@
   --surface-base: #f2f2f2;
   --surface-subtle: #ffffff;
   --border-grid: #e1e3ec;
+  --border-grid-flow: #e8eaf2;
+
+  /* Flowchart canvas */
+  --flow-edge-main: #5c6f88;
+  --flow-edge-secondary: #74859d;
+  --flow-edge-parallel: #6e829c;
+  --flow-node-border: #9aa5b6;
+  --flow-node-border-selected: #0f5e47;
+  --flow-node-subtext: #626b7b;
 
   /* Main */
   --brand-700: #6b4eff;
@@ -29,9 +38,9 @@
   --semantic-error-fg: #9e1f5f;
 
   /* Sub / lines */
-  --brand-650: #18c79a;
+  --brand-650: #009faa;
   --brand-300: #8de4cb;
-  --brand-800: #0f8d6d;
+  --brand-800: #085742;
   --border-muted: #8bcfbe;
   --border-strong: #67b9a5;
 
@@ -46,12 +55,12 @@
   --text-strong: #4b4e63;
 
   /* shadow */
-  --alpha-shadow-10: rgba(0, 0, 0, 0.1);
+  --alpha-shadow-10: rgba(0, 0, 0, 0.15);
   --alpha-shadow-12: rgba(0, 0, 0, 0.12);
   --alpha-white-18: rgba(255, 255, 255, 0.18);
   --alpha-white-94: rgba(255, 255, 255, 0.94);
   --alpha-accent-24: rgba(236, 54, 145, 0.24);
-  --alpha-brand-15: rgba(24, 199, 154, 0.15);
+  --alpha-brand-15: rgba(13, 125, 96, 0.15);
 
   --shadow-soft: 0 6px 16px var(--alpha-shadow-10);
 
@@ -64,4 +73,3 @@
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans JP", sans-serif;
 }
-

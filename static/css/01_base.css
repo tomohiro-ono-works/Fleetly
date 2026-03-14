@@ -66,8 +66,8 @@ button.danger:hover { background: var(--brand-200); }
 ========================================================= */
 main {
   margin: 0 auto;
-  padding: 18px;
-  padding-bottom: 320px; /* detail-panel 固定表示の逃げ */
+  padding: 2px;
+  padding-bottom: 20px; /* detail-panel 固定表示の逃げ */
 }
 
 .hint {

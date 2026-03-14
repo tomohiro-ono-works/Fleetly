@@ -34,8 +34,8 @@ header {
 }
 
 .flow-name-input {
-  min-width: 220px;
-  max-width: 420px;
+  min-width: 480px;
+  max-width: 560px;
   border: 0;
   background: var(--surface-header);
   color: var(--surface-page);
@@ -58,6 +58,18 @@ header .actions button {
   color: var(--surface-page);
 }
 header .actions button:hover { background: var(--surface-strong-hover); }
+
+header .actions #btnRunFlow {
+  background: var(--brand-650);
+  border: 1px solid var(--brand-650);
+  color: var(--surface-page);
+}
+
+header .actions #btnRunFlow:hover {
+  background: var(--brand-300);
+  border-color: var(--brand-650);
+  color: var(--brand-800);
+}
 
 .title {
   display: flex;

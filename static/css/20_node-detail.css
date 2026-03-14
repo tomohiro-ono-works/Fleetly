@@ -71,6 +71,76 @@
   align-items: center;
   flex-wrap: wrap;
   justify-content: flex-end;
+  padding: 0px 0px 8px 0px;
+}
+
+.node-head-actions .run-btn {
+  background: var(--brand-650);
+  border-color: var(--brand-650);
+  color: var(--surface-page);
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+.node-head-actions .run-btn:hover {
+  background: var(--brand-300);
+  border-color: var(--brand-650);
+  color: var(--brand-800);
+}
+
+.node-head.node-head-actions-only {
+  justify-content: flex-end;
+}
+
+/* ---------- Node Tabs ---------- */
+.node-tabs-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 4px var(--pad) 0px;
+  background: var(--surface-base);
+  border-bottom: 1px solid var(--border-default);
+}
+
+.node-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0;
+  background: transparent;
+  border-bottom: 0;
+  flex: 1 1 auto;
+}
+
+.node-tabs-head .node-head-actions {
+  margin-left: auto;
+}
+
+.node-tab-btn {
+  border: 1px solid var(--border-default);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: var(--surface-page);
+  color: var(--text-muted);
+  padding: 6px 12px;
+  font-size: 12px;
+  line-height: 1.2;
+  cursor: pointer;
+}
+
+.node-tab-btn.is-active {
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+  border-color: var(--border-default);
+  font-weight: 600;
+}
+
+.node-tab-pane {
+  display: none;
+}
+
+.node-tab-pane.is-active {
+  display: block;
 }
 
 /* ---------- Node Body ---------- */
@@ -78,6 +148,20 @@
   padding: var(--pad);
   display: grid;
   gap: 4px;
+}
+
+.node-detail-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.node-detail-meta .badge {
+  margin-top: 0;
 }
 
 /* form row */
@@ -126,6 +210,75 @@ textarea {
   min-height: 90px;
   resize: vertical;
   font-family: var(--mono);
+}
+
+.node-yaml-editor {
+  width: calc(100% - (var(--pad) * 2));
+  margin: var(--pad);
+  min-height: 320px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-default);
+}
+
+.node-data-wrap {
+  padding: var(--pad);
+}
+
+.node-data-note {
+  padding: var(--pad);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.node-data-table {
+  width: 100%;
+  border-collapse: collapse;
+  border: 1px solid var(--border-default);
+  background: var(--surface-subtle);
+  font-size: 12px;
+}
+
+.node-data-table th,
+.node-data-table td {
+  border-bottom: 1px solid var(--border-divider);
+  padding: 8px 10px;
+  text-align: left;
+  vertical-align: top;
+}
+
+.node-data-table th {
+  background: var(--surface-base);
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.node-data-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.node-data-value {
+  font-family: var(--mono);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.node-log-wrap {
+  padding: var(--pad);
+}
+
+.node-log-view {
+  width: 100%;
+  min-height: 320px;
+  resize: vertical;
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.5;
+  background: var(--surface-subtle);
+  border: 1px solid var(--border-default);
 }
 
 /* required hint (位置は label 列幅に追従) */
