@@ -4,7 +4,6 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Flow Prototype</title>
-  <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism.min.css" rel="stylesheet" />
   <link rel="stylesheet" href="./css/00_tokens.css">
   <link rel="stylesheet" href="./css/01_base.css">
   <link rel="stylesheet" href="./css/10_header.css">
@@ -14,6 +13,7 @@
   <link rel="stylesheet" href="./css/90_responsive.css">
   <link rel="stylesheet" href="./modal/modal_core.css">
   <link rel="stylesheet" href="./modal/excel_modal.css">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
 </head>
 <body>
   <header>
@@ -87,13 +87,14 @@
   <script src="./js/utils.js"></script>
   <script src="./js/state.js"></script>
   <script src="./js/vars.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-sql.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-python.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
   <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/python/python.min.js"></script>
   <script src="./modal/modal_core.js"></script>
   <script src="./modal/excel_modal.js"></script>
+  <script src="./js/code.editor.js"></script>
   <script src="./js/ui.suggest.js"></script>
   <script src="./js/ui.fields.js"></script>
   <script src="./js/ui.node.js"></script>

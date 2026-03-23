@@ -13,7 +13,7 @@ class BQConnector(BaseConnector):
         # project_id ごとにクライアントを再利用する
         self.clients: Dict[str, bigquery.Client] = {}
 
-    def _get_client(self, project_id):
+    def _get_client(self, project_id: str) -> bigquery.Client:
         """project_id ごとのクライアントを取得する（未作成時のみ生成）"""
         if not project_id:
             raise ValueError("project_id は必須です。")
@@ -32,7 +32,7 @@ class BQConnector(BaseConnector):
         self.clients[project_id] = client
         return client
 
-    def google_auth_login(self):
+    def google_auth_login(self) -> None:
         """gcloud auth application-default login を実行"""
         import subprocess
         import sys
@@ -44,7 +44,16 @@ class BQConnector(BaseConnector):
             print(f"認証の自動起動に失敗しました。手動で 'gcloud auth application-default login' を実行してください。: {e}", file=sys.stderr)
             raise
 
-    def execute(self, action: str, params: dict, context: dict) -> Any:
+    def _to_bq_records(self, data: Any) -> List[Dict[str, Any]]:
+        records = self.to_records(data)
+        normalized_records: List[Dict[str, Any]] = []
+        for row in records:
+            if not isinstance(row, dict):
+                raise TypeError("BigQuery に渡す表データは辞書配列である必要があります。")
+            normalized_records.append({str(key): value for key, value in row.items()})
+        return normalized_records
+
+    def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
         project_id = params.get("project_id")
         if not project_id:
             raise ValueError("project_id は必須です。")
@@ -57,13 +66,22 @@ class BQConnector(BaseConnector):
                 encoding=params.get("encoding", "utf-8"),
                 is_output=params.get("is_output", True)
                 )
-                
+                 
         elif action == "load_data":
+            dataset_id = params.get("dataset_id")
+            table_id = params.get("table_id")
+            input_data = params.get("input_data")
+            if not dataset_id:
+                raise ValueError("dataset_id は必須です。")
+            if not table_id:
+                raise ValueError("table_id は必須です。")
+            if not input_data:
+                raise ValueError("input_data は必須です。")
             return self.load_data(
                 project_id, 
-                params.get("dataset_id"), 
-                params.get("table_id"), 
-                params.get("input_data"), 
+                str(dataset_id), 
+                str(table_id), 
+                str(input_data), 
                 params.get("write_disposition", "create_or_replace"),
                 context,
                 params.get("schema", None)
@@ -91,24 +109,27 @@ class BQConnector(BaseConnector):
         # 3. ここに来る時点で XORチェックにより「sql_file は絶対に None ではない」が確定する
         # しかし、静的解析ツールのために明示的に型を絞り込む
         if sql_file is not None:
-            sql_file = self.normalize_file_path(sql_file)
-            if not os.path.exists(sql_file):
-                raise FileNotFoundError(f"SQLファイルが見つかりません: {sql_file}")
-                 
-            with open(sql_file, 'r', encoding=encoding) as f:
+            normalized_sql_file = self.normalize_file_path(sql_file)
+            if normalized_sql_file is None:
+                raise ValueError("sql_file が指定されていません。")
+            if not os.path.exists(normalized_sql_file):
+                raise FileNotFoundError(f"SQLファイルが見つかりません: {normalized_sql_file}")
+
+            with open(normalized_sql_file, 'r', encoding=encoding) as f:
                 return f.read()
 
         # ここには到達しないはずだが、戻り値の型(str)を保証するために例外を置く
         raise RuntimeError("予期しないエラー: クエリを取得できませんでした。")
 
-    def _clean_date_columns(self, data: Any, schema: Optional[List[Any]]) -> None:
-        if not isinstance(data, list) or not schema:
-            return
+    def _clean_date_columns(self, data: Any, schema: Optional[List[Any]]) -> List[Dict[str, Any]]:
+        records = self._to_bq_records(data)
+        if not records or not schema:
+            return records
 
         # スキーマから日付・時刻系のカラム名を一括抽出
         target_cols = {f.name for f in schema if getattr(f, "field_type", "").upper() in ['DATE', 'DATETIME', 'TIMESTAMP']}
 
-        for row in data:
+        for row in records:
             for col in target_cols:
                 val = row.get(col)
                 if val is None:
@@ -126,15 +147,16 @@ class BQConnector(BaseConnector):
                     if len(nums) == 3:
                         y, m, d = nums
                         row[col] = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
+        return records
 
 
     def execute_sql(
             self, 
-            project_id,
-            sql=None, 
-            sql_file=None, 
-            encoding='utf-8', 
-            is_output=True):
+            project_id: str,
+            sql: Optional[str] = None, 
+            sql_file: Optional[str] = None, 
+            encoding: str = 'utf-8', 
+            is_output: bool = True) -> Any:
         query_str = self._get_query(sql, sql_file, encoding)
         client = self._get_client(project_id)
         query_job = client.query(query_str)
@@ -162,22 +184,25 @@ class BQConnector(BaseConnector):
                 
             results.append(dict_row)
             
-        return results
+        return self.to_dataframe(results)
 
     def load_data(self,
-                   project_id, 
-                   dataset_id, 
-                   table_id, 
-                   input_data, 
-                   write_disposition, 
-                   context, 
-                   schema=None):
+                   project_id: str,
+                   dataset_id: str,
+                   table_id: str,
+                   input_data: str,
+                   write_disposition: str,
+                   context: dict[str, Any],
+                   schema: Optional[List[Any]] = None) -> str:
         data = context.get(input_data)
-        if not data:
+        if data is None:
+            raise ValueError(f"変数 '{input_data}' にデータがありません。")
+        records = self._to_bq_records(data)
+        if not records:
             raise ValueError(f"変数 '{input_data}' にデータがありません。")
 
         # 1. データのクレンジング（utilsへ委譲）
-        self._clean_date_columns(data, schema)
+        records = self._clean_date_columns(records, schema)
 
         # 2. 引数の変換
         disposition_map = {
@@ -197,7 +222,7 @@ class BQConnector(BaseConnector):
             autodetect=False if schema else True
         )
 
-        load_job = client.load_table_from_json(data, table_ref, job_config=job_config)
+        load_job = client.load_table_from_json(records, table_ref, job_config=job_config)
         load_job.result()
         
-        return f"Loaded {len(data)} rows to {table_ref}."
+        return f"Loaded {len(records)} rows to {table_ref}."

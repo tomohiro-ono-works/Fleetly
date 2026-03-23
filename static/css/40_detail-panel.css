@@ -14,7 +14,7 @@
   box-shadow: 0 2px 10px var(--alpha-shadow-12);
   overflow: hidden;
   padding: 0;
-  height: 300px;
+  height: 600px;
   max-height: calc(100vh - 84px);
   min-height: 88px;
   display: flex;
@@ -79,9 +79,19 @@
 
 .detail-panel .row.required-empty input,
 .detail-panel .row.required-empty textarea,
-.detail-panel .row.required-empty select {
+.detail-panel .row.required-empty select,
+.detail-panel .row.required-empty .code-editor,
+.detail-panel .row.required-empty .code-editor .CodeMirror,
+.detail-panel .row.required-empty .code-editor .CodeMirror-gutters {
   background: var(--semantic-warning-bg);
   border-color: var(--brand-500);
+}
+
+.detail-panel .row.reference-invalid .code-editor,
+.detail-panel .row.reference-invalid .code-editor .CodeMirror,
+.detail-panel .row.reference-invalid .code-editor .CodeMirror-gutters {
+  background: var(--semantic-warning-bg);
+  border-color: var(--semantic-error-fg);
 }
 
 .detail-panel .sub { color: var(--brand-500); }

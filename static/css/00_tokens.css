@@ -21,8 +21,17 @@
   --flow-edge-secondary: #74859d;
   --flow-edge-parallel: #6e829c;
   --flow-node-border: #9aa5b6;
-  --flow-node-border-selected: #0f5e47;
+  --flow-node-border-selected: #4b4e63;
   --flow-node-subtext: #626b7b;
+  --flow-loop-frame-fill: #ebe6ff;
+  --flow-loop-frame-stroke: #5a41da;
+  --flow-drag-preview-stroke: #4b4e63;
+  --flow-step-badge-border: #c8cad8;
+  --flow-control-fill-active: #4b4e63;
+  --flow-control-stroke: #bdbdbd;
+  --flow-control-stroke-active: #4b4e63;
+  --flow-control-text: #4b4e63;
+  --flow-control-text-active: #fffefe;
 
   /* Main */
   --brand-700: #6b4eff;

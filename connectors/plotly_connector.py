@@ -34,10 +34,8 @@ def _save_figure(fig: go.Figure, folder: str, file_name: str, mode: str) -> str:
 
 
 def _to_dataframe(json_data: Any) -> pd.DataFrame:
-    """行指向JSON（list[dict]）をDataFrameに変換する。"""
-    if not isinstance(json_data, list):
-        raise ValueError("json_data は list[dict] 形式で指定してください。")
-    return pd.DataFrame(json_data)
+    """表データをDataFrameに変換する。"""
+    return BaseConnector.to_dataframe(json_data)
 
 
 def _ensure_list(value: Any, *, field_name: str) -> list[str]:
@@ -227,8 +225,29 @@ def plot_funnel(json_data, stage_col, value_col, title, folder, file_name, mode=
     return _plot_funnel(json_data, stage_col, value_col, title, folder, file_name, mode)
 
 
-def plot_radar(json_data, theta_col, r_col, name, title, folder, file_name, mode="png"):
-    return _plot_radar(json_data, theta_col, r_col, name, title, folder, file_name, mode)
+def plot_radar(
+    json_data,
+    theta_col="",
+    r_col="",
+    name="series",
+    title="レーダーチャート",
+    folder="",
+    file_name="radar",
+    mode="png",
+    value_cols=None,
+):
+    radar_value_cols = _ensure_list(value_cols, field_name="value_cols") if value_cols else None
+    return _plot_radar(
+        json_data,
+        theta_col,
+        r_col,
+        name,
+        title,
+        folder,
+        file_name,
+        mode,
+        value_cols=radar_value_cols,
+    )
 
 
 class PlotlyConnector(BaseConnector):

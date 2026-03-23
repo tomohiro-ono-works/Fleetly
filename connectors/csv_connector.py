@@ -1,59 +1,71 @@
-import csv
-from connectors.base_connector import BaseConnector
 from typing import Any
+import pandas as pd
+from connectors.base_connector import BaseConnector
 
 class CSVConnector(BaseConnector):
     
-    def execute(self, action, params, context) -> Any:
+    def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
         if action == "read_csv":
+            file_path = params.get('file_path')
+            if not file_path:
+                raise ValueError("file_path は必須です。")
             return self.read_csv(
-                path=params.get('file_path'),
-                encoding=params.get('encoding', 'utf-8'),
+                path=str(file_path),
+                encoding=str(params.get('encoding', 'utf-8')),
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
                 selected_columns=params.get('selected_columns')
             )
         elif action == "write_csv":
+            input_data = params.get('input_data')
+            output_path = params.get('output_path')
+            if not input_data:
+                raise ValueError("input_data は必須です。")
+            if not output_path:
+                raise ValueError("output_path は必須です。")
             return self.write_csv(
-                params.get('input_data'),
-                params.get('output_path'), 
-                params.get('encoding', 'utf-8-sig'), 
+                str(input_data),
+                str(output_path), 
+                str(params.get('encoding', 'utf-8-sig')), 
                 context
             )
 
     # --- 内部ロジック ---
-    def read_csv(self, path, encoding, header_row, data_start_row, selected_columns):
-        path = self.normalize_file_path(path)
-        result = []
-        with open(path, 'r', encoding=encoding) as f:
-            reader = csv.reader(f)
-            all_rows = list(reader)
-            # 1. ヘッダーの取得 (ユーザー指定行)
-            if len(all_rows) < header_row:
-                raise ValueError(f"指定されたヘッダー行({header_row})がファイル内に存在しません。")
-            headers = all_rows[header_row - 1]
-            # 2. データの取得 (ユーザー指定開始行から最後まで)
-            data_rows = all_rows[data_start_row - 1:]
-            # 3. カラム指定のパース
-            target_cols = [c.strip() for c in selected_columns.split(',')] if selected_columns else None
-            # 4. 辞書形式への変換
-            for row in data_rows:
-                # ヘッダーとデータを結合
-                row_dict = dict(zip(headers, row))
-                # 特定のカラムだけ抽出する場合
-                if target_cols:
-                    filtered_dict = {k: v for k, v in row_dict.items() if k in target_cols}
-                    result.append(filtered_dict)
-                else:
-                    result.append(row_dict)
-        return result
+    def read_csv(self, path: str, encoding: str, header_row: int, data_start_row: int, selected_columns: Any):
+        normalized_path = self.normalize_file_path(path)
+        if normalized_path is None:
+            raise ValueError("file_path は必須です。")
+        if header_row < 1:
+            raise ValueError("header_row は 1 以上で指定してください。")
+        if data_start_row < header_row:
+            raise ValueError("data_start_row は header_row 以上で指定してください。")
 
-    def write_csv(self, input_var, output_path, encoding, context):
-        output_path = self.normalize_file_path(output_path)
+        target_cols = [c.strip() for c in str(selected_columns).split(',') if c.strip()] if selected_columns else None
+        skiprows = list(range(header_row, data_start_row - 1)) if data_start_row > header_row + 1 else None
+
+        try:
+            df = pd.read_csv(
+                normalized_path,
+                encoding=encoding,
+                header=header_row - 1,
+                skiprows=skiprows,
+                usecols=target_cols,
+                dtype=object,
+            )
+        except pd.errors.EmptyDataError:
+            return pd.DataFrame()
+
+        return df
+
+    def write_csv(self, input_var: str, output_path: str, encoding: str, context: dict[str, Any]):
+        normalized_output_path = self.normalize_file_path(output_path)
+        if normalized_output_path is None:
+            raise ValueError("output_path は必須です。")
         data = context.get(input_var)
-        if not data: raise ValueError("データが空です")
-        with open(output_path, 'w', encoding=encoding, newline='') as f:
-            writer = csv.DictWriter(f, fieldnames=data[0].keys())
-            writer.writeheader()
-            writer.writerows(data)
-        return f"CSV保存完了: {output_path}"
+        if data is None:
+            raise ValueError("データが空です")
+        df = self.to_dataframe(data)
+        if df.empty:
+            raise ValueError("データが空です")
+        df.to_csv(normalized_output_path, index=False, encoding=encoding)
+        return f"CSV保存完了: {normalized_output_path}"

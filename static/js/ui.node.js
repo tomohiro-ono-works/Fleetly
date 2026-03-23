@@ -1,7 +1,15 @@
 (function () {
   const { el } = window.utils;
-  const { addNodeAfter, addParallelAfter, insertNodeAt, removeNode, setSelectedNode } = window.stateOps;
-  const { renderField } = window.uiFields;
+  const {
+    addNodeAfter,
+    addParallelAfter,
+    insertNodeAt,
+    moveNodeToInsert,
+    moveNodeToParallel,
+    removeNode,
+    setSelectedNode
+  } = window.stateOps;
+  const { renderField, getFieldReferenceWarnings } = window.uiFields;
 
   const NODE_W = 52;
   const NODE_H = 52;
@@ -12,6 +20,8 @@
   const BTN_X_OFFSET = 12;
   const BTN_GAP = 20;
   const BTN_R = 8;
+  const BTN_HIT_SLOP = 32;
+  const BTN_HIT_BIAS_Y = 32;
   const EDGE_CURVE = 42;
   const ICON_CACHE = new Map();
 
@@ -124,6 +134,79 @@
 
   function isLoopRootNode(node) {
     return !!node && node.action === "loop_tasks" && !node.loopOwnerId;
+  }
+
+  function isDraggableNode(node) {
+    return !!node && !isLoopRootNode(node) && !node.loopOwnerId;
+  }
+
+  function collectNodeAndDescendantIds(state, nodeId) {
+    const seen = new Set();
+    const queue = [nodeId];
+    while (queue.length) {
+      const currentId = queue.shift();
+      if (!currentId || seen.has(currentId)) continue;
+      seen.add(currentId);
+      getChildrenByParent(state, currentId).forEach((child) => {
+        if (!seen.has(child.id)) queue.push(child.id);
+      });
+    }
+    return seen;
+  }
+
+  function canDropDraggedNodeOnControl(state, nodeId, control) {
+    if (!control || control.mode !== "normal") return false;
+    if (control.kind === "parallel" && !control.rightId) return false;
+
+    const node = state.nodes.find((item) => item.id === nodeId);
+    if (!isDraggableNode(node)) return false;
+
+    const blockedIds = collectNodeAndDescendantIds(state, nodeId);
+    if (control.anchorId && blockedIds.has(control.anchorId)) return false;
+    if (control.rightId && blockedIds.has(control.rightId)) return false;
+    if (control.loopRootId && blockedIds.has(control.loopRootId)) return false;
+    return true;
+  }
+
+  function applyDraggedNodeDrop(state, nodeId, control) {
+    if (!canDropDraggedNodeOnControl(state, nodeId, control)) return false;
+    if (control.kind === "insert") {
+      return !!moveNodeToInsert?.(state, nodeId, {
+        anchorId: control.anchorId === "__start__" ? null : control.anchorId,
+        rightId: control.rightId || null
+      });
+    }
+    if (control.kind === "parallel") {
+      return !!moveNodeToParallel?.(state, nodeId, {
+        anchorId: control.anchorId === "__start__" ? null : control.anchorId,
+        rightId: control.rightId || null
+      });
+    }
+    return false;
+  }
+
+  function getMissingRequiredFieldLabels(config, node) {
+    const schema = getFormSchema(config, node.connector, node.action);
+    return schema
+      .filter((field) => {
+        if (!field.required) return false;
+        const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
+        const useDefaultWhenUnset = field.key !== "input_data";
+        const value = hasExplicit ? node.form[field.key] : (useDefaultWhenUnset ? field.default : "");
+        return value === undefined || value === null || String(value).trim() === "";
+      })
+      .map((field) => field.label || field.key);
+  }
+
+  function getNodeReferenceWarnings(config, state, node) {
+    if (!node) return [];
+    const upstreamSteps = getUpstreamSteps(state, node.id);
+    const schema = getFormSchema(config, node.connector, node.action);
+    return schema.flatMap((field) => getFieldReferenceWarnings({ node, field, upstreamSteps }));
+  }
+
+  function hasInvalidUpstreamReference(config, state, node) {
+    return getNodeReferenceWarnings(config, state, node).length > 0;
   }
 
   function getChildrenByParent(state, parentId) {
@@ -321,23 +404,18 @@
       .filter((line) => line.length > 0);
   }
 
-  const CONNECTOR_CATEGORY_GROUPS = [
-    { id: "data", label: "データ操作" },
-    { id: "process", label: "プロセス系" },
-    { id: "science", label: "サイエンス系" }
+  const ACTION_TYPE_TABS = [
+    { id: "Extract", label: "入力" },
+    { id: "Load", label: "出力" },
+    { id: "Transform", label: "加工" }
   ];
-
-  function normalizeConnectorCategory(category) {
-    return CONNECTOR_CATEGORY_GROUPS.some((group) => group.id === category)
-      ? category
-      : "others";
-  }
+  const NOIMAGE_SRC = "./img/noimage.png";
 
   function isDataConnector(connectorId, config) {
     const connectors = config?.connectors || [];
     const connector = connectors.find((item) => item.id === connectorId);
     if (!connector) return false;
-    return normalizeConnectorCategory(connector.category) === "data";
+    return connector.category === "data";
   }
 
   function connectorDisplayLabel(connector) {
@@ -347,82 +425,78 @@
     return label || id;
   }
 
-  function buildConnectorGroups(config, selectedConnectorId) {
-    const connectors = config.connectors || [];
-    const bucketByCategory = new Map();
-    CONNECTOR_CATEGORY_GROUPS.forEach((group) => bucketByCategory.set(group.id, []));
-    const others = [];
-
-    connectors.forEach((connector) => {
-      const category = normalizeConnectorCategory(connector.category);
-      if (category === "others") {
-        others.push(connector);
-        return;
-      }
-      bucketByCategory.get(category).push(connector);
-    });
-
-    const groups = CONNECTOR_CATEGORY_GROUPS
-      .map((group) => ({ id: group.id, label: group.label, items: bucketByCategory.get(group.id) || [] }))
-      .filter((group) => group.items.length);
-
-    if (others.length) {
-      groups.push({ id: "others", label: "その他", items: others });
-    }
-
-    if (!groups.length) {
-      groups.push({ id: "all", label: "コネクタ", items: connectors });
-    }
-
-    if (selectedConnectorId && !connectors.some((c) => c.id === selectedConnectorId)) {
-      groups.push({
-        id: `adhoc_${selectedConnectorId}`,
-        label: "その他",
-        items: [{ id: selectedConnectorId, label: selectedConnectorId }]
-      });
-    }
-
-    return groups;
+  function normalizeActionType(actionType) {
+    return ACTION_TYPE_TABS.some((tab) => tab.id === actionType) ? actionType : "Transform";
   }
 
-  function findConnectorGroupId(groups, connectorId) {
-    if (!connectorId) return groups[0]?.id || "";
-    const hit = groups.find((group) => group.items.some((item) => item.id === connectorId));
-    return hit?.id || groups[0]?.id || "";
+  function getActionTypeLabel(actionType) {
+    return ACTION_TYPE_TABS.find((tab) => tab.id === normalizeActionType(actionType))?.label || "加工";
   }
 
-  function renderConnectorSelect({ config, node, onStateChanged }) {
-    const groups = buildConnectorGroups(config, node.connector);
-    let activeGroupId = findConnectorGroupId(groups, node.connector);
-    let activeConnectorId = node.connector || (groups[0]?.items?.[0]?.id || "");
+  function buildConnectorChoices(config, selectedConnectorId) {
+    const connectors = [...(config.connectors || [])];
+    if (selectedConnectorId && !connectors.some((connector) => connector.id === selectedConnectorId)) {
+      connectors.push({ id: selectedConnectorId, label: selectedConnectorId });
+    }
+    return connectors;
+  }
+
+  function getConnectorImageSrc(connectorId) {
+    return connectorId ? `./img/${connectorId}.png` : NOIMAGE_SRC;
+  }
+
+  function getActionTypeItems(config, connectorId, actionType) {
+    const actions = (config.actions && config.actions[connectorId]) || [];
+    return actions.filter((action) => normalizeActionType(action.rpaType) === normalizeActionType(actionType));
+  }
+
+  function renderConnectorSelect({ config, node, onStateChanged, disabled = false }) {
+    const connectors = buildConnectorChoices(config, node.connector);
+    let activeConnectorId = node.connector || (connectors[0]?.id || "");
+    let activeActionType = normalizeActionType(getActionConfig(config, node.connector, node.action)?.rpaType);
+    let stage = "grid";
 
     const wrapper = el("div", { class: "connector-flyout" });
     const trigger = el("button", { class: "connector-flyout-trigger", type: "button" });
     const menu = el("div", { class: "connector-flyout-menu" });
-    const groupPane = el("div", { class: "connector-flyout-groups" });
-    const itemPane = el("div", { class: "connector-flyout-items" });
-    const actionPane = el("div", { class: "connector-flyout-actions" });
-    menu.appendChild(groupPane);
-    menu.appendChild(itemPane);
+    const gridPane = el("div", { class: "connector-stage connector-stage-grid" });
+    const actionPane = el("div", { class: "connector-stage connector-stage-actions", hidden: "hidden" });
+    const gridList = el("div", { class: "connector-image-grid" });
+    const actionHeader = el("div", { class: "connector-action-head" });
+    const backButton = el(
+      "button",
+      {
+        type: "button",
+        class: "connector-back-btn",
+        onclick: () => {
+          stage = "grid";
+          renderStage();
+        }
+      },
+      [document.createTextNode("戻る")]
+    );
+    const connectorTitle = el("div", { class: "connector-action-title" });
+    const actionTabs = el("div", { class: "connector-action-tabs", role: "tablist", "aria-label": "アクション種別" });
+    const actionList = el("div", { class: "connector-action-list" });
+
+    actionHeader.appendChild(backButton);
+    actionHeader.appendChild(connectorTitle);
+    actionPane.appendChild(actionHeader);
+    actionPane.appendChild(actionTabs);
+    actionPane.appendChild(actionList);
+    gridPane.appendChild(gridList);
+    menu.appendChild(gridPane);
     menu.appendChild(actionPane);
     wrapper.appendChild(trigger);
     wrapper.appendChild(menu);
 
     let open = false;
     let outsideHandler = null;
-    function getThemeGroupId(groupId) {
-      if (groupId === "data" || groupId === "process" || groupId === "science") return groupId;
-      return "neutral";
-    }
-
-    function updateMenuTheme() {
-      wrapper.setAttribute("data-active-group", getThemeGroupId(activeGroupId));
-    }
 
     function updateTriggerLabel() {
       const selected =
         (config.connectors || []).find((c) => c.id === node.connector) ||
-        groups.flatMap((g) => g.items).find((c) => c.id === node.connector) ||
+        connectors.find((c) => c.id === node.connector) ||
         { id: node.connector || "", label: node.connector || "" };
       const connectorText = connectorDisplayLabel(selected) || "コネクタを選択";
       const actionText = getActionLabel(config, node.connector, node.action) || "";
@@ -431,22 +505,23 @@
       trigger.title = merged;
     }
 
-    function getActiveGroup() {
-      return groups.find((g) => g.id === activeGroupId) || groups[0] || null;
-    }
-
     function normalizeActiveConnector() {
-      const group = getActiveGroup();
-      if (!group || !group.items.length) {
+      if (!connectors.length) {
         activeConnectorId = "";
         return;
       }
-      if (!group.items.some((item) => item.id === activeConnectorId)) {
-        activeConnectorId = group.items[0].id;
+      if (!connectors.some((item) => item.id === activeConnectorId)) {
+        activeConnectorId = connectors[0].id;
+      }
+      const currentTypeItems = getActionTypeItems(config, activeConnectorId, activeActionType);
+      if (!currentTypeItems.length) {
+        const firstAvailableTab = ACTION_TYPE_TABS.find((tab) => getActionTypeItems(config, activeConnectorId, tab.id).length);
+        activeActionType = firstAvailableTab?.id || "Transform";
       }
     }
 
     function setOpen(next) {
+      if (disabled && next) return;
       if (open === next) return;
       open = next;
       wrapper.classList.toggle("is-open", open);
@@ -461,31 +536,43 @@
       }
     }
 
-    function renderGroups() {
-      groupPane.innerHTML = "";
-      groups.forEach((group) => {
+    function renderGrid() {
+      gridList.innerHTML = "";
+      connectors.forEach((connector) => {
+        const img = el("img", {
+          class: "connector-image-thumb",
+          src: getConnectorImageSrc(connector.id),
+          alt: connectorDisplayLabel(connector),
+          loading: "lazy"
+        });
+        img.addEventListener("error", () => {
+          if (img.getAttribute("src") !== NOIMAGE_SRC) img.setAttribute("src", NOIMAGE_SRC);
+        });
+
         const btn = el(
           "button",
           {
             type: "button",
-            "data-group": group.id,
-            class: `connector-group-btn${group.id === activeGroupId ? " is-active" : ""}`,
+            class: `connector-image-item${connector.id === node.connector ? " is-current" : ""}`,
             onclick: () => {
-              activeGroupId = group.id;
-              updateMenuTheme();
-              normalizeActiveConnector();
-              renderGroups();
-              renderItems();
-              renderActions();
+              activeConnectorId = connector.id;
+              const currentAction = getActionConfig(config, connector.id, node.connector === connector.id ? node.action : "");
+              activeActionType = normalizeActionType(currentAction?.rpaType);
+              stage = "actions";
+              renderStage();
             }
           },
-          [document.createTextNode(group.label)]
+          [
+            el("span", { class: "connector-image-frame" }, [img]),
+            el("span", { class: "connector-image-label" }, [document.createTextNode(connectorDisplayLabel(connector))])
+          ]
         );
-        groupPane.appendChild(btn);
+        gridList.appendChild(btn);
       });
     }
 
     function selectConnectorAction(connectorId, actionId) {
+      if (disabled) return;
       const changed = node.connector !== connectorId || node.action !== actionId;
       node.connector = connectorId;
       node.action = actionId || "";
@@ -494,51 +581,41 @@
       onStateChanged();
     }
 
-    function renderItems() {
-      itemPane.innerHTML = "";
-      const group = getActiveGroup();
-      if (!group || !group.items.length) {
-        itemPane.appendChild(el("div", { class: "connector-item-empty" }, [document.createTextNode("コネクタがありません")]));
-        return;
-      }
-
-      group.items.forEach((connector) => {
-        const isSelected = connector.id === activeConnectorId;
+    function renderActionTabs() {
+      actionTabs.innerHTML = "";
+      ACTION_TYPE_TABS.forEach((tab) => {
+        const hasItems = getActionTypeItems(config, activeConnectorId, tab.id).length > 0;
         const btn = el(
           "button",
           {
             type: "button",
-            class: `connector-item-btn${isSelected ? " is-active" : ""}`,
-            onclick: () => {
-              activeConnectorId = connector.id;
-              renderItems();
-              renderActions();
-            }
+            class: `connector-action-tab${tab.id === activeActionType ? " is-active" : ""}`,
+            "data-empty": hasItems ? "false" : "true"
           },
-          [document.createTextNode(connectorDisplayLabel(connector))]
+          [document.createTextNode(tab.label)]
         );
-        itemPane.appendChild(btn);
+        btn.addEventListener("mouseenter", () => {
+          if (!hasItems) return;
+          activeActionType = tab.id;
+          renderActionTabs();
+          renderActionList();
+        });
+        btn.addEventListener("click", () => {
+          if (!hasItems) return;
+          activeActionType = tab.id;
+          renderActionTabs();
+          renderActionList();
+        });
+        actionTabs.appendChild(btn);
       });
     }
 
-    function renderActions() {
-      actionPane.innerHTML = "";
-      if (!activeConnectorId) {
-        actionPane.appendChild(el("div", { class: "connector-action-empty" }, [document.createTextNode("アクションがありません")]));
-        return;
-      }
-      const actions = (config.actions && config.actions[activeConnectorId]) || [];
+    function renderActionList() {
+      actionList.innerHTML = "";
+      const actions = getActionTypeItems(config, activeConnectorId, activeActionType);
       if (!actions.length) {
-        actionPane.appendChild(
-          el(
-            "button",
-            {
-              type: "button",
-              class: `connector-action-btn${node.connector === activeConnectorId && !node.action ? " is-active" : ""}`,
-              onclick: () => selectConnectorAction(activeConnectorId, "")
-            },
-            [document.createTextNode("このコネクタを選択")]
-          )
+        actionList.appendChild(
+          el("div", { class: "connector-action-empty" }, [document.createTextNode("この種別のアクションがありません")])
         );
         return;
       }
@@ -552,27 +629,49 @@
             class: `connector-action-btn${isSelected ? " is-active" : ""}`,
             onclick: () => selectConnectorAction(activeConnectorId, action.id)
           },
-          [document.createTextNode(jpLabel(action || { id: action.id }))]
+          [
+            el("span", { class: "connector-action-kind" }, [document.createTextNode(getActionTypeLabel(action.rpaType))]),
+            el("span", { class: "connector-action-name" }, [document.createTextNode(jpLabel(action || { id: action.id }))])
+          ]
         );
-        actionPane.appendChild(btn);
+        actionList.appendChild(btn);
       });
     }
 
+    function renderStage() {
+      normalizeActiveConnector();
+      const activeConnector = connectors.find((connector) => connector.id === activeConnectorId) || null;
+      const showActions = stage === "actions" && !!activeConnector;
+      gridPane.hidden = showActions;
+      actionPane.hidden = !showActions;
+      wrapper.classList.toggle("is-stage-actions", showActions);
+      renderGrid();
+      if (!showActions) return;
+      connectorTitle.textContent = connectorDisplayLabel(activeConnector);
+      renderActionTabs();
+      renderActionList();
+    }
+
     trigger.addEventListener("click", (e) => {
+      if (disabled) return;
       e.preventDefault();
       e.stopPropagation();
-      setOpen(!open);
+      const nextOpen = !open;
+      if (nextOpen) stage = "grid";
+      setOpen(nextOpen);
+      if (nextOpen) renderStage();
     });
     wrapper.addEventListener("keydown", (e) => {
       if (e.key === "Escape") setOpen(false);
     });
 
     normalizeActiveConnector();
-    updateMenuTheme();
     updateTriggerLabel();
-    renderGroups();
-    renderItems();
-    renderActions();
+    if (disabled) {
+      trigger.disabled = true;
+      trigger.title = `${trigger.title}（ループ構造維持のため変更不可）`;
+    }
+    renderStage();
     return wrapper;
   }
 
@@ -1020,8 +1119,7 @@
   }
 
   function getConnectorIconSrc(connectorId) {
-    if (!connectorId) return null;
-    return `./img/${connectorId}.png`;
+    return getConnectorImageSrc(connectorId);
   }
 
   function ensureConnectorIcon(view, src) {
@@ -1032,6 +1130,11 @@
     img.__failed = false;
     img.onload = () => drawFlowCanvas(view);
     img.onerror = () => {
+      if (!img.__fallbackTried && src !== NOIMAGE_SRC) {
+        img.__fallbackTried = true;
+        img.src = NOIMAGE_SRC;
+        return;
+      }
       img.__failed = true;
       drawFlowCanvas(view);
     };
@@ -1086,6 +1189,47 @@
     }
   }
 
+  function drawDraggedNodePreview(ctx, view, model) {
+    const dragState = view.dragState;
+    if (!dragState || !dragState.started) return;
+
+    const draggedView = model.nodeMap.get(dragState.nodeId);
+    if (!draggedView || !draggedView.nodeRef) return;
+    const rootStyles = getComputedStyle(document.documentElement);
+    const surfacePage = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
+    const surfaceStrong = rootStyles.getPropertyValue("--surface-strong").trim() || "#4b4e63";
+    const dragPreviewStroke = rootStyles.getPropertyValue("--flow-drag-preview-stroke").trim() || "#4b4e63";
+    const shadowSoft = rootStyles.getPropertyValue("--alpha-shadow-12").trim() || "rgba(0, 0, 0, 0.12)";
+
+    const x = Math.round(dragState.canvasX - NODE_W / 2);
+    const y = Math.round(dragState.canvasY - NODE_H / 2);
+
+    ctx.save();
+    ctx.globalAlpha = 0.88;
+    ctx.fillStyle = surfacePage;
+    ctx.strokeStyle = dragPreviewStroke;
+    ctx.lineWidth = 2;
+    ctx.setLineDash([4, 3]);
+    ctx.shadowColor = shadowSoft;
+    ctx.shadowBlur = 8;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 3;
+    drawRoundedRect(ctx, x, y, NODE_W, NODE_H, 8);
+    ctx.fill();
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.shadowColor = "transparent";
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.fillStyle = surfaceStrong;
+    ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(String(draggedView.nodeRef.stepName || ""), x + NODE_W / 2, y + NODE_H / 2);
+    ctx.restore();
+  }
+
   function drawFlowCanvas(view) {
     const runtime = view.root.__flowRuntime;
     if (!runtime) return;
@@ -1105,28 +1249,39 @@
     ctx.lineCap = "round";
     ctx.clearRect(0, 0, model.width, model.height);
 
+    const rootStyles = getComputedStyle(document.documentElement);
+    const warningNodeFill = rootStyles.getPropertyValue("--brand-200").trim() || "#f9c4df";
+    const warningAccent = rootStyles.getPropertyValue("--semantic-error-fg").trim() || "#9e1f5f";
+    const warningText = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
+    const flowEdgeMain = rootStyles.getPropertyValue("--flow-edge-main").trim() || "#5c6f88";
+    const flowEdgeSecondary = rootStyles.getPropertyValue("--flow-edge-secondary").trim() || "#74859d";
+    const flowEdgeParallel = rootStyles.getPropertyValue("--flow-edge-parallel").trim() || "#6e829c";
+    const flowNodeBorder = rootStyles.getPropertyValue("--flow-node-border").trim() || "#9aa5b6";
+    const flowNodeBorderSelected = rootStyles.getPropertyValue("--flow-node-border-selected").trim() || "#4b4e63";
+    const flowNodeSubtext = rootStyles.getPropertyValue("--flow-node-subtext").trim() || "#626b7b";
+    const flowNodeShadow = rootStyles.getPropertyValue("--alpha-shadow-10").trim() || "rgba(79, 67, 67, 0.68)";
+    const flowLoopFrameFill = rootStyles.getPropertyValue("--flow-loop-frame-fill").trim() || "#eef8ee";
+    const flowLoopFrameStroke = rootStyles.getPropertyValue("--flow-loop-frame-stroke").trim() || "#1a7259";
+    const flowStepBadgeBorder = rootStyles.getPropertyValue("--flow-step-badge-border").trim() || "#c8cad8";
+    const flowControlFillActive = rootStyles.getPropertyValue("--flow-control-fill-active").trim() || "#4b4e63";
+    const flowControlStroke = rootStyles.getPropertyValue("--flow-control-stroke").trim() || "#bdbdbd";
+    const flowControlStrokeActive = rootStyles.getPropertyValue("--flow-control-stroke-active").trim() || "#4b4e63";
+    const flowControlText = rootStyles.getPropertyValue("--flow-control-text").trim() || "#4b4e63";
+    const flowControlTextActive = rootStyles.getPropertyValue("--flow-control-text-active").trim() || "#fffefe";
+    const surfaceStrong = rootStyles.getPropertyValue("--surface-strong").trim() || "#4b4e63";
+    const surfacePage = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
+    const textMuted = rootStyles.getPropertyValue("--text-muted").trim() || "#767b93";
+
     (model.loopFrames || []).forEach((frame) => {
-      ctx.fillStyle = "#eef8ee";
+      ctx.fillStyle = flowLoopFrameFill;
       drawRoundedRect(ctx, frame.x, frame.y, frame.w, frame.h, 12);
       ctx.fill();
-      ctx.strokeStyle = "#1a7259";
+      ctx.strokeStyle = flowLoopFrameStroke;
       ctx.lineWidth = 2;
       ctx.setLineDash([]);
       drawRoundedRect(ctx, frame.x, frame.y, frame.w, frame.h, 12);
       ctx.stroke();
     });
-
-    const rootStyles = getComputedStyle(document.documentElement);
-    const warningNodeFill = rootStyles.getPropertyValue("--brand-200").trim() || "#f9c4df";
-    const flowEdgeMain = rootStyles.getPropertyValue("--flow-edge-main").trim() || "#5c6f88";
-    const flowEdgeSecondary = rootStyles.getPropertyValue("--flow-edge-secondary").trim() || "#74859d";
-    const flowEdgeParallel = rootStyles.getPropertyValue("--flow-edge-parallel").trim() || "#6e829c";
-    const flowNodeBorder = rootStyles.getPropertyValue("--flow-node-border").trim() || "#9aa5b6";
-    const flowNodeBorderSelected = rootStyles.getPropertyValue("--flow-node-border-selected").trim() || "#0f5e47";
-    const flowNodeSubtext = rootStyles.getPropertyValue("--flow-node-subtext").trim() || "#626b7b";
-    const flowNodeShadow = rootStyles.getPropertyValue("--alpha-shadow-10").trim() || "rgba(79, 67, 67, 0.68)";
-    const surfaceStrong = rootStyles.getPropertyValue("--surface-strong").trim() || "#4b4e63";
-    const surfacePage = rootStyles.getPropertyValue("--surface-page").trim() || "#f2f2f2";
 
     model.edges.forEach((edge) => {
       const from = model.nodeMap.get(edge.from);
@@ -1153,6 +1308,15 @@
       });
     });
 
+    const alertNodeIds = new Set(
+      model.taskViews
+        .filter((taskView) =>
+          hasMissingRequiredField(config, taskView.nodeRef) ||
+          hasInvalidUpstreamReference(config, state, taskView.nodeRef)
+        )
+        .map((taskView) => taskView.id)
+    );
+
     const nodesToDraw = [model.start, ...model.taskViews, ...(model.loopEndViews || []), model.end];
     nodesToDraw.forEach((node) => {
       const isStart = node.kind === "start";
@@ -1161,15 +1325,19 @@
       const isLoopEnd = node.kind === "loop-end";
       const isSelected = isTask && state.selectedNodeId === node.id;
       const isParallel = isTask && !!node.nodeRef.parallelOf;
+      const isDraggingNode = !!(view.dragState && view.dragState.started && view.dragState.nodeId === node.id);
+      const hasAlert = isTask && alertNodeIds.has(node.id);
+      const hasInvalidReference = isTask && hasInvalidUpstreamReference(config, state, node.nodeRef);
 
       if (isParallel) ctx.setLineDash([4, 2]);
       else ctx.setLineDash([]);
 
       if (isStart) ctx.fillStyle = surfaceStrong;
       else if (isEnd) ctx.fillStyle = surfaceStrong;
-      else if (isTask && hasMissingRequiredField(config, node.nodeRef)) ctx.fillStyle = warningNodeFill;
-      else ctx.fillStyle = "#ffffff";
+      // else if (isTask && hasAlert) ctx.fillStyle = warningNodeFill;
+      else ctx.fillStyle = surfacePage;
 
+      ctx.globalAlpha = isDraggingNode ? 0.28 : 1;
       ctx.shadowColor = flowNodeShadow;
       ctx.shadowBlur = isSelected ? 7 : 5;
       ctx.shadowOffsetX = 0;
@@ -1190,6 +1358,7 @@
       ctx.shadowBlur = 0;
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = 0;
+      ctx.globalAlpha = 1;
 
       if (isTask) {
         const badgeText = String(node.nodeRef.stepName || "");
@@ -1199,16 +1368,32 @@
         const bh = 16;
         const bx = Math.round(node.x + (NODE_W - bw) / 2);
         const by = Math.round(node.y - Math.floor(bh / 2));
-        ctx.fillStyle = "#ffffff";
-        ctx.strokeStyle = "#c1dfbf";
+        ctx.fillStyle = surfacePage;
+        ctx.strokeStyle = flowStepBadgeBorder;
         ctx.lineWidth = 1;
         drawRoundedRect(ctx, bx, by, bw, bh, 8);
         ctx.fill();
         ctx.stroke();
-        ctx.fillStyle = "#848484";
+        ctx.fillStyle = textMuted;
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(badgeText, bx + bw / 2, by + bh / 2);
+        ctx.textBaseline = "alphabetic";
+      }
+
+      if (hasAlert) {
+        const markerR = 8;
+        const markerX = node.x + NODE_W - 2;
+        const markerY = node.y + 4;
+        ctx.fillStyle = warningAccent;
+        ctx.beginPath();
+        ctx.arc(markerX, markerY, markerR, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = warningText;
+        ctx.font = "700 11px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("!", markerX, markerY + 0.5);
         ctx.textBaseline = "alphabetic";
       }
 
@@ -1216,7 +1401,7 @@
       const icon = iconSrc ? ensureConnectorIcon(view, iconSrc) : null;
       const hasIcon = !!(icon && !icon.__failed && icon.complete && icon.naturalWidth > 0);
 
-      ctx.fillStyle = isStart || isEnd ? surfacePage : "#4c4c4c";
+      ctx.fillStyle = isStart || isEnd ? surfacePage : surfaceStrong;
       ctx.font = isStart || isEnd
         ? "700 12px 'Segoe UI', 'Yu Gothic UI', sans-serif"
         : "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
@@ -1264,16 +1449,19 @@
       }
     });
 
+    drawDraggedNodePreview(ctx, view, model);
+
     model.controls.forEach((ctrl) => {
-      const isHover = view.hoverControl === ctrl;
-      ctx.fillStyle = "#ffffff";
-      ctx.strokeStyle = isHover ? "#15634b" : "#bdbdbd";
+      const isDropTarget = view.dropControl === ctrl;
+      const isHover = view.hoverControl === ctrl || isDropTarget;
+      ctx.fillStyle = isDropTarget ? flowControlFillActive : surfacePage;
+      ctx.strokeStyle = isHover ? flowControlStrokeActive : flowControlStroke;
       ctx.lineWidth = isHover ? 2 : 1;
       ctx.beginPath();
       ctx.arc(ctrl.x, ctrl.y, ctrl.r, 0, Math.PI * 2);
       ctx.fill();
       ctx.stroke();
-      ctx.fillStyle = isHover ? "#15634b" : "#4c4c4c";
+      ctx.fillStyle = isDropTarget ? flowControlTextActive : (isHover ? flowControlStrokeActive : flowControlText);
       ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(ctrl.label, ctrl.x, ctrl.y + 3);
@@ -1288,22 +1476,51 @@
     return null;
   }
 
-  function hitControl(model, x, y) {
+  function hasSiblingControlPair(model, control) {
+    return model.controls.some((candidate) =>
+      candidate !== control &&
+      candidate.anchorId === control.anchorId &&
+      candidate.rightId === control.rightId &&
+      candidate.mode === control.mode &&
+      candidate.loopRootId === control.loopRootId &&
+      candidate.kind !== control.kind
+    );
+  }
+
+  function hitControl(model, x, y, options = {}) {
+    const expanded = !!options.expanded;
     for (let i = model.controls.length - 1; i >= 0; i--) {
       const c = model.controls[i];
+      const hasPair = hasSiblingControlPair(model, c);
+      const hitCenterY = hasPair
+        ? c.y + (c.kind === "insert" ? -BTN_HIT_BIAS_Y : BTN_HIT_BIAS_Y)
+        : c.y;
+      if (expanded) {
+        const halfW = c.r + BTN_HIT_SLOP;
+        const halfH = c.r + BTN_HIT_SLOP;
+        const insideX = x >= c.x - halfW && x <= c.x + halfW;
+        const insideY = y >= hitCenterY - halfH && y <= hitCenterY + halfH;
+        if (insideX && insideY) return c;
+        continue;
+      }
       if (Math.hypot(x - c.x, y - c.y) <= c.r + 2) return c;
     }
     return null;
   }
 
-  function getControlTooltip(ctrl) {
+  function getControlTooltip(ctrl, dragState) {
     if (!ctrl) return "";
+    if (dragState && dragState.started) {
+      if (ctrl.kind === "insert") return "挿入する";
+      if (ctrl.kind === "parallel") return "並行フローを挿入する";
+    }
     if (ctrl.label === "I" || ctrl.kind === "insert") return "ステップを挿入";
     if (ctrl.label === "P" || ctrl.kind === "parallel") return "ステップを並列で挿入";
     return "";
   }
 
   function createImmediateTooltip() {
+    const rootStyles = getComputedStyle(document.documentElement);
     const tip = document.createElement("div");
     tip.style.position = "fixed";
     tip.style.left = "-9999px";
@@ -1312,8 +1529,8 @@
     tip.style.zIndex = "9999";
     tip.style.padding = "4px 8px";
     tip.style.borderRadius = "6px";
-    tip.style.background = "#374151";
-    tip.style.color = "#ffffff";
+    tip.style.background = rootStyles.getPropertyValue("--surface-strong").trim() || "#4b4e63";
+    tip.style.color = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
     tip.style.font = "12px 'Segoe UI', 'Yu Gothic UI', sans-serif";
     tip.style.whiteSpace = "nowrap";
     tip.style.opacity = "0";
@@ -1334,7 +1551,7 @@
     root.appendChild(canvas);
     const ctx = canvas.getContext("2d");
     const tooltipEl = createImmediateTooltip();
-    const view = { root, canvas, ctx, hoverControl: null, tooltipEl };
+    const view = { root, canvas, ctx, hoverControl: null, dropControl: null, dragState: null, tooltipEl };
     root.__flowView = view;
 
     function hideTooltip() {
@@ -1345,7 +1562,7 @@
     }
 
     function showTooltip(ctrl, clientX, clientY) {
-      const text = getControlTooltip(ctrl);
+      const text = getControlTooltip(ctrl, view.dragState);
       if (!text) {
         hideTooltip();
         return;
@@ -1356,22 +1573,28 @@
       tooltipEl.style.opacity = "1";
     }
 
+    let pendingDrag = null;
+
     canvas.addEventListener("mousemove", (e) => {
+      if (view.dragState || pendingDrag || isPanning) return;
       const runtime = root.__flowRuntime;
       if (!runtime) return;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       view.hoverControl = hitControl(runtime.model, x, y);
+      view.dropControl = null;
       showTooltip(view.hoverControl, e.clientX, e.clientY);
       const hoverTask = hitTask(runtime.model, x, y);
-      const selectableTask = !!(hoverTask && !isLoopRootNode(hoverTask.nodeRef));
+      const selectableTask = !!(hoverTask && isDraggableNode(hoverTask.nodeRef));
       canvas.style.cursor = view.hoverControl || selectableTask ? "pointer" : "default";
       drawFlowCanvas(view);
     });
 
     canvas.addEventListener("mouseleave", () => {
+      if (view.dragState || pendingDrag) return;
       view.hoverControl = null;
+      view.dropControl = null;
       hideTooltip();
       canvas.style.cursor = "default";
       drawFlowCanvas(view);
@@ -1397,6 +1620,25 @@
     let lastPanAt = 0;
     canvas.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
+      const runtime = root.__flowRuntime;
+      if (!runtime) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const task = hitTask(runtime.model, x, y);
+      if (task && isDraggableNode(task.nodeRef)) {
+        pendingDrag = {
+          nodeId: task.id,
+          startClientX: e.clientX,
+          startClientY: e.clientY
+        };
+        view.hoverControl = null;
+        view.dropControl = null;
+        hideTooltip();
+        document.body.style.userSelect = "none";
+        e.preventDefault();
+        return;
+      }
       isPanning = true;
       panMoved = false;
       hideTooltip();
@@ -1409,6 +1651,35 @@
       e.preventDefault();
     });
     window.addEventListener("mousemove", (e) => {
+      if (pendingDrag) {
+        const moveDx = e.clientX - pendingDrag.startClientX;
+        const moveDy = e.clientY - pendingDrag.startClientY;
+        if (!view.dragState && Math.hypot(moveDx, moveDy) < 5) return;
+
+        const runtime = root.__flowRuntime;
+        if (!runtime) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const hoveredControl = hitControl(runtime.model, x, y, { expanded: true });
+        const dropControl = canDropDraggedNodeOnControl(runtime.state, pendingDrag.nodeId, hoveredControl)
+          ? hoveredControl
+          : null;
+
+        view.dragState = {
+          nodeId: pendingDrag.nodeId,
+          started: true,
+          canvasX: x,
+          canvasY: y
+        };
+        view.hoverControl = dropControl;
+        view.dropControl = dropControl;
+        canvas.style.cursor = dropControl ? "copy" : "grabbing";
+        if (dropControl) showTooltip(dropControl, e.clientX, e.clientY);
+        else hideTooltip();
+        drawFlowCanvas(view);
+        return;
+      }
       if (!isPanning) return;
       const dx = e.clientX - panStartX;
       const dy = e.clientY - panStartY;
@@ -1417,6 +1688,31 @@
       root.scrollTop = panStartScrollTop - dy;
     });
     window.addEventListener("mouseup", () => {
+      if (pendingDrag) {
+        const runtime = root.__flowRuntime;
+        const draggingNodeId = pendingDrag.nodeId;
+        const dropControl = view.dropControl;
+        const didDrag = !!view.dragState;
+
+        pendingDrag = null;
+        document.body.style.userSelect = "";
+        hideTooltip();
+        canvas.style.cursor = "default";
+        view.dragState = null;
+        view.hoverControl = null;
+        view.dropControl = null;
+
+        if (didDrag) {
+          lastPanAt = Date.now();
+          const moved = runtime ? applyDraggedNodeDrop(runtime.state, draggingNodeId, dropControl) : false;
+          if (moved && runtime) {
+            runtime.onStateChanged();
+            return;
+          }
+          drawFlowCanvas(view);
+        }
+        return;
+      }
       if (!isPanning) return;
       if (panMoved) lastPanAt = Date.now();
       isPanning = false;
@@ -1498,7 +1794,6 @@
 
       const task = hitTask(runtime.model, x, y);
       if (task) {
-        if (isLoopRootNode(task.nodeRef)) return;
         setSelectedNode(runtime.state, task.id);
         runtime.onStateChanged();
       }
@@ -1533,19 +1828,17 @@
     let idx = getSelectedNodeIndex(state);
     let node = state.nodes[idx];
     if (!node) return;
-    if (isLoopRootNode(node)) {
-      const fallback = state.nodes.find((n) => !isLoopRootNode(n));
-      if (!fallback) return;
-      node = fallback;
-      idx = state.nodes.findIndex((n) => n.id === node.id);
-      state.selectedNodeId = node.id;
-    }
+    const loopRootSelected = isLoopRootNode(node);
     ensureNodeDefaults(config, node);
 
     const upstreamSteps = getUpstreamSteps(state, node.id);
     const schema = getFormSchema(config, node.connector, node.action);
     const actionConfig = getActionConfig(config, node.connector, node.action);
     const detailModal = actionConfig && actionConfig.detailModal;
+    const missingRequiredLabels = getMissingRequiredFieldLabels(config, node);
+    const referenceWarnings = Array.from(new Set(
+      schema.flatMap((field) => getFieldReferenceWarnings({ node, field, upstreamSteps }))
+    ));
 
     const headActionItems = [];
 
@@ -1606,6 +1899,10 @@
           class: "danger",
           type: "button",
           onclick: () => {
+            if (loopRootSelected) {
+              const ok = window.confirm("ループ内のすべてのノードが削除されますが、削除してよろしいでしょうか。");
+              if (!ok) return;
+            }
             removeNode(state, idx);
             onStateChanged();
           }
@@ -1679,15 +1976,43 @@
       el("div", { class: "node-log-wrap" }, [logText])
     ]);
 
+    const connectorSelect = renderConnectorSelect({
+      config,
+      node,
+      onStateChanged,
+      disabled: loopRootSelected
+    });
     const detailMeta = el("div", { class: "node-detail-meta" }, [
       el("div", { class: "badge" }, [document.createTextNode(`{${node.stepName}}`)]),
       el("div", { class: "head-selects" }, [
-        el("div", { class: "head-select" }, [
-          renderConnectorSelect({ config, node, onStateChanged })
-        ])
+        el("div", { class: "head-select" }, [connectorSelect])
       ])
     ]);
     body.appendChild(detailMeta);
+
+    if (loopRootSelected) {
+      body.appendChild(
+        el("div", { class: "small" }, [
+          document.createTextNode("ループ開始ノードです。構造維持のため、コネクタ/アクション変更は未対応です。削除時はループ内部もまとめて削除します。")
+        ])
+      );
+    }
+
+    const nodeWarnings = [];
+    if (missingRequiredLabels.length) {
+      nodeWarnings.push(`必須項目が未入力です。${missingRequiredLabels.join(" / ")}`);
+    }
+    if (referenceWarnings.length) {
+      nodeWarnings.push(`上流でないステップを参照しています。${referenceWarnings.join(" / ")}`);
+    }
+
+    if (nodeWarnings.length) {
+      body.appendChild(
+        el("div", { class: "node-warning-banner" }, [
+          document.createTextNode(nodeWarnings.join(" "))
+        ])
+      );
+    }
 
     if (!schema.length) {
       body.appendChild(

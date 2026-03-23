@@ -1,7 +1,6 @@
-import subprocess
-import os
-from connectors.base_connector import BaseConnector
 from typing import Any
+
+from connectors.base_connector import BaseConnector
 
 
 class OperationConnector(BaseConnector):
@@ -20,23 +19,19 @@ class OperationConnector(BaseConnector):
         input_var_rename (辞書配列) を 辞書に変換してから
         context内のデータをリネームする関数
         """
-        # 1. マッピング辞書の作成（ここは前と同じ）
+        rename_data = context.get(input_var_rename)
+        if rename_data is None:
+            raise ValueError(f"変数 '{input_var_rename}' にリネーム定義がありません。")
+        rename_rows = self.to_records(rename_data)
         mapping_dict = {
-            item['old_key']: item['new_key'] 
-            for item in context.get(input_var_rename)
+            item['old_key']: item['new_key']
+            for item in rename_rows
         }
-        
-        # 2. contextからデータを取得
+
         raw_data = context.get(input_var)
-        
-        # 【重要】もしraw_dataが辞書単体ならリストに包む
-        if isinstance(raw_data, dict):
-            data_list = [raw_data]
-        elif isinstance(raw_data, list):
-            data_list = raw_data
-        else:
-            # 想定外の型（文字列など）なら空リストにする
-            data_list = []
+        if raw_data is None:
+            return self.to_dataframe([])
+        data_list = self.to_records(raw_data)
 
         # 3. リネーム処理（rowが辞書であることを確認しながら実行）
         result = []
@@ -48,5 +43,5 @@ class OperationConnector(BaseConnector):
             else:
                 # 辞書じゃないデータ（文字列など）が混じっていたらそのまま入れる
                 result.append(row)
-        
-        return result
+
+        return self.to_dataframe(result)

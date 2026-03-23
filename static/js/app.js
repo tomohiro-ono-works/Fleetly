@@ -463,7 +463,7 @@
         flows: buildFlows(state.nodes)
       };
 
-      const fileName = `${toSafeFilename(getFlowName())}.yaml`;
+      const fileName = `${toSafeFilename(getFlowName())}.mkm`;
       window.utils?.downloadYaml?.(fileName, payload);
     });
   }
@@ -471,7 +471,7 @@
   if (btnReset) {
     const importInput = document.createElement("input");
     importInput.type = "file";
-    importInput.accept = ".yaml,.yml,text/yaml,text/x-yaml";
+    importInput.accept = ".mkm";
     importInput.style.display = "none";
     document.body.appendChild(importInput);
 

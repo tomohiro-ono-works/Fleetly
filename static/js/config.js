@@ -1,36 +1,46 @@
+project_options=["defult_project1","defult_project2"]
+dataset_options=["defult_dataset1","defult_dataset2"]
+pyenv_options=["defult","venv1","venv2"]
+python_path=["xxxxxxx/xxxxxx/xxxxxxx"]
+mokuromi_path=["yyyyyy/yyyyyy/yyyyyy/main.py"]
 window.CONFIG = {
   version: 3,
 
   connectors: [
-    { id: "BQConnector",              label: "BigQuery", exportId: "bigquery_connector", category: "data" },
-    { id: "CSVConnector",             label: "CSV", exportId: "csv_connector", category: "data" },
-    { id: "ExcelConnector",           label: "Excel", exportId: "excel_connector", category: "data" },
+    { id: "BQConnector",              label: "BigQuery", exportId: "bigquery_connector"},
+    { id: "ExcelConnector",           label: "Excel", exportId: "excel_connector"},
+    { id: "CSVConnector",             label: "CSV", exportId: "csv_connector"},
+    { id: "PythonConnector",          label: "Python実行", exportId: "python_connector"},
+    { id: "WebConnector",             label: "Web操作", exportId: "web_connector"},
+    { id: "WindowsConnector",             label: "Windows操作", exportId: "windows_connector"},
+
     { id: "PlotlyConnector",          label: "Plotly", exportId: "plotly_connector" },
-    { id: "PPTConnector",             label: "PowerPoint", exportId: "ppt_connector", category: "process" },
-    { id: "OperationConnector",       label: "操作", exportId: "operation_connector", category: "process" },
-    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector", category: "data" },
-    { id: "ShellConnector",           label: "シェル", exportId: "shell_connector", category: "science" },
-    { id: "VectorConnector",          label: "VectorDB", exportId: "vector_connector", category: "science" },
-    { id: "LLMConnector",             label: "LLM", exportId: "llm_connector", category: "science" },
-    { id: "WebConnector",             label: "Web操作", exportId: "web_connector", category: "process" },
-    { id: "APIConnector",             label: "API実行", exportId: "api_connector", category: "science" },
-    { id: "PythonConnector",          label: "Python実行", exportId: "python_connector", category: "science" }
+    { id: "PPTConnector",             label: "PowerPoint", exportId: "ppt_connector" },
+    { id: "OperationConnector",       label: "操作", exportId: "operation_connector"},
+    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector"},
+    // { id: "ShellConnector",           label: "シェル", exportId: "shell_connector"},
+    { id: "VectorConnector",          label: "VectorDB", exportId: "vector_connector"},
+    // { id: "LLMConnector",             label: "LLM", exportId: "llm_connector"},
+
+    // { id: "APIConnector",             label: "API実行", exportId: "api_connector"},
+
   ],
 
   actions: {
     BQConnector: [
-      { id: "execute_sql",      label: "SQL実行" },
-      { id: "execute_sql_file", label: "SQL実行（ファイル）" },
-      { id: "load_data",        label: "データロード" }
+      { id: "execute_sql",      label: "SQL実行" , rpaType: "Extract"},
+      { id: "execute_sql_file", label: "SQL実行（ファイル）" , rpaType: "Extract"},
+      { id: "load_data",        label: "データロード" , rpaType: "Load"}
     ],
     CSVConnector: [
-      { id: "read_csv",  label: "読み込み" },
-      { id: "write_csv", label: "書き込み" }
+      { id: "read_csv",  label: "読み込み" , rpaType: "Extract"},
+      { id: "write_csv", label: "書き込み" , rpaType: "Load"}
     ],
     ExcelConnector: [
       {
         id: "read_excel",
         label: "読み込み",
+        rpaType: "Extract",
         detailModal: {
           type: "excel",
           label: "Excelモーダルを開く",
@@ -42,75 +52,75 @@ window.CONFIG = {
           }
         }
       },
-      { id: "write_excel", label: "書き込み" },
-      { id: "read_excel_range",  label: "エリア指定読み込み" }
+      { id: "write_excel", label: "書き込み" , rpaType: "Load"},
+      { id: "read_excel_range",  label: "エリア指定読み込み", rpaType: "Extract" }
     ],
     PlotlyConnector: [
-      { id: "plot_combined_bar_line", label: "棒＋折れ線グラフ" },
-      { id: "plot_stacked_bar", label: "積み上げ棒グラフ" },
-      { id: "plot_scorecard", label: "スコアカード" },
-      { id: "plot_funnel", label: "ファネルチャート" },
-      { id: "plot_radar", label: "レーダーチャート" }
+      { id: "plot_combined_bar_line", label: "棒＋折れ線グラフ", rpaType: "Load" },
+      { id: "plot_stacked_bar", label: "積み上げ棒グラフ" , rpaType: "Load"},
+      { id: "plot_scorecard", label: "スコアカード" , rpaType: "Load"},
+      { id: "plot_funnel", label: "ファネルチャート", rpaType: "Load" },
+      { id: "plot_radar", label: "レーダーチャート", rpaType: "Load" }
     ],
     OperationConnector: [
-      { id: "define_values", label: "変数定義" },
-      { id: "loop_tasks", label: "繰り返し処理" },
-      { id: "get_files", label: "フォルダ内のファイルを取得" },
-      { id: "rename_files", label: "ファイル名を変更" },
-      { id: "execute_move", label: "ファイル移動" }
+      { id: "define_values", label: "変数定義" , rpaType: "Transform"},
+      { id: "loop_tasks", label: "繰り返し処理" , rpaType: "Transform"},
+      { id: "get_files", label: "フォルダ内のファイルを取得" , rpaType: "Transform" },
+      { id: "rename_files", label: "ファイル名を変更" , rpaType: "Transform"},
+      { id: "execute_move", label: "ファイル移動" , rpaType: "Transform"}
     ],
     DataintegrationConnector: [
-      { id: "filter_fields", label: "列指定" },
-      { id: "filter_fields", label: "条件指定" },
-      { id: "rename_fields", label: "フィールド名変更" },
-      { id: "rename_field_list", label: "フィールド名をリストで変更" },
-      { id: "pivot_axis", label: "ピボット処理" }
+      { id: "filter_fields", label: "列指定" , rpaType: "Transform"},
+      { id: "filter_fields", label: "条件指定" , rpaType: "Transform"},
+      { id: "rename_fields", label: "フィールド名変更" , rpaType: "Transform"},
+      { id: "rename_field_list", label: "フィールド名をリストで変更" , rpaType: "Transform"},
+      { id: "pivot_axis", label: "ピボット処理" , rpaType: "Transform"}
     ],
     ShellConnector: [
-      { id: "execute_bat", label: "バッチ実行" }
+      { id: "execute_bat", label: "バッチ実行" , rpaType: "Transform"}
     ],
     VectorConnector: [
-      { id: "embedding_vector_db", label: "ベクトルDB構築" },
-      { id: "search_vector_db", label: "ベクトル検索" }
+      { id: "embedding_vector_db", label: "ベクトルDB構築" , rpaType: "Load"},
+      { id: "search_vector_db", label: "ベクトル検索" , rpaType: "Extract"}
     ],
     LLMConnector: [
-      { id: "execute_prompt", label: "プロンプト実行" }
+      { id: "execute_prompt", label: "プロンプト実行" , rpaType: "Transform"}
     ],
     PPTConnector: [
-      { id: "slide_insert_value", label: "スライド値挿入" },
-      { id: "slide_insert_image", label: "スライド画像添付" }
+      { id: "slide_insert_value", label: "スライド値挿入" , rpaType: "Load"},
+      { id: "slide_insert_image", label: "スライド画像添付" , rpaType: "Load"}
     ],
     WebConnector: [
-      { id: "lookat_pages", label: "ページを開く" },
-      { id: "lookat_page", label: "要素の取得" },
-      { id: "click_to_web_object", label: "クリック" },
-      { id: "click_to_web_object", label: "JavaScript実行" },
-      { id: "click_to_web_object", label: "クリック" },
-      { id: "click_to_web_object", label: "クリック" }
+      { id: "lookat_pages", label: "ページを開く" , rpaType: "Transform"},
+      { id: "lookat_page", label: "要素の取得" , rpaType: "Transform"},
+      { id: "click_to_web_object", label: "クリック" , rpaType: "Transform"},
+      { id: "click_to_web_object", label: "JavaScript実行" , rpaType: "Transform"},
+      { id: "click_to_web_object", label: "クリック" , rpaType: "Transform"},
+      { id: "click_to_web_object", label: "クリック" , rpaType: "Transform"}
     ],
     APIConnector: [
-      { id: "run_api", label: "API実行" }
+      { id: "run_api", label: "API実行" , rpaType: "Transform"}
     ],
     PythonConnector: [
-      { id: "execute_python", label: "Python実行" }
+      { id: "execute_python", label: "Python実行" , rpaType: "Transform"}
     ]
   },
 
   forms: {
     "BQConnector.execute_sql": [
-      { key:"project_id", label:"プロジェクト", kind:"combo", default:"defult_project", options:["defult_project","defult_project2"], required:true},
-      { key:"sql", label:"SQL", kind:"textarea", required:true, allowVars:true, placeholder:"SELECT ...\nFROM ..." }
+      { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
+      { key:"sql", label:"SQL", kind:"textarea", codeLanguage:"sql", required:true, allowVars:true, placeholder:"SELECT ...\nFROM ..." }
     ],
 
     "BQConnector.execute_sql_file": [
-      { key:"project_id", label:"プロジェクト", kind:"combo", default:"defult_project", options:["defult_project","defult_project2"], required:true},
+      { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
       { key:"sql_file", label:"SQLファイル", kind:"file", required:true },
       { key:"encoding", label:"文字コード", kind:"combo", required:true, default:"utf8", options:["utf8","shift_jis"] }
     ],
     
     "BQConnector.load_data": [
-      { key:"project_id", label:"プロジェクト", kind:"combo", default:"defult_project", options:["defult_project","defult_project2"], required:true},
-      { key:"dataset_id", label:"データセット", kind:"combo", default:"defult_dataset", options:["defult_dataset","defult_dataset2"], required:true},
+      { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
+      { key:"dataset_id", label:"データセット", kind:"combo", default:dataset_options[0], options:dataset_options, required:true},
       { key:"table_id", label:"テーブル", kind:"text", required:true, default:"defult_table", allowVars:true },
       { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" },
       { key:"write_disposition", label:"書き込みモード", kind:"combo", required:true, default:"create_or_replace", options:["create_or_replace","create_or_insert"] },
@@ -197,13 +207,23 @@ window.CONFIG = {
     ],
 
     "OperationConnector.execute_rename": [
-      { key:"input_var", label:"入力変数", kind:"combo", required:true, allowVars:true, options:[] }, // optionsは renderer で上流から注入
-      { key:"input_var_rename", label:"変更後変数名", kind:"text", required:true, placeholder:"例: step1_renamed" }
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" }, // optionsは renderer で上流から注入
+      { key:"input_data_rename", label:"フィールド名を変更", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}"  }
+    ],
+
+    "OperationConnector.loop_tasks": [
+      {key:"input_data", label:"繰り返しデータ", kind:"text", required:true, allowVars:true, placeholder:"例: {step1}" }
     ],
 
     "ShellConnector.execute_bat": [
       { key:"file_path", label:"バッチファイル", kind:"file", required:true },
       { key:"args", label:"引数", kind:"text", required:false, allowVars:true }
-    ]
+    ],
+    "PythonConnector.execute_python": [
+      { key:"env_path", label:"実行環境", kind:"combo", default:pyenv_options[0], options:pyenv_options, required:true},
+      { key:"script", label:"スクリプト", kind:"textarea", codeLanguage:"python", required:true, allowVars:true, placeholder:"import ...\nprint(\"hello\") ..." }
+    ],
+
+
   }
 };

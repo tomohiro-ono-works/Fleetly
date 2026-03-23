@@ -3,14 +3,13 @@
   const { wrapWithVarSuggest } = window.uiSuggest;
 
   /* =========================================================
-     combo input (datalist, free input)
+     combo input (free input + full dropdown list)
   ========================================================= */
 
   function renderComboInput({ node, field, current, onInputChanged, onCommitChanged }) {
-    const listId = `combo_${node.id}_${field.key}`;
     const input = el("input", {
       type: "text",
-      list: listId,
+      class: "combo-input",
       placeholder: field.placeholder || "",
       oninput: (e) => {
         node.form[field.key] = e.target.value;
@@ -23,13 +22,83 @@
     });
     input.value = current || "";
 
-    const datalist = el("datalist", { id: listId }, []);
     const options = Array.from(new Set(field.options || []));
+    const menu = el("div", { class: "combo-menu" }, []);
+    const wrapper = el("div", { class: "combo-field" }, []);
+    const trigger = el(
+      "button",
+      {
+        type: "button",
+        class: "combo-trigger",
+        "aria-label": `${field.label || field.key} の候補を開く`
+      },
+      [document.createTextNode("▼")]
+    );
+
+    let open = false;
+    let outsideHandler = null;
+
+    function closeMenu() {
+      if (!open) return;
+      open = false;
+      wrapper.classList.remove("is-open");
+      if (outsideHandler) {
+        document.removeEventListener("pointerdown", outsideHandler);
+        outsideHandler = null;
+      }
+    }
+
+    function openMenu() {
+      if (open) return;
+      open = true;
+      wrapper.classList.add("is-open");
+      outsideHandler = (ev) => {
+        if (!wrapper.contains(ev.target)) closeMenu();
+      };
+      document.addEventListener("pointerdown", outsideHandler);
+    }
+
+    function chooseOption(value) {
+      input.value = value;
+      node.form[field.key] = value;
+      if (onCommitChanged) onCommitChanged();
+      closeMenu();
+      input.focus();
+      input.setSelectionRange?.(input.value.length, input.value.length);
+    }
+
     options.forEach((optValue) => {
-      datalist.appendChild(el("option", { value: optValue }));
+      menu.appendChild(
+        el(
+          "button",
+          {
+            type: "button",
+            class: "combo-item",
+            onmousedown: (ev) => {
+              ev.preventDefault();
+              chooseOption(optValue);
+            }
+          },
+          [document.createTextNode(optValue)]
+        )
+      );
     });
 
-    return { input, wrapper: el("div", {}, [input, datalist]) };
+    input.addEventListener("focus", openMenu);
+    input.addEventListener("click", openMenu);
+    input.addEventListener("blur", () => setTimeout(closeMenu, 120));
+    trigger.addEventListener("click", () => {
+      if (open) closeMenu();
+      else {
+        openMenu();
+        input.focus();
+      }
+    });
+
+    wrapper.appendChild(input);
+    wrapper.appendChild(trigger);
+    wrapper.appendChild(menu);
+    return { input, wrapper };
   }
 
   function renderInputDataSelect({ node, field, current, upstreamSteps, onValueChanged }) {
@@ -54,23 +123,119 @@
     return { input: select, wrapper: select };
   }
 
+  function getCodeLanguageClass(field) {
+    const raw = String(field.codeLanguage || "").trim().toLowerCase();
+    if (raw === "sql" || raw === "python") return raw;
+    return "";
+  }
+
+  function renderCodeTextarea({ node, field, current, onInputChanged, onCommitChanged }) {
+    const language = getCodeLanguageClass(field);
+    const textarea = el("textarea", {
+      class: "code-editor-fallback",
+      placeholder: field.placeholder || "",
+      spellcheck: "false",
+      oninput: (e) => {
+        node.form[field.key] = e.target.value;
+        if (onInputChanged) onInputChanged();
+      },
+      onchange: (e) => {
+        node.form[field.key] = e.target.value;
+        if (onCommitChanged) onCommitChanged();
+      }
+    });
+    textarea.value = current || "";
+    const host = el("div", { class: "code-editor-host", "data-language": language }, []);
+    const wrapper = el("div", { class: "code-editor" }, [host, textarea]);
+
+    if (window.codeEditors && typeof window.codeEditors.mountCodeEditor === "function" && language) {
+      window.codeEditors
+        .mountCodeEditor({
+          host,
+          value: textarea.value,
+          language,
+          onInputChanged: (value) => {
+            node.form[field.key] = value;
+            textarea.value = value;
+            if (onInputChanged) onInputChanged();
+          },
+          onCommitChanged: (value) => {
+            node.form[field.key] = value;
+            textarea.value = value;
+            if (onCommitChanged) onCommitChanged();
+          }
+        })
+        .then(() => {
+          wrapper.classList.add("is-codemirror-ready");
+        })
+        .catch((err) => {
+          console.warn("CodeMirror mount failed, fallback to textarea", err);
+        });
+    }
+
+    return { input: textarea, wrapper, skipVarSuggest: true };
+  }
+
   /* =========================================================
      field renderer
   ========================================================= */
+
+  function getFieldCurrentValue(node, field) {
+    return node.form[field.key] !== undefined
+      ? node.form[field.key]
+      : field.default !== undefined
+        ? field.default
+        : "";
+  }
+
+  function extractReferencedStepNames(value) {
+    const text = String(value || "");
+    const refs = new Set();
+    const re = /\$\{([a-zA-Z0-9_]+)(?:[^}]*)\}/g;
+    let match = re.exec(text);
+    while (match) {
+      refs.add(match[1]);
+      match = re.exec(text);
+    }
+    return Array.from(refs);
+  }
+
+  function normalizeInputDataReference(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    const braceMatch = text.match(/^\$?\{([a-zA-Z0-9_]+)(?:[^}]*)\}$/);
+    if (braceMatch) return braceMatch[1];
+    return text;
+  }
+
+  function getFieldReferenceWarnings({ node, field, upstreamSteps }) {
+    const value = getFieldCurrentValue(node, field);
+    const normalizedUpstream = Array.from(new Set((upstreamSteps || []).filter(Boolean)));
+    const upstreamSet = new Set(normalizedUpstream);
+    if (value === undefined || value === null || String(value).trim() === "") return [];
+
+    if (field.key === "input_data") {
+      const ref = normalizeInputDataReference(value);
+      if (!ref || upstreamSet.has(ref)) return [];
+      return [`参照先 ${ref} は上流に存在しません。`];
+    }
+
+    if (!field.allowVars) return [];
+
+    return extractReferencedStepNames(value)
+      .filter((ref) => !upstreamSet.has(ref))
+      .map((ref) => `参照先 ${ref} は上流に存在しません。`);
+  }
 
   function renderField({ node, field, upstreamSteps, onStateChanged }) {
     const row = el("div", { class: "row" }, []);
     row.appendChild(el("label", {}, [document.createTextNode(field.label)]));
 
-    const current =
-      node.form[field.key] !== undefined
-        ? node.form[field.key]
-        : field.default !== undefined
-          ? field.default
-          : "";
+    const current = getFieldCurrentValue(node, field);
 
     let inputEl = null;
     let wrapper = null;
+    const warningEl = el("div", { class: "field-warning", hidden: "hidden" }, []);
 
     function updateRequiredState() {
       if (!field.required || !inputEl) {
@@ -84,29 +249,52 @@
       row.classList.toggle("required-empty", empty);
     }
 
+    function updateReferenceWarning() {
+      const warnings = getFieldReferenceWarnings({ node, field, upstreamSteps });
+      const hasWarning = warnings.length > 0;
+      row.classList.toggle("reference-invalid", hasWarning);
+      warningEl.hidden = !hasWarning;
+      warningEl.textContent = hasWarning ? warnings.join(" / ") : "";
+    }
+
     function notifyLocalChanged() {
       updateRequiredState();
+      updateReferenceWarning();
     }
 
     function notifyCommitted() {
       updateRequiredState();
+      updateReferenceWarning();
       if (onStateChanged) onStateChanged();
     }
 
     if (field.kind === "textarea") {
-      inputEl = el("textarea", {
-        placeholder: field.placeholder || "",
-        oninput: (e) => {
-          node.form[field.key] = e.target.value;
-          notifyLocalChanged();
-        },
-        onchange: (e) => {
-          node.form[field.key] = e.target.value;
-          notifyCommitted();
-        }
-      });
-      inputEl.value = current;
-      wrapper = inputEl;
+      if (getCodeLanguageClass(field)) {
+        const rendered = renderCodeTextarea({
+          node,
+          field,
+          current,
+          onInputChanged: notifyLocalChanged,
+          onCommitChanged: notifyCommitted
+        });
+        inputEl = rendered.input;
+        wrapper = rendered.wrapper;
+        field.__skipVarSuggest = !!rendered.skipVarSuggest;
+      } else {
+        inputEl = el("textarea", {
+          placeholder: field.placeholder || "",
+          oninput: (e) => {
+            node.form[field.key] = e.target.value;
+            notifyLocalChanged();
+          },
+          onchange: (e) => {
+            node.form[field.key] = e.target.value;
+            notifyCommitted();
+          }
+        });
+        inputEl.value = current;
+        wrapper = inputEl;
+      }
     } else if (field.kind === "number") {
       inputEl = el("input", {
         type: "number",
@@ -220,18 +408,21 @@
       wrapper = inputEl;
     }
 
-    if (field.allowVars && inputEl && inputEl.tagName !== "SELECT") {
-      wrapper = wrapWithVarSuggest(inputEl, upstreamSteps, onStateChanged);
+    if (field.allowVars && inputEl && inputEl.tagName !== "SELECT" && !field.__skipVarSuggest) {
+      wrapper = wrapWithVarSuggest(inputEl, upstreamSteps, onStateChanged, wrapper);
     }
+    delete field.__skipVarSuggest;
 
     const right = el("div", {}, [wrapper]);
     if (field.required) {
       right.appendChild(el("div", { class: "sub" }, [document.createTextNode("必須")]));
     }
+    right.appendChild(warningEl);
     row.appendChild(right);
     updateRequiredState();
+    updateReferenceWarning();
     return row;
   }
 
-  window.uiFields = { renderField };
+  window.uiFields = { renderField, getFieldReferenceWarnings };
 })();

@@ -31,10 +31,40 @@ window.stateOps = {
     refreshParallelOfForParent(state, anchorId);
   },
 
+  moveNodeToInsert(state, nodeId, options = {}) {
+    const anchorId = normalizeAnchorId(options.anchorId, null);
+    const rightId = options.rightId ?? null;
+    if (!canMoveNodeToTarget(state, nodeId, { anchorId, rightId, kind: "insert" })) return false;
+
+    const movingNode = extractNodeForMove(state, nodeId);
+    if (!movingNode) return false;
+
+    insertExistingNodeAtAnchor(state, movingNode, anchorId, rightId);
+    state.selectedNodeId = movingNode.id;
+    return true;
+  },
+
+  moveNodeToParallel(state, nodeId, options = {}) {
+    const anchorId = normalizeAnchorId(options.anchorId, null);
+    const rightId = options.rightId ?? null;
+    if (!canMoveNodeToTarget(state, nodeId, { anchorId, rightId, kind: "parallel" })) return false;
+
+    const movingNode = extractNodeForMove(state, nodeId);
+    if (!movingNode) return false;
+
+    addExistingParallelAtAnchor(state, movingNode, anchorId, rightId);
+    state.selectedNodeId = movingNode.id;
+    return true;
+  },
+
   removeNode(state, index) {
     if (state.nodes.length <= 1) return;
     const target = state.nodes[index];
     if (!target) return;
+    if (isLoopRootStateNode(target)) {
+      removeLoopRootNode(state, target, index);
+      return;
+    }
 
     const parentId = target.parentId ?? null;
     const children = getChildren(state, target.id);
@@ -77,6 +107,68 @@ window.stateOps = {
     state.selectedNodeId = nodeId;
   }
 };
+
+function isLoopRootStateNode(node) {
+  return !!node && node.action === "loop_tasks" && !node.loopOwnerId;
+}
+
+function collectLoopRemovalIds(state, loopRootId) {
+  const removeIds = new Set([loopRootId]);
+  const queue = getChildren(state, loopRootId)
+    .filter((child) => child.loopOwnerId === loopRootId)
+    .map((child) => child.id);
+
+  while (queue.length) {
+    const currentId = queue.shift();
+    if (!currentId || removeIds.has(currentId)) continue;
+    removeIds.add(currentId);
+    getChildren(state, currentId).forEach((child) => {
+      if (!removeIds.has(child.id)) queue.push(child.id);
+    });
+  }
+
+  return removeIds;
+}
+
+function removeLoopRootNode(state, target, index) {
+  const parentId = target.parentId ?? null;
+  const targetOrder = Number(target.parallelOrder) || 1;
+  const directChildren = getChildren(state, target.id);
+  const outsideChildren = directChildren.filter((child) => child.loopOwnerId !== target.id);
+  const removeIds = collectLoopRemovalIds(state, target.id);
+  const remainingCount = state.nodes.filter((node) => !removeIds.has(node.id)).length;
+  if (remainingCount <= 0) return;
+
+  outsideChildren.forEach((child, idx) => {
+    child.parentId = parentId;
+    child.parallelOrder = targetOrder + idx;
+    child.parallelOf = null;
+  });
+
+  state.nodes.forEach((node) => {
+    if ((node.parentId ?? null) !== parentId) return;
+    const order = Number(node.parallelOrder) || 1;
+    if (node.id !== target.id && order > targetOrder) {
+      node.parallelOrder = order - 1 + outsideChildren.length;
+    }
+  });
+
+  state.nodes = state.nodes.filter((node) => !removeIds.has(node.id));
+
+  const idSet = new Set(state.nodes.map((node) => node.id));
+  state.nodes.forEach((node) => {
+    if (node.parentId && !idSet.has(node.parentId)) node.parentId = null;
+    if (node.parallelOf && !idSet.has(node.parallelOf)) node.parallelOf = null;
+  });
+
+  refreshParallelOfForParent(state, parentId);
+  outsideChildren.forEach((child) => refreshParallelOfForParent(state, child.id));
+
+  if (!state.selectedNodeId || !state.nodes.some((node) => node.id === state.selectedNodeId)) {
+    const fallback = state.nodes[Math.min(index, state.nodes.length - 1)] || state.nodes[0] || null;
+    state.selectedNodeId = fallback ? fallback.id : null;
+  }
+}
 
 function insertAtAnchor(state, anchorId) {
   const right = getFirstChild(state, anchorId);
@@ -136,6 +228,89 @@ function addParallelAtAnchor(state, anchorId) {
   refreshParallelOfForParent(state, anchorId);
 }
 
+function insertExistingNodeAtAnchor(state, movingNode, anchorId, rightId) {
+  const right = resolveRightNode(state, anchorId, rightId);
+
+  movingNode.parentId = anchorId;
+  movingNode.parallelOf = null;
+
+  if (!right) {
+    movingNode.parallelOrder = getNextChildOrder(state, anchorId);
+    state.nodes.push(movingNode);
+    refreshParallelOfForParent(state, anchorId);
+    return;
+  }
+
+  const rightOrder = Number(right.parallelOrder) || 1;
+  movingNode.parallelOrder = rightOrder;
+
+  state.nodes.forEach((n) => {
+    if ((n.parentId ?? null) !== (anchorId ?? null)) return;
+    if (n.id === right.id) return;
+    const order = Number(n.parallelOrder) || 1;
+    if (order > rightOrder) n.parallelOrder = order + 1;
+  });
+
+  right.parentId = movingNode.id;
+  right.parallelOrder = 1;
+  right.parallelOf = null;
+
+  state.nodes.push(movingNode);
+  refreshParallelOfForParent(state, anchorId);
+  refreshParallelOfForParent(state, movingNode.id);
+}
+
+function addExistingParallelAtAnchor(state, movingNode, anchorId, rightId) {
+  const right = resolveRightNode(state, anchorId, rightId);
+  if (!right) return false;
+
+  movingNode.parentId = anchorId;
+  movingNode.parallelOrder = getNextChildOrder(state, anchorId);
+  movingNode.parallelOf = right.id;
+
+  state.nodes.push(movingNode);
+  refreshParallelOfForParent(state, anchorId);
+  return true;
+}
+
+function resolveRightNode(state, anchorId, rightId) {
+  if (!rightId) return getFirstChild(state, anchorId);
+  const right = state.nodes.find((n) => n.id === rightId) || null;
+  if (!right) return getFirstChild(state, anchorId);
+  if ((right.parentId ?? null) !== (anchorId ?? null)) return getFirstChild(state, anchorId);
+  return right;
+}
+
+function extractNodeForMove(state, nodeId) {
+  const target = state.nodes.find((n) => n.id === nodeId);
+  if (!target) return null;
+
+  const parentId = target.parentId ?? null;
+  const children = getChildren(state, target.id);
+  const targetOrder = Number(target.parallelOrder) || 1;
+
+  children.forEach((child, idx) => {
+    child.parentId = parentId;
+    child.parallelOrder = targetOrder + idx;
+    child.parallelOf = null;
+  });
+
+  state.nodes.forEach((n) => {
+    if ((n.parentId ?? null) !== parentId) return;
+    const order = Number(n.parallelOrder) || 1;
+    if (n.id !== target.id && order > targetOrder) n.parallelOrder = order - 1;
+  });
+
+  state.nodes = state.nodes.filter((n) => n.id !== target.id);
+  refreshParallelOfForParent(state, parentId);
+  children.forEach((child) => refreshParallelOfForParent(state, child.id));
+
+  target.parentId = null;
+  target.parallelOf = null;
+  target.parallelOrder = 1;
+  return target;
+}
+
 function getFirstChild(state, parentId) {
   const children = getChildren(state, parentId);
   return children.length ? children[0] : null;
@@ -173,6 +348,42 @@ function refreshParallelOfForParent(state, parentId) {
     children[i].parallelOf = first.id;
     children[i].parallelOrder = i + 1;
   }
+}
+
+function collectRelatedNodeIds(state, nodeId) {
+  const seen = new Set();
+  const queue = [nodeId];
+  while (queue.length) {
+    const currentId = queue.shift();
+    if (!currentId || seen.has(currentId)) continue;
+    seen.add(currentId);
+    getChildren(state, currentId).forEach((child) => {
+      if (!seen.has(child.id)) queue.push(child.id);
+    });
+  }
+  return seen;
+}
+
+function canMoveNodeToTarget(state, nodeId, target) {
+  const node = state.nodes.find((item) => item.id === nodeId);
+  if (!node) return false;
+
+  const relatedIds = collectRelatedNodeIds(state, nodeId);
+  if (target.anchorId && relatedIds.has(target.anchorId)) return false;
+  if (target.rightId && relatedIds.has(target.rightId)) return false;
+  if (target.kind === "parallel" && !target.rightId) return false;
+
+  if (target.anchorId !== null) {
+    const anchorExists = state.nodes.some((item) => item.id === target.anchorId);
+    if (!anchorExists) return false;
+  }
+
+  if (target.rightId) {
+    const rightExists = state.nodes.some((item) => item.id === target.rightId);
+    if (!rightExists) return false;
+  }
+
+  return true;
 }
 
 function normalizeAnchorId(parentId, fallbackParentId) {

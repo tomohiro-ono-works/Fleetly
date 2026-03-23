@@ -5,10 +5,10 @@
      ${var} suggest (text/textarea/combo)
   ========================================================= */
 
-  function wrapWithVarSuggest(inputEl, upstreamSteps, onStateChanged) {
+  function wrapWithVarSuggest(inputEl, upstreamSteps, onStateChanged, contentEl = inputEl) {
     const box = el("div", { class: "suggest" }, []);
     const list = el("div", { class: "suggest-list" }, []);
-    box.appendChild(inputEl);
+    box.appendChild(contentEl);
     box.appendChild(list);
 
     function hide() {

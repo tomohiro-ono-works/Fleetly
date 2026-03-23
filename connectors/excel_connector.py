@@ -1,142 +1,218 @@
 import os
-from datetime import datetime, date, time
+from datetime import datetime, date
 from typing import Any
 
-from openpyxl import load_workbook, Workbook
+import pandas as pd
+from openpyxl import load_workbook
+from openpyxl.styles.numbers import is_date_format
 
 from connectors.base_connector import BaseConnector
 
 class ExcelConnector(BaseConnector):
+    @staticmethod
+    def _as_bool(value: Any) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(value)
 
-    def execute(self, action, params, context) -> Any:
+    @staticmethod
+    def _normalize_excel_value(value: Any) -> Any:
+        if pd.isna(value):
+            return None
+        if isinstance(value, datetime):
+            normalized = value.replace(tzinfo=None) if value.tzinfo is not None else value
+            iso_str = normalized.isoformat()
+            return iso_str[:10] if iso_str.endswith("T00:00:00") else iso_str
+        if isinstance(value, date):
+            return value.isoformat()
+        return value
+
+    @staticmethod
+    def _format_display_value(cell: Any) -> Any:
+        value = cell.value
+        if value is None:
+            return None
+
+        if isinstance(value, datetime):
+            normalized = value.replace(tzinfo=None) if value.tzinfo is not None else value
+            if is_date_format(cell.number_format):
+                formatted = normalized.strftime("%Y-%m-%d %H:%M:%S")
+                return formatted[:-9] if formatted.endswith(" 00:00:00") else formatted
+            return normalized.isoformat()
+
+        if isinstance(value, date):
+            if is_date_format(cell.number_format):
+                return value.strftime("%Y-%m-%d")
+            return value.isoformat()
+
+        if isinstance(value, (int, float)):
+            number_format = str(cell.number_format or "")
+            if number_format and set(number_format) <= {"0"}:
+                if isinstance(value, float) and not float(value).is_integer():
+                    return value
+                return str(int(value)).zfill(len(number_format))
+        return value
+
+    def _read_excel_display_mode(
+        self,
+        normalized_path: str,
+        sheet_name: str,
+        header_row: int,
+        data_start_row: int,
+    ) -> pd.DataFrame:
+        workbook = load_workbook(normalized_path, data_only=True)
+        try:
+            worksheet = workbook[sheet_name] if sheet_name else workbook.active
+        except KeyError as exc:
+            workbook.close()
+            raise ValueError(f"シートが見つかりませんでした: {sheet_name}") from exc
+
+        headers = [
+            str(cell.value) if cell.value is not None else f"col_{index}"
+            for index, cell in enumerate(worksheet[header_row])
+        ]
+
+        rows: list[dict[str, Any]] = []
+        for row in worksheet.iter_rows(min_row=data_start_row):
+            values = [self._format_display_value(cell) for cell in row]
+            if any(value is not None and value != "" for value in values):
+                rows.append(dict(zip(headers, values)))
+
+        workbook.close()
+        return pd.DataFrame(rows)
+
+    def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
         if action == "read_excel":
-            path_val = self.normalize_file_path(params.get('file_path')) or ""
-            sheet_val = str(params.get('sheet_name', ""))
-            # 必須チェック（パスが空ならここでエラーにする）
-            if not path_val:
+            file_path = params.get('file_path')
+            if not file_path:
                 raise ValueError("file_path が指定されていません。")
             return self.read_excel(
-                path=path_val,
-                sheet_name=sheet_val,
+                path=str(file_path),
+                sheet_name=str(params.get('sheet_name', "")),
                 header_row=int(params.get('header_row', 1)),
-                data_start_row=int(params.get('data_start_row', 2))
+                data_start_row=int(params.get('data_start_row', 2)),
+                preserve_display=self._as_bool(params.get('preserve_display', False)),
             )
         elif action == "write_excel":
+            input_data = params.get('input_data')
+            output_path = params.get('output_path')
+            if not input_data:
+                raise ValueError("input_data が指定されていません。")
+            if not output_path:
+                raise ValueError("output_path が指定されていません。")
             return self.write_excel(
-                params.get('input_data'),
-                self.normalize_file_path(params.get('output_path')),
-                params.get('sheet_name', 'Sheet1'),
+                str(input_data),
+                str(output_path),
+                str(params.get('sheet_name', 'Sheet1')),
                 context)
 
     # --- 内部ロジック ---
 
-    def read_excel(self, path: str, sheet_name: str, header_row: int, data_start_row: int):
-            path = self.normalize_file_path(path)
-            if not path or not os.path.exists(path):
-                raise FileNotFoundError(f"ファイルが見つかりません: {path}")
-            
-            # data_only=Trueで数式ではなく値を取得
-            wb = load_workbook(path, data_only=True)
-            # シートの取得
-            target_ws = wb[sheet_name] if sheet_name else wb.active
-            
-            # Pylance対策：wsがNoneでないことを厳格にチェック
-            if target_ws is None:
-                raise ValueError(f"シートが見つかりませんでした。")
-            
-            # 変数を上書きして、ここからは target_ws が絶対にある前提にする
-            ws = target_ws 
+    def read_excel(
+        self,
+        path: str,
+        sheet_name: str,
+        header_row: int,
+        data_start_row: int,
+        preserve_display: bool = False,
+    ) -> pd.DataFrame:
+        normalized_path = self.normalize_file_path(path)
+        if normalized_path is None or not os.path.exists(normalized_path):
+            raise FileNotFoundError(f"ファイルが見つかりません: {normalized_path}")
+        if header_row < 1:
+            raise ValueError("header_row は 1 以上で指定してください。")
+        if data_start_row < header_row:
+            raise ValueError("data_start_row は header_row 以上で指定してください。")
 
-            # 1. ヘッダー行の取得
-            headers = [str(cell.value) if cell.value is not None else f"col_{i}" 
-                    for i, cell in enumerate(ws[header_row])]
-            
-            data = []
-            # 2. データの取得
-            for row in ws.iter_rows(min_row=data_start_row, values_only=True):
-                if any(row):
-                    row_dict = dict(zip(headers, row))
-                    
-                    # --- 日付の変換処理（ここがエラーの火種でした） ---
-                    for key in row_dict:
-                        val = row_dict[key]
-                        
-                        # datetime型かdate型の場合だけ処理
-                        if isinstance(val, (datetime, date)):
-                            # タイムゾーンがあれば消す
-                            if isinstance(val, datetime) and val.tzinfo is not None:
-                                val = val.replace(tzinfo=None)
-                            
-                            iso_str = val.isoformat()
-                            
-                            # "T00:00:00" で終わるか、date型なら日付のみ(10文字)にする
-                            if iso_str.endswith("T00:00:00") or not isinstance(val, datetime):
-                                row_dict[key] = iso_str[:10]
-                            else:
-                                row_dict[key] = iso_str
-                    # ----------------------------------------------
-                    
-                    data.append(row_dict)
-            return data
+        if preserve_display:
+            return self._read_excel_display_mode(
+                normalized_path,
+                sheet_name,
+                header_row,
+                data_start_row,
+            )
 
-    def write_excel(self, input_var, output_path, sheet_name, context, mode='create_or_replace'):
+        skiprows = list(range(header_row, data_start_row - 1)) if data_start_row > header_row + 1 else None
+        target_sheet = sheet_name or 0
+
+        try:
+            df = pd.read_excel(
+                normalized_path,
+                sheet_name=target_sheet,
+                header=header_row - 1,
+                skiprows=skiprows,
+                dtype=object,
+                engine="openpyxl",
+            )
+        except ValueError as exc:
+            raise ValueError(f"シートが見つかりませんでした: {sheet_name}") from exc
+
+        if not isinstance(df, pd.DataFrame):
+            raise ValueError("Excel の読み込み結果が不正です。")
+
+        df.columns = [
+            str(column) if column is not None and not pd.isna(column) else f"col_{index}"
+            for index, column in enumerate(df.columns)
+        ]
+        return df.apply(lambda col: col.map(self._normalize_excel_value))
+
+    def write_excel(self, input_var: str, output_path: str, sheet_name: str, context: dict[str, Any], mode: str = 'create_or_replace'):
         """
         mode:
         'create_or_replace': 指定シートを「初期化」して書き込む（他のシートは維持）
         'insert_or_replace': 指定シートの「末尾に追記」して書き込む（他のシートは維持）
         """
-        output_path = self.normalize_file_path(output_path)
+        normalized_output_path = self.normalize_file_path(output_path)
+        if normalized_output_path is None:
+            raise ValueError("output_path が指定されていません。")
         data = context.get(input_var)
-        if not data:
+        if data is None:
             raise ValueError("データが空です")
+        df = self.to_dataframe(data)
+        if df.empty:
+            raise ValueError("データが空です")
+        df_to_write = df.copy()
 
-        # 1. ワークブックの準備（ファイルが存在するかどうか）
-        if os.path.exists(output_path):
-            # 既存ファイルを基準にする
-            wb = load_workbook(output_path)
-            is_new_file = False
-        else:
-            # あたらしくファイルを作成
-            wb = Workbook()
-            is_new_file = True
+        if not os.path.exists(normalized_output_path):
+            with pd.ExcelWriter(normalized_output_path, engine="openpyxl", mode="w") as writer:
+                df_to_write.to_excel(writer, sheet_name=sheet_name, index=False)
+            return f"Excel保存完了 [{mode}]: {normalized_output_path} (Sheet: {sheet_name})"
 
-        # 2. シートの準備
-        is_new_sheet = False
-        
-        if is_new_file:
-            # 新規ファイルなら最初のシートの名前を変える
-            ws = wb.worksheets[0]
-            ws.title = sheet_name
-            is_new_sheet = True
-        else:
-            # 既存ファイルの場合、シートが存在するか確認
-            if sheet_name in wb.sheetnames:
-                if mode == 'create_or_replace':
-                    # 置換：一旦消して作り直す
-                    del wb[sheet_name]
-                    ws = wb.create_sheet(sheet_name)
-                    is_new_sheet = True
-                else:
-                    # 挿入：既存のシートを取得
-                    ws = wb[sheet_name]
-                    is_new_sheet = False
+        if mode == 'create_or_replace':
+            with pd.ExcelWriter(
+                normalized_output_path,
+                engine="openpyxl",
+                mode="a",
+                if_sheet_exists="replace",
+            ) as writer:
+                df_to_write.to_excel(writer, sheet_name=sheet_name, index=False)
+            return f"Excel保存完了 [{mode}]: {normalized_output_path} (Sheet: {sheet_name})"
+
+        workbook = load_workbook(normalized_output_path)
+        try:
+            if sheet_name in workbook.sheetnames:
+                start_row = workbook[sheet_name].max_row
+                write_header = False
             else:
-                # 既存ファイルに「あたらしくシートを作成」
-                ws = wb.create_sheet(sheet_name)
-                is_new_sheet = True
+                start_row = 0
+                write_header = True
+        finally:
+            workbook.close()
 
-        # 3. データの書き込み
-        headers = list(data[0].keys())
+        with pd.ExcelWriter(
+            normalized_output_path,
+            engine="openpyxl",
+            mode="a",
+            if_sheet_exists="overlay",
+        ) as writer:
+            df_to_write.to_excel(
+                writer,
+                sheet_name=sheet_name,
+                index=False,
+                header=write_header,
+                startrow=start_row,
+            )
 
-        # 新規シート、または置換モードの場合はヘッダーを書き込む
-        if is_new_sheet:
-            ws.append(headers)
-
-        # データの追加
-        for row in data:
-            # row.get(h) で値を取り出し、appendで末尾に追加
-            ws.append([row.get(h) for h in headers])
-
-        # 4. 保存
-        wb.save(output_path)
-        return f"Excel保存完了 [{mode}]: {output_path} (Sheet: {sheet_name})"
+        return f"Excel保存完了 [{mode}]: {normalized_output_path} (Sheet: {sheet_name})"
