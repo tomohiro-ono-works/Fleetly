@@ -1,6 +1,8 @@
 import json
 import os
+import shutil
 import subprocess
+from pathlib import Path
 from datetime import datetime
 
 from prompt_toolkit.application import Application
@@ -25,13 +27,17 @@ ERROR_COLOR = "#ec3691"
 
 COMMANDS = [
     "workflow",
-    "execute",
+    "run",
+    "gui",
     "step",
     "step data",
     "step info",
     "exit",
     "quit",
 ]
+
+BASE_DIR = Path(__file__).resolve().parent
+FORM_HTML_PATH = BASE_DIR / "static" / "form.html"
 
 mokuromi_completer = WordCompleter(COMMANDS, ignore_case=True, sentence=True)
 
@@ -56,16 +62,19 @@ class MokuromiSessionState:
 
 def show_banner():
     logo = "\n".join([
-        "███╗ ███╗  ██████╗  ██╗  ██╗ ██╗   ██╗ ██████╗   ██████╗  ███╗ ███╗ ██╗",
-        "████████║ ██╔═══██╗ ██║ ██╔╝ ██║   ██║ ██╔══██╗ ██╔═══██╗ ████████║ ██║",
-        "██╔██╔██║ ██║   ██║ █████╔╝  ██║   ██║ ██████╔╝ ██║   ██║ ██╔██╔██║ ██║",
-        "██║╚═╝██║ ██║   ██║ ██╔═██╗  ██║   ██║ ██╔══██╗ ██║   ██║ ██║╚═╝██║ ██║",
-        "██║   ██║ ╚██████╔╝ ██║  ██╗ ╚██████╔╝ ██║  ██║ ╚██████╔╝ ██║   ██║ ██║",
-        "╚═╝   ╚═╝  ╚═════╝  ╚═╝  ╚═╝  ╚═════╝  ╚═╝  ╚═╝  ╚═════╝  ╚═╝   ╚═╝ ╚═╝",
+        "                                                                       _ ",
+        "      █████████   █████╗   ██╗   ███╗ ██╗   ██╗   ██╗██  ██████╗   █████████╗ ██",
+        "     ██╔═██╔═██╔ ██╗  ██║ ██╔╝███║   ██║   ██╔══██╗██  ██╔═══██╗  ██╔═██╔═██╔ ██",
+        "    ██║ ██║ ██║ ██║  ██  ██ ██║     ██║   ██║  ███║║ ██║   ██║ ██║ ██║ ██║ ██",
+        "   ██║ ██║ ██║ ██║  ██╔═██╗  ██║   ██║   ██║  ██║   ██║   ██║ ██║ ██║ ██║ ██",
+        "  ██║ ██║ ██║╚███████╔╝██║    ██╗ ███████╔╝ ██║     ██████╔╝ ██║ ██║ ██║ ██",
+        "  ╚═╝ ╚═╝ ╚═╝ ╚═════╝ ╚═╝     ╚═╝ ╚═══════╝  ╚═╝  ╚═╝ ╚═════╝ ╚═╝ ╚═╝ ╚═╝"
     ])
+
     commands = "\n".join([
         "workflow",
-        "execute <file_path>",
+        "run <file_path>",
+        "gui",
         "step",
         "step data <step_id>",
         "step info <step_id>",
@@ -190,9 +199,12 @@ def split_command(text):
     parts = stripped.split(None, 2)
     command = parts[0].lower()
 
-    if command == "execute":
+    if command == "run":
         argument = stripped[len(parts[0]):].strip() if len(parts) > 1 else None
-        return "execute", argument or None
+        return "run", argument or None
+
+    if command == "gui":
+        return "gui", None
 
     if command == "step":
         if len(parts) == 1:
@@ -212,7 +224,7 @@ def split_command(text):
 def get_last_report(state):
     report = state.last_report
     if not report:
-        console.print(f"[{ERROR_COLOR}]直前実行がありません。先に execute を実行してください。[/{ERROR_COLOR}]")
+        console.print(f"[{ERROR_COLOR}]直前実行がありません。先に run を実行してください。[/{ERROR_COLOR}]")
         return None
     return report
 
@@ -230,7 +242,7 @@ def render_execution_summary(report):
     ]
     if error:
         summary.append(f"error: {error}")
-    console.print(Panel("\n".join(summary), title="execute", border_style=border_style))
+    console.print(Panel("\n".join(summary), title="run", border_style=border_style))
 
 
 def render_steps(report):
@@ -325,9 +337,9 @@ def render_step_info(step):
     render_structured(info, "json")
 
 
-def execute_workflow(file_path, state):
+def run_workflow(file_path, state):
     if not file_path:
-        console.print(f"[{ERROR_COLOR}]usage: execute <file_path>[/{ERROR_COLOR}]")
+        console.print(f"[{ERROR_COLOR}]usage: run <file_path>[/{ERROR_COLOR}]")
         return
 
     report = run_cli(file_path)
@@ -336,6 +348,40 @@ def execute_workflow(file_path, state):
     if workflow_path and os.path.exists(workflow_path):
         state.remember_workflow(workflow_path)
     render_execution_summary(report)
+
+
+def find_chrome_executable():
+    executable = shutil.which("chrome") or shutil.which("chrome.exe")
+    if executable:
+        return executable
+
+    candidates = [
+        Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+        Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
+    ]
+    for candidate in candidates:
+        if str(candidate) and candidate.exists():
+            return str(candidate)
+    return None
+
+
+def open_gui():
+    if not FORM_HTML_PATH.exists():
+        console.print(f"[{ERROR_COLOR}]GUI ファイルが見つかりません: {FORM_HTML_PATH}[/{ERROR_COLOR}]")
+        return
+
+    chrome_path = find_chrome_executable()
+    if not chrome_path:
+        console.print(f"[{ERROR_COLOR}]Chrome が見つかりませんでした。[/{ERROR_COLOR}]")
+        return
+
+    form_uri = FORM_HTML_PATH.resolve().as_uri()
+    try:
+        subprocess.Popen([chrome_path, form_uri])
+        console.print(f"[{SUCCESS_COLOR}]opened:[/{SUCCESS_COLOR}] {FORM_HTML_PATH}")
+    except Exception as e:
+        console.print(f"[{ERROR_COLOR}]GUI の起動に失敗しました: {e}[/{ERROR_COLOR}]")
 
 
 def handle_step_data(state, step_id):
@@ -387,8 +433,11 @@ def main():
             if command == "workflow":
                 select_workflow(state)
                 continue
-            if command == "execute":
-                execute_workflow(argument, state)
+            if command == "run":
+                run_workflow(argument, state)
+                continue
+            if command == "gui":
+                open_gui()
                 continue
             if command == "step":
                 report = get_last_report(state)

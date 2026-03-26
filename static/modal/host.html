@@ -6,7 +6,7 @@
   <link rel="stylesheet" href="./excel_modal.css">
 </head>
 <body>
-  <button id="openExcel">Excelモーダルを開く</button>
+  <button id="openExcel">Excelアシスタントを開く</button>
 
   <!-- excel_modal.html -->
   <div id="excelModal" class="mdl" aria-hidden="true">
@@ -14,7 +14,7 @@
 
     <div class="mdl__panel" role="dialog" aria-modal="true" aria-labelledby="excelTitle">
       <div class="mdl__header">
-        <div class="mdl__title" id="excelTitle">Excel Viewer</div>
+        <div class="mdl__title" id="excelTitle">Excelアシスタント</div>
         <button class="mbtn" type="button" data-mdl-close>閉じる</button>
       </div>
 
@@ -41,7 +41,7 @@
   </div>
 
   <!-- SheetJS（XLSX） -->
-  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+  <script src="../vendor/sheetjs/xlsx.full.min.js"></script>
 
   <!-- 共通モーダル制御 -->
   <script src="./modal_core.js"></script>

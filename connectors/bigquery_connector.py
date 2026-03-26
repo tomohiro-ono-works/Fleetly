@@ -53,6 +53,13 @@ class BQConnector(BaseConnector):
             normalized_records.append({str(key): value for key, value in row.items()})
         return normalized_records
 
+    @staticmethod
+    def _normalize_optional_text(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
         project_id = params.get("project_id")
         if not project_id:
@@ -60,12 +67,22 @@ class BQConnector(BaseConnector):
 
         if action == "execute_sql":
             return self.execute_sql(
-                project_id,
-                sql=params.get("sql_query"),
-                sql_file=params.get("sql_file"),
+                str(project_id),
+                sql=self._normalize_optional_text(params.get("sql")) or self._normalize_optional_text(params.get("sql_query")),
+                sql_file=self._normalize_optional_text(params.get("sql_file")),
                 encoding=params.get("encoding", "utf-8"),
                 is_output=params.get("is_output", True)
                 )
+        elif action == "execute_sql_file":
+            sql_file = self._normalize_optional_text(params.get("sql_file"))
+            if not sql_file:
+                raise ValueError("sql_file は必須です。")
+            return self.execute_sql_file(
+                str(project_id),
+                sql_file=sql_file,
+                encoding=str(params.get("encoding", "utf-8")),
+                is_output=params.get("is_output", True),
+            )
                  
         elif action == "load_data":
             dataset_id = params.get("dataset_id")
@@ -98,6 +115,9 @@ class BQConnector(BaseConnector):
         :param encoding: ファイルのエンコーディング
         :return: 実行するSQL文字列
         """
+        sql = self._normalize_optional_text(sql)
+        sql_file = self._normalize_optional_text(sql_file)
+
         # 1. まず排他チェック（どちらか片方のみが存在することを保証）
         if not (bool(sql) ^ bool(sql_file)):
             raise ValueError("引数 'sql' または 'sql_file' のどちらか一方のみを指定してください。")
@@ -185,6 +205,20 @@ class BQConnector(BaseConnector):
             results.append(dict_row)
             
         return self.to_dataframe(results)
+
+    def execute_sql_file(
+            self,
+            project_id: str,
+            sql_file: str,
+            encoding: str = 'utf-8',
+            is_output: bool = True) -> Any:
+        return self.execute_sql(
+            project_id=project_id,
+            sql=None,
+            sql_file=sql_file,
+            encoding=encoding,
+            is_output=is_output,
+        )
 
     def load_data(self,
                    project_id: str,

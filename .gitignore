@@ -1,6 +1,6 @@
 # 仮想環境フォルダを無視
-venv_fleetly/
-.venv_fleetly/
+venv_mokuromi/
+.venv_mokuromi/
 
 # Pythonのキャッシュファイルを無視
 __pycache__/
@@ -10,7 +10,6 @@ __pycache__/
 .DS_Store
 Thumbs.db
 *.ipynb
-*.bat
 
 workflows/
 logs/

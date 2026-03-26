@@ -129,6 +129,10 @@ def resolve_workflow_path(yaml_path: str):
     raw_path = str(yaml_path or "").strip()
     if not raw_path:
         return None
+    if len(raw_path) >= 2 and raw_path[0] == raw_path[-1] and raw_path[0] in {"\"", "'"}:
+        raw_path = raw_path[1:-1].strip()
+    if not raw_path:
+        return None
 
     candidates = []
     if os.path.isabs(raw_path):
@@ -153,10 +157,13 @@ def resolve_workflow_path(yaml_path: str):
 def run_cli(yaml_path):
     resolved_path = resolve_workflow_path(yaml_path)
     if not resolved_path or not os.path.exists(resolved_path):
-        message = f"ファイルが見つかりません: {yaml_path}"
+        display_path = str(yaml_path or "").strip()
+        if len(display_path) >= 2 and display_path[0] == display_path[-1] and display_path[0] in {"\"", "'"}:
+            display_path = display_path[1:-1].strip()
+        message = f"ファイルが見つかりません: {display_path}"
         logger.error(message)
         return {
-            "workflow_path": os.path.abspath(str(yaml_path or "")),
+            "workflow_path": os.path.abspath(display_path) if display_path else "",
             "workflow_name": "Untitled",
             "status": "error",
             "steps": [],

@@ -90,7 +90,7 @@
 
     if (detailModal.type === "excel") {
       if (!window.ExcelModal || typeof window.ExcelModal.open !== "function") {
-        alert("Excelモーダルを読み込めませんでした。");
+        alert("Excelアシスタントを読み込めませんでした。");
         return;
       }
       window.ExcelModal.open({
@@ -103,6 +103,38 @@
     }
 
     alert(`未対応のモーダル種別です: ${detailModal.type}`);
+  }
+
+  function requestNodeRun(node, mode, onStateChanged) {
+    if (!node) return;
+    if (!Array.isArray(node.runtimeLogs)) node.runtimeLogs = [];
+    const timestamp = new Date().toISOString();
+    const modeLabel = mode === "through" ? "フロー実行" : "ステップ実行";
+    node.runtimeLogs.push(`[${timestamp}] ${modeLabel} をリクエストしました（未実装）`);
+    window.dispatchEvent(
+      new CustomEvent("fleetly:node-run-request", {
+        detail: { mode, nodeId: node.id, stepName: node.stepName, connector: node.connector, action: node.action }
+      })
+    );
+    if (onStateChanged) onStateChanged();
+  }
+
+  function requestNodeRunById(state, nodeId, mode, onStateChanged) {
+    const node = state.nodes.find((item) => item.id === nodeId);
+    if (!node) return;
+    requestNodeRun(node, mode, onStateChanged);
+  }
+
+  function removeNodeById(state, nodeId, onStateChanged) {
+    const idx = state.nodes.findIndex((item) => item.id === nodeId);
+    if (idx < 0) return;
+    const node = state.nodes[idx];
+    if (isLoopRootNode(node)) {
+      const ok = window.confirm("ループ内のすべてのノードが削除されますが、削除してよろしいでしょうか。");
+      if (!ok) return;
+    }
+    removeNode(state, idx);
+    if (onStateChanged) onStateChanged();
   }
 
   function ensureNodeDefaults(config, node) {
@@ -1406,9 +1438,24 @@
         ? "700 12px 'Segoe UI', 'Yu Gothic UI', sans-serif"
         : "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
-      if (isStart || isEnd) {
+      if (isStart) {
+        const cx = node.x + NODE_W / 2;
+        const cy = node.y + NODE_H / 2;
+        const radius = 10;
+        ctx.strokeStyle = surfacePage;
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.fillStyle = surfacePage;
+        ctx.beginPath();
+        ctx.moveTo(cx - 3, cy - 5);
+        ctx.lineTo(cx - 3, cy + 5);
+        ctx.lineTo(cx + 5, cy);
+        ctx.closePath();
+        ctx.fill();
+      } else if (isEnd) {
         ctx.textBaseline = "middle";
-        ctx.fillText(node.text, node.x + NODE_W / 2, node.y + NODE_H / 2);
         ctx.textBaseline = "alphabetic";
       } else if (isLoopEnd) {
         ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
@@ -1549,9 +1596,28 @@
     canvas.className = "flow-canvas";
     canvas.title = "";
     root.appendChild(canvas);
+    const menuEl = document.createElement("div");
+    menuEl.className = "flow-context-menu";
+    menuEl.setAttribute("role", "menu");
+    menuEl.setAttribute("aria-hidden", "true");
+    menuEl.innerHTML = [
+      '<button class="flow-context-menu__item" type="button" data-action="run" role="menuitem">実行</button>',
+      '<button class="flow-context-menu__item is-danger" type="button" data-action="delete" role="menuitem">削除</button>'
+    ].join("");
+    document.body.appendChild(menuEl);
     const ctx = canvas.getContext("2d");
     const tooltipEl = createImmediateTooltip();
-    const view = { root, canvas, ctx, hoverControl: null, dropControl: null, dragState: null, tooltipEl };
+    const view = {
+      root,
+      canvas,
+      ctx,
+      hoverControl: null,
+      dropControl: null,
+      dragState: null,
+      tooltipEl,
+      menuEl,
+      menuNodeId: null
+    };
     root.__flowView = view;
 
     function hideTooltip() {
@@ -1571,6 +1637,22 @@
       tooltipEl.style.left = `${clientX + 12}px`;
       tooltipEl.style.top = `${clientY + 12}px`;
       tooltipEl.style.opacity = "1";
+    }
+
+    function hideContextMenu() {
+      view.menuNodeId = null;
+      menuEl.classList.remove("is-open");
+      menuEl.style.left = "-9999px";
+      menuEl.style.top = "-9999px";
+      menuEl.setAttribute("aria-hidden", "true");
+    }
+
+    function showContextMenu(nodeId, clientX, clientY) {
+      view.menuNodeId = nodeId;
+      menuEl.style.left = `${clientX}px`;
+      menuEl.style.top = `${clientY}px`;
+      menuEl.classList.add("is-open");
+      menuEl.setAttribute("aria-hidden", "false");
     }
 
     let pendingDrag = null;
@@ -1611,6 +1693,24 @@
       e.preventDefault();
     }, { passive: false });
 
+    canvas.addEventListener("contextmenu", (e) => {
+      const runtime = root.__flowRuntime;
+      if (!runtime) return;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const task = hitTask(runtime.model, x, y);
+      if (!task) {
+        hideContextMenu();
+        return;
+      }
+      e.preventDefault();
+      hideTooltip();
+      setSelectedNode(runtime.state, task.id);
+      runtime.onStateChanged();
+      showContextMenu(task.id, e.clientX, e.clientY);
+    });
+
     let isPanning = false;
     let panMoved = false;
     let panStartX = 0;
@@ -1619,6 +1719,7 @@
     let panStartScrollTop = 0;
     let lastPanAt = 0;
     canvas.addEventListener("mousedown", (e) => {
+      hideContextMenu();
       if (e.button !== 0) return;
       const runtime = root.__flowRuntime;
       if (!runtime) return;
@@ -1721,7 +1822,24 @@
       document.body.style.userSelect = "";
     });
 
+    menuEl.addEventListener("click", (e) => {
+      const btn = e.target.closest("[data-action]");
+      if (!btn) return;
+      const runtime = root.__flowRuntime;
+      const nodeId = view.menuNodeId;
+      hideContextMenu();
+      if (!runtime || !nodeId) return;
+      if (btn.dataset.action === "run") {
+        requestNodeRunById(runtime.state, nodeId, "single", runtime.onStateChanged);
+        return;
+      }
+      if (btn.dataset.action === "delete") {
+        removeNodeById(runtime.state, nodeId, runtime.onStateChanged);
+      }
+    });
+
     canvas.addEventListener("click", (e) => {
+      hideContextMenu();
       if (Date.now() - lastPanAt < 180) return;
       hideTooltip();
       const runtime = root.__flowRuntime;
@@ -1799,7 +1917,20 @@
       }
     });
 
-    window.addEventListener("resize", () => drawFlowCanvas(view));
+    window.addEventListener("pointerdown", (e) => {
+      if (!menuEl.classList.contains("is-open")) return;
+      if (menuEl.contains(e.target)) return;
+      hideContextMenu();
+    });
+
+    window.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") hideContextMenu();
+    });
+
+    window.addEventListener("resize", () => {
+      hideContextMenu();
+      drawFlowCanvas(view);
+    });
 
     return view;
   }
@@ -1855,26 +1986,13 @@
       );
     }
 
-    function requestNodeRun(mode) {
-      if (!Array.isArray(node.runtimeLogs)) node.runtimeLogs = [];
-      const timestamp = new Date().toISOString();
-      const modeLabel = mode === "through" ? "フロー実行" : "ステップ実行";
-      node.runtimeLogs.push(`[${timestamp}] ${modeLabel} をリクエストしました（未実装）`);
-      window.dispatchEvent(
-        new CustomEvent("fleetly:node-run-request", {
-          detail: { mode, nodeId: node.id, stepName: node.stepName, connector: node.connector, action: node.action }
-        })
-      );
-      onStateChanged();
-    }
-
     headActionItems.push(
       el(
         "button",
         {
           class: "run-btn",
           type: "button",
-          onclick: () => requestNodeRun("single")
+          onclick: () => requestNodeRun(node, "single", onStateChanged)
         },
         [document.createTextNode("ステップ実行")]
       )
@@ -1886,7 +2004,7 @@
         {
           class: "run-btn",
           type: "button",
-          onclick: () => requestNodeRun("through")
+          onclick: () => requestNodeRun(node, "through", onStateChanged)
         },
         [document.createTextNode("フロー実行")]
       )
@@ -1898,14 +2016,7 @@
         {
           class: "danger",
           type: "button",
-          onclick: () => {
-            if (loopRootSelected) {
-              const ok = window.confirm("ループ内のすべてのノードが削除されますが、削除してよろしいでしょうか。");
-              if (!ok) return;
-            }
-            removeNode(state, idx);
-            onStateChanged();
-          }
+          onclick: () => removeNodeById(state, node.id, onStateChanged)
         },
         [document.createTextNode("削除")]
       )

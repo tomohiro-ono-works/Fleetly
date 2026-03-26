@@ -43,7 +43,7 @@ window.CONFIG = {
         rpaType: "Extract",
         detailModal: {
           type: "excel",
-          label: "Excelモーダルを開く",
+          label: "Excelアシスタントを開く",
           resultFieldMap: {
             fileName: "file_path",
             sheetName: "sheet_name",
