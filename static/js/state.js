@@ -1,11 +1,20 @@
 window.stateOps = {
-  createDefaultState() {
-    const first = createDefaultNode();
+  createDefaultState(options = {}) {
+    const appMode = normalizeAppMode(typeof options === "string" ? options : options?.appMode);
+    const first = createDefaultNode(appMode);
     first.stepName = "step1";
     first.parentId = null; // child of "開始"
     first.parallelOf = null;
     first.parallelOrder = 1;
-    return { version: 3, nodes: [first], selectedNodeId: first.id, nextStepSeq: 2 };
+    return {
+      version: 3,
+      appMode,
+      flowName: getDefaultFlowName(appMode),
+      nodes: [first],
+      startParameters: [],
+      selectedNodeId: first.id,
+      nextStepSeq: 2
+    };
   },
 
   addNodeAfter(state, index) {
@@ -172,7 +181,7 @@ function removeLoopRootNode(state, target, index) {
 
 function insertAtAnchor(state, anchorId) {
   const right = getFirstChild(state, anchorId);
-  const newNode = createNewNode(allocateStepName(state));
+  const newNode = createNewNode(allocateStepName(state), state.appMode);
   newNode.parentId = anchorId;
 
   if (!right) {
@@ -218,7 +227,7 @@ function addParallelAtAnchor(state, anchorId) {
   const right = getFirstChild(state, anchorId);
   if (!right) return;
 
-  const newNode = createNewNode(allocateStepName(state));
+  const newNode = createNewNode(allocateStepName(state), state.appMode);
   newNode.parentId = anchorId;
   newNode.parallelOrder = getNextChildOrder(state, anchorId);
   newNode.parallelOf = right.id;
@@ -403,9 +412,32 @@ function getConfigObject() {
   return window.CONFIG || {};
 }
 
-function getDefaultConnectorId() {
+function normalizeAppMode(appMode) {
+  const cfg = getConfigObject();
+  const modes = cfg.modes || {};
+  return modes[appMode] ? appMode : "workflow";
+}
+
+function getModeConnectorIds(appMode) {
+  const cfg = getConfigObject();
+  const mode = cfg.modes?.[normalizeAppMode(appMode)] || null;
+  return Array.isArray(mode?.connectorIds) ? mode.connectorIds : [];
+}
+
+function getDefaultFlowName(appMode) {
+  const cfg = getConfigObject();
+  const mode = cfg.modes?.[normalizeAppMode(appMode)] || null;
+  return String(mode?.defaultFlowName || "フロー１");
+}
+
+function getDefaultConnectorId(appMode) {
   const cfg = getConfigObject();
   const connectors = Array.isArray(cfg.connectors) ? cfg.connectors : [];
+  const allowedConnectorIds = getModeConnectorIds(appMode);
+  if (allowedConnectorIds.length) {
+    const allowed = connectors.find((connector) => allowedConnectorIds.includes(connector.id));
+    if (allowed?.id) return allowed.id;
+  }
   return connectors[0]?.id || "";
 }
 
@@ -416,13 +448,15 @@ function getDefaultActionId(connectorId) {
   return actions[0]?.id || "";
 }
 
-function createDefaultNode() {
-  const connectorId = getDefaultConnectorId();
+function createDefaultNode(appMode) {
+  const connectorId = getDefaultConnectorId(appMode);
   const actionId = getDefaultActionId(connectorId);
   return {
     id: createId(),
     connector: connectorId,
     action: actionId,
+    description: "",
+    descriptionAuto: true,
     form: {},
     parentId: null,
     parallelOf: null,
@@ -431,14 +465,16 @@ function createDefaultNode() {
   };
 }
 
-function createNewNode(stepName) {
-  const connectorId = getDefaultConnectorId();
+function createNewNode(stepName, appMode) {
+  const connectorId = getDefaultConnectorId(appMode);
   const actionId = getDefaultActionId(connectorId);
   return {
     id: createId(),
     stepName: stepName || "",
     connector: connectorId,
     action: actionId,
+    description: "",
+    descriptionAuto: true,
     form: {},
     parentId: null,
     parallelOf: null,

@@ -3,19 +3,20 @@
 ========================================================= */
 .detail-panel {
   position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 0;
+  left: calc(var(--sidebar-width) + var(--app-gutter));
+  right: var(--app-gutter);
+  bottom: var(--app-gutter);
   z-index: 60;
   margin: 0;
-  border: 1px solid var(--border-default);
-  border-radius: 0;
-  background: var(--alpha-white-94);
-  box-shadow: 0 2px 10px var(--alpha-shadow-12);
-  overflow: hidden;
+  border: 0;
+  border-top: 0;
+  border-radius: 0 0 18px 18px;
+  background: transparent;
+  box-shadow: none;
+  overflow: visible;
   padding: 0;
   height: 600px;
-  max-height: calc(100vh - 84px);
+  max-height: calc(100vh - 112px);
   min-height: 88px;
   display: flex;
   flex-direction: column;
@@ -23,38 +24,22 @@
 
 .detail-panel h2 { margin: 10px 14px 8px; }
 
-.detail-resize-handle {
-  position: relative;
-  z-index: 2;
-  height: 12px;
-  flex: 0 0 12px;
-  cursor: ns-resize;
-  background: var(--surface-base);
+.detail-panel .node-detail-meta {
   user-select: none;
-}
-
-.detail-panel .node-head { user-select: none; }
-
-.detail-resize-handle::after {
-  content: "";
-  display: block;
-  width: 54px;
-  height: 4px;
-  margin: 3px auto 0;
-  border-radius: 999px;
-  background: var(--surface-strong);
+  cursor: ns-resize;
 }
 
 .detail-panel .detail-node {
   margin: 0;
   border: 0;
-  border-radius: 0;
+  border-radius: 0 0 18px 18px;
   box-shadow: none;
   background: transparent;
   opacity: 1;
   min-height: 100%;
   display: flex;
   flex-direction: column;
+  overflow: visible;
 }
 
 #nodeDetail {
@@ -68,6 +53,53 @@
 .detail-panel .detail-node .node-body {
   flex: 1 1 auto;
   align-content: start;
+  position: relative;
+  border-radius: 14px;
+  background: var(--alpha-white-94);
+  overflow: visible;
+}
+
+.detail-panel .detail-node .node-body::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border-default);
+  border-radius: inherit;
+  pointer-events: none;
+}
+
+.detail-panel .node-tab-pane {
+  border-radius: 14px;
+}
+
+.detail-panel .node-tab-pane.is-active {
+  border-radius: 0 0 18px 18px;
+}
+
+.detail-panel .node-tab-pane.is-active:not([data-tab-key="detail"]) {
+  position: relative;
+  background: var(--alpha-white-94);
+  border-radius: 14px;
+  overflow: hidden;
+}
+
+.detail-panel .node-tab-pane.is-active:not([data-tab-key="detail"])::before {
+  content: "";
+  display: block;
+  height: 52px;
+  background: var(--surface-hover);
+  border-top-left-radius: inherit;
+  border-top-right-radius: inherit;
+  border-bottom: 1px solid var(--border-divider);
+}
+
+.detail-panel .node-tab-pane.is-active:not([data-tab-key="detail"])::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--border-default);
+  border-radius: inherit;
+  pointer-events: none;
 }
 
 /* Detail Form Colors */

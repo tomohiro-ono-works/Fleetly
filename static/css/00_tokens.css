@@ -4,6 +4,7 @@
 :root {
   /* Base */
   --surface-page: #fffefe;
+  --surface-page2: #fcfcfc;
   --surface-hover: #ececf4;
   --text-primary: #4b4e63;
   --text-secondary: #9ca0b5;
@@ -47,11 +48,11 @@
   --semantic-error-fg: #9e1f5f;
 
   /* Sub / lines */
-  --brand-650: #009faa;
-  --brand-300: #8de4cb;
-  --brand-800: #085742;
-  --border-muted: #8bcfbe;
-  --border-strong: #67b9a5;
+  --brand-650: #18c79a;
+  --brand-300: #b8eedf;
+  --brand-800: #0b6d53;
+  --border-muted: #7edfc4;
+  --border-strong: #55d3b2;
 
   /* Neutral UI */
   --border-default: #c8cad8;
@@ -66,12 +67,14 @@
   /* shadow */
   --alpha-shadow-10: rgba(0, 0, 0, 0.15);
   --alpha-shadow-12: rgba(0, 0, 0, 0.12);
+  --alpha-shadow-06: rgba(0, 0, 0, 0.06);
   --alpha-white-18: rgba(255, 255, 255, 0.18);
   --alpha-white-94: rgba(255, 255, 255, 0.94);
   --alpha-accent-24: rgba(236, 54, 145, 0.24);
-  --alpha-brand-15: rgba(13, 125, 96, 0.15);
+  --alpha-brand-15: rgba(107, 78, 255, 0.15);
 
   --shadow-soft: 0 6px 16px var(--alpha-shadow-10);
+  --shadow-soft-weak: 0 4px 12px var(--alpha-shadow-06);
 
   --radius: 12px;
   --pad: 14px;

@@ -4,19 +4,37 @@
 * { box-sizing: border-box; }
 
 body {
+  --sidebar-width: 64px;
+  --app-gutter: 12px;
   margin: 0;
+  min-height: 100vh;
   font-family: var(--sans);
   color: var(--text-primary);
 
   /* 背景色 + 背景画像（画像を使わないなら background-image を削除） */
   background-color: var(--surface-page);
-  background-image: url('unnamed.jpg');
   background-size: cover;
   background-position: center;
   background-attachment: fixed;
 
   overflow-x: hidden;
   width: 100%;
+}
+
+body.sidebar-expanded {
+  --sidebar-width: 200px;
+}
+
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+}
+
+.app-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
 }
 
 
@@ -65,9 +83,11 @@ button.danger:hover { background: var(--brand-200); }
    Main
 ========================================================= */
 main {
-  margin: 0 auto;
-  padding: 2px;
-  padding-bottom: 20px; /* detail-panel 固定表示の逃げ */
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: var(--app-gutter);
+  padding-bottom: 24px; /* detail-panel 固定表示の逃げ */
 }
 
 .hint {

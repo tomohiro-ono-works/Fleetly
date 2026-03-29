@@ -1,12 +1,20 @@
 from typing import Optional, List, Dict, Any
 import os
 from datetime import datetime, date  # date型もインポート
+import json
 import re
 
 from google.cloud import bigquery
 from google.auth.exceptions import DefaultCredentialsError
+import pandas as pd
 
 from connectors.base_connector import BaseConnector
+from core.type_registry import (
+    build_dataframe_schema,
+    resolve_bigquery_type,
+    split_struct_field,
+    split_top_level,
+)
 
 class BQConnector(BaseConnector):
     def __init__(self):
@@ -169,6 +177,81 @@ class BQConnector(BaseConnector):
                         row[col] = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
         return records
 
+    def _resolve_schema_definition(self, data: Any, schema: Any) -> Optional[List[bigquery.SchemaField]]:
+        schema_value = schema
+        source_dataframe = None
+        if isinstance(data, pd.DataFrame):
+            source_dataframe = data
+        elif self.is_tabular_data(data):
+            source_dataframe = self.to_dataframe(data)
+
+        if not schema_value and source_dataframe is not None:
+            schema_value = source_dataframe.attrs.get("ziz_schema") or build_dataframe_schema(source_dataframe)
+        if not schema_value:
+            return None
+        if isinstance(schema_value, str):
+            text = schema_value.strip()
+            if not text:
+                return None
+            schema_value = json.loads(text)
+        if not isinstance(schema_value, list):
+            raise ValueError("schema は JSON 配列または schema リストで指定してください。")
+        return [self._build_bq_schema_field(item) for item in schema_value]
+
+    def _build_bq_schema_field(self, item: Any) -> bigquery.SchemaField:
+        if not isinstance(item, dict):
+            raise ValueError("schema の各要素はオブジェクトで指定してください。")
+        origin_name = str(item.get("origin_name") or item.get("name") or "").strip()
+        new_name = str(item.get("new_name") or item.get("name_en") or "").strip()
+        description = str(item.get("description") or item.get("name_ja") or "").strip()
+        field_name = new_name or origin_name
+        if not field_name:
+            raise ValueError("schema の new_name または origin_name が必要です。")
+
+        raw_type = str(item.get("ziz_datatype") or item.get("type") or item.get("bigquery_type") or "").strip()
+        explicit_fields = item.get("fields")
+        if explicit_fields and not raw_type:
+            raw_type = "STRUCT"
+        if not raw_type:
+            raise ValueError(f"schema の型が不正です: {field_name}")
+        description = description or None
+        return self._schema_field_from_type(field_name, raw_type, explicit_fields, description)
+
+    def _schema_field_from_type(
+        self,
+        field_name: str,
+        raw_type: str,
+        explicit_fields: Any = None,
+        description: Optional[str] = None,
+    ) -> bigquery.SchemaField:
+        normalized = str(raw_type or "").strip()
+        if normalized.startswith("ARRAY<") and normalized.endswith(">"):
+            inner = normalized[len("ARRAY<"):-1].strip()
+            if inner.startswith("STRUCT<") and inner.endswith(">"):
+                nested_fields = self._schema_fields_from_struct(inner, explicit_fields)
+                return bigquery.SchemaField(field_name, "RECORD", mode="REPEATED", fields=nested_fields, description=description)
+            return bigquery.SchemaField(field_name, resolve_bigquery_type(inner), mode="REPEATED", description=description)
+
+        if normalized.startswith("STRUCT<") and normalized.endswith(">"):
+            nested_fields = self._schema_fields_from_struct(normalized, explicit_fields)
+            return bigquery.SchemaField(field_name, "RECORD", fields=nested_fields, description=description)
+
+        if explicit_fields:
+            nested_fields = [self._build_bq_schema_field(field) for field in explicit_fields]
+            return bigquery.SchemaField(field_name, "RECORD", fields=nested_fields, description=description)
+
+        return bigquery.SchemaField(field_name, resolve_bigquery_type(normalized), description=description)
+
+    def _schema_fields_from_struct(self, struct_type: str, explicit_fields: Any = None) -> List[bigquery.SchemaField]:
+        if explicit_fields:
+            return [self._build_bq_schema_field(field) for field in explicit_fields]
+        body = struct_type[len("STRUCT<"):-1].strip()
+        fields = []
+        for raw_field in split_top_level(body):
+            child_name, child_type = split_struct_field(raw_field)
+            fields.append(self._schema_field_from_type(child_name, child_type))
+        return fields
+
 
     def execute_sql(
             self, 
@@ -204,7 +287,7 @@ class BQConnector(BaseConnector):
                 
             results.append(dict_row)
             
-        return self.to_dataframe(results)
+        return self.attach_dataframe_schema(self.to_dataframe(results))
 
     def execute_sql_file(
             self,
@@ -235,8 +318,10 @@ class BQConnector(BaseConnector):
         if not records:
             raise ValueError(f"変数 '{input_data}' にデータがありません。")
 
+        resolved_schema = self._resolve_schema_definition(data, schema)
+
         # 1. データのクレンジング（utilsへ委譲）
-        records = self._clean_date_columns(records, schema)
+        records = self._clean_date_columns(records, resolved_schema)
 
         # 2. 引数の変換
         disposition_map = {
@@ -249,11 +334,11 @@ class BQConnector(BaseConnector):
         table_ref = f"{project_id}.{dataset_id}.{table_id}"
 
         # 3. JobConfigの作成
-        # schemaがあれば適用し、なければautodetectを有効化
+        # schema 未指定時も、可能なら ziz ルールから推論した schema を適用する
         job_config = bigquery.LoadJobConfig(
             write_disposition=bq_disposition,
-            schema=schema if schema else None,
-            autodetect=False if schema else True
+            schema=resolved_schema if resolved_schema else None,
+            autodetect=False if resolved_schema else True
         )
 
         load_job = client.load_table_from_json(records, table_ref, job_config=job_config)

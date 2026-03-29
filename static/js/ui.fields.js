@@ -7,22 +7,47 @@
   ========================================================= */
 
   function renderComboInput({ node, field, current, onInputChanged, onCommitChanged }) {
-    const input = el("input", {
+    const rawOptions = Array.isArray(field.options) ? field.options : [];
+    const optionItems = rawOptions.map((option) => {
+      if (option && typeof option === "object") {
+        return {
+          value: String(option.value ?? option.id ?? ""),
+          label: String(option.label ?? option.value ?? option.id ?? ""),
+          image: option.image ? String(option.image) : "",
+          keywords: String(option.keywords ?? "")
+        };
+      }
+      return {
+        value: String(option ?? ""),
+        label: String(option ?? ""),
+        image: "",
+        keywords: ""
+      };
+    });
+    const optionMap = new Map(optionItems.map((item) => [item.value, item]));
+    const allowCustom = field.allowCustom !== false;
+    const currentOption = optionMap.get(String(current || ""));
+    const initialDisplayValue = currentOption ? currentOption.label : String(current || "");
+
+    const inputAttrs = {
       type: "text",
       class: "combo-input",
       placeholder: field.placeholder || "",
       oninput: (e) => {
+        if (!allowCustom) return;
         node.form[field.key] = e.target.value;
         if (onInputChanged) onInputChanged();
       },
       onchange: (e) => {
+        if (!allowCustom) return;
         node.form[field.key] = e.target.value;
         if (onCommitChanged) onCommitChanged();
       }
-    });
-    input.value = current || "";
+    };
+    if (!allowCustom) inputAttrs.readonly = "readonly";
+    const input = el("input", inputAttrs);
+    input.value = initialDisplayValue;
 
-    const options = Array.from(new Set(field.options || []));
     const menu = el("div", { class: "combo-menu" }, []);
     const wrapper = el("div", { class: "combo-field" }, []);
     const trigger = el(
@@ -58,16 +83,33 @@
       document.addEventListener("pointerdown", outsideHandler);
     }
 
-    function chooseOption(value) {
-      input.value = value;
-      node.form[field.key] = value;
+    wrapper.__comboController = {
+      closeMenu,
+      openMenu,
+      isOpen: () => open
+    };
+
+    function chooseOption(option) {
+      input.value = option.label;
+      node.form[field.key] = option.value;
       if (onCommitChanged) onCommitChanged();
       closeMenu();
       input.focus();
       input.setSelectionRange?.(input.value.length, input.value.length);
     }
 
-    options.forEach((optValue) => {
+    optionItems.forEach((option) => {
+      const itemChildren = [];
+      if (option.image) {
+        itemChildren.push(
+          el("span", { class: "combo-item-icon" }, [
+            el("img", { src: option.image, alt: "", loading: "lazy" })
+          ])
+        );
+      }
+      itemChildren.push(
+        el("span", { class: "combo-item-label" }, [document.createTextNode(option.label)])
+      );
       menu.appendChild(
         el(
           "button",
@@ -76,10 +118,10 @@
             class: "combo-item",
             onmousedown: (ev) => {
               ev.preventDefault();
-              chooseOption(optValue);
+              chooseOption(option);
             }
           },
-          [document.createTextNode(optValue)]
+          itemChildren
         )
       );
     });
@@ -129,7 +171,262 @@
     return "";
   }
 
-  function renderCodeTextarea({ node, field, current, onInputChanged, onCommitChanged }) {
+  const SIMPLE_SCHEMA_TYPES = [
+    "INT64",
+    "FLOAT64",
+    "NUMERIC",
+    "STRING",
+    "BYTES",
+    "DATE",
+    "DATETIME",
+    "TIMESTAMP",
+    "TIME",
+    "INTERVAL",
+    "BOOL"
+  ];
+
+  function parseSchemaText(value) {
+    const text = String(value || "").trim();
+    if (!text) return { items: [], invalid: false, raw: "[]" };
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) throw new Error("schema must be an array");
+      return {
+        items: parsed,
+        invalid: false,
+        raw: JSON.stringify(parsed, null, 2)
+      };
+    } catch (error) {
+      return {
+        items: [],
+        invalid: true,
+        raw: text,
+        error
+      };
+    }
+  }
+
+  function isSimpleSchemaItem(item) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) return false;
+    const type = String(item.ziz_datatype || "").trim().toUpperCase();
+    return !!type && SIMPLE_SCHEMA_TYPES.includes(type);
+  }
+
+  function canUseSchemaFormMode(parsed) {
+    return !parsed.invalid && parsed.items.every(isSimpleSchemaItem);
+  }
+
+  function normalizeSimpleSchemaItems(items) {
+    return (Array.isArray(items) ? items : []).map((item) => ({
+      origin_name: String(item?.origin_name || item?.name_ja || item?.name_en || ""),
+      new_name: String(item?.new_name || item?.name_en || item?.name_ja || ""),
+      description: String(item?.description || item?.name_ja || item?.origin_name || ""),
+      ziz_datatype: String(item?.ziz_datatype || "STRING").trim().toUpperCase() || "STRING"
+    }));
+  }
+
+  function stringifySchemaItems(items) {
+    return JSON.stringify(normalizeSimpleSchemaItems(items), null, 2);
+  }
+
+  function renderSchemaEditor({ node, field, current, onInputChanged, onCommitChanged }) {
+    const parsed = parseSchemaText(current);
+    const initialMode = canUseSchemaFormMode(parsed) ? "form" : "json";
+    const wrapper = el("div", { class: "schema-editor" }, []);
+    const toolbar = el("div", { class: "schema-editor-toolbar" }, []);
+    const modeSwitch = el("div", { class: "schema-editor-mode" }, []);
+    const formBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("フォーム")]);
+    const jsonBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("JSON")]);
+    const hint = el("div", { class: "schema-editor-hint" }, []);
+    const body = el("div", { class: "schema-editor-body" }, []);
+    const formPane = el("div", { class: "schema-form-pane" }, []);
+    const jsonPane = el("div", { class: "schema-json-pane" }, []);
+    const addRowBtn = el("button", { type: "button", class: "schema-add-row-btn" }, [document.createTextNode("+ カラム追加")]);
+    const rowsHost = el("div", { class: "schema-form-rows" }, []);
+    const textarea = el("textarea", {
+      class: "schema-json-input",
+      placeholder: '[\n  {\n    "origin_name": "受注日",\n    "new_name": "order_date",\n    "description": "受注日",\n    "ziz_datatype": "DATE"\n  }\n]',
+      oninput: (e) => {
+        node.form[field.key] = e.target.value;
+        if (onInputChanged) onInputChanged();
+        syncHint();
+      },
+      onchange: (e) => {
+        node.form[field.key] = e.target.value;
+        if (onCommitChanged) onCommitChanged();
+        syncHint();
+      }
+    });
+    textarea.value = parsed.raw;
+
+    let mode = initialMode;
+    let formItems = normalizeSimpleSchemaItems(parsed.items);
+
+    function syncNodeForm(value, committed) {
+      textarea.value = value;
+      node.form[field.key] = value;
+      if (committed) {
+        if (onCommitChanged) onCommitChanged();
+      } else if (onInputChanged) {
+        onInputChanged();
+      }
+    }
+
+    function collectFormItems() {
+      return Array.from(rowsHost.querySelectorAll(".schema-form-row")).map((row) => ({
+        origin_name: row.querySelector("[data-schema-key='origin_name']")?.value || "",
+        new_name: row.querySelector("[data-schema-key='new_name']")?.value || "",
+        description: row.querySelector("[data-schema-key='description']")?.value || "",
+        ziz_datatype: row.querySelector("[data-schema-key='ziz_datatype']")?.value || "STRING"
+      }));
+    }
+
+    function renderFormRows() {
+      rowsHost.innerHTML = "";
+      if (!formItems.length) {
+        formItems.push({ origin_name: "", new_name: "", description: "", ziz_datatype: "STRING" });
+      }
+      formItems.forEach((item, index) => {
+        const row = el("div", { class: "schema-form-row" }, []);
+        const originInput = el("input", {
+          type: "text",
+          value: item.origin_name,
+          "data-schema-key": "origin_name",
+          placeholder: "元フィールド名",
+          oninput: () => {
+            formItems = collectFormItems();
+            syncNodeForm(stringifySchemaItems(formItems), false);
+          },
+          onchange: () => {
+            formItems = collectFormItems();
+            syncNodeForm(stringifySchemaItems(formItems), true);
+          }
+        });
+        const newNameInput = el("input", {
+          type: "text",
+          value: item.new_name,
+          "data-schema-key": "new_name",
+          placeholder: "新フィールド名",
+          oninput: () => {
+            formItems = collectFormItems();
+            syncNodeForm(stringifySchemaItems(formItems), false);
+          },
+          onchange: () => {
+            formItems = collectFormItems();
+            syncNodeForm(stringifySchemaItems(formItems), true);
+          }
+        });
+        const descInput = el("input", {
+          type: "text",
+          value: item.description,
+          "data-schema-key": "description",
+          placeholder: "説明・日本語名",
+          oninput: () => {
+            formItems = collectFormItems();
+            syncNodeForm(stringifySchemaItems(formItems), false);
+          },
+          onchange: () => {
+            formItems = collectFormItems();
+            syncNodeForm(stringifySchemaItems(formItems), true);
+          }
+        });
+        const typeSelect = el("select", {
+          "data-schema-key": "ziz_datatype",
+          onchange: () => {
+            formItems = collectFormItems();
+            syncNodeForm(stringifySchemaItems(formItems), true);
+          }
+        });
+        SIMPLE_SCHEMA_TYPES.forEach((type) => {
+          const opt = el("option", { value: type }, [document.createTextNode(type)]);
+          if (type === item.ziz_datatype) opt.selected = true;
+          typeSelect.appendChild(opt);
+        });
+        const removeBtn = el("button", {
+          type: "button",
+          class: "schema-remove-row-btn",
+          onclick: () => {
+            formItems.splice(index, 1);
+            renderFormRows();
+            syncNodeForm(stringifySchemaItems(formItems), true);
+          }
+        }, [document.createTextNode("削除")]);
+        row.appendChild(originInput);
+        row.appendChild(newNameInput);
+        row.appendChild(descInput);
+        row.appendChild(typeSelect);
+        row.appendChild(removeBtn);
+        rowsHost.appendChild(row);
+      });
+    }
+
+    function syncHint() {
+      const currentParsed = parseSchemaText(textarea.value);
+      if (mode === "json") {
+        if (currentParsed.invalid) {
+          hint.textContent = "JSON が不正です。フォームへ切り替えるには配列JSONを整形してください。";
+          hint.className = "schema-editor-hint is-warning";
+          return;
+        }
+        if (!canUseSchemaFormMode(currentParsed)) {
+          hint.textContent = "ARRAY / STRUCT などの複雑型を含むため、JSON モード推奨です。";
+          hint.className = "schema-editor-hint";
+          return;
+        }
+        hint.textContent = "単純列のみです。フォームモードへ切り替えられます。";
+        hint.className = "schema-editor-hint";
+        return;
+      }
+      hint.textContent = "単純列はフォームで編集できます。複雑型は JSON モードで編集してください。";
+      hint.className = "schema-editor-hint";
+    }
+
+    function setMode(nextMode) {
+      if (nextMode === "form") {
+        const currentParsed = parseSchemaText(textarea.value);
+        if (!canUseSchemaFormMode(currentParsed)) {
+          syncHint();
+          return;
+        }
+        formItems = normalizeSimpleSchemaItems(currentParsed.items);
+        renderFormRows();
+      }
+      mode = nextMode;
+      wrapper.dataset.mode = mode;
+      formBtn.classList.toggle("is-active", mode === "form");
+      jsonBtn.classList.toggle("is-active", mode === "json");
+      formPane.classList.toggle("is-hidden", mode !== "form");
+      jsonPane.classList.toggle("is-hidden", mode !== "json");
+      syncHint();
+    }
+
+    addRowBtn.addEventListener("click", () => {
+      formItems.push({ origin_name: "", new_name: "", description: "", ziz_datatype: "STRING" });
+      renderFormRows();
+      syncNodeForm(stringifySchemaItems(formItems), true);
+    });
+
+    formBtn.addEventListener("click", () => setMode("form"));
+    jsonBtn.addEventListener("click", () => setMode("json"));
+
+    modeSwitch.appendChild(formBtn);
+    modeSwitch.appendChild(jsonBtn);
+    toolbar.appendChild(modeSwitch);
+    formPane.appendChild(addRowBtn);
+    formPane.appendChild(rowsHost);
+    jsonPane.appendChild(textarea);
+    body.appendChild(formPane);
+    body.appendChild(jsonPane);
+    wrapper.appendChild(toolbar);
+    wrapper.appendChild(hint);
+    wrapper.appendChild(body);
+
+    renderFormRows();
+    setMode(mode);
+    return { input: textarea, wrapper, skipVarSuggest: true };
+  }
+
+  function renderCodeTextarea({ node, field, current, availableVariableNames, onInputChanged, onCommitChanged }) {
     const language = getCodeLanguageClass(field);
     const textarea = el("textarea", {
       class: "code-editor-fallback",
@@ -154,6 +451,7 @@
           host,
           value: textarea.value,
           language,
+          variableNames: availableVariableNames || [],
           onInputChanged: (value) => {
             node.form[field.key] = value;
             textarea.value = value;
@@ -173,7 +471,7 @@
         });
     }
 
-    return { input: textarea, wrapper, skipVarSuggest: true };
+    return { input: textarea, wrapper, skipVarSuggest: !!language };
   }
 
   /* =========================================================
@@ -188,30 +486,39 @@
         : "";
   }
 
-  function extractReferencedStepNames(value) {
+  function extractReferencedVariableNames(value) {
     const text = String(value || "");
     const refs = new Set();
-    const re = /\$\{([a-zA-Z0-9_]+)(?:[^}]*)\}/g;
-    let match = re.exec(text);
-    while (match) {
-      refs.add(match[1]);
-      match = re.exec(text);
-    }
+    const patterns = [
+      /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g,
+      /\$\{([a-zA-Z0-9_]+)(?:[^}]*)\}/g
+    ];
+    patterns.forEach((re) => {
+      let match = re.exec(text);
+      while (match) {
+        refs.add(match[1]);
+        match = re.exec(text);
+      }
+    });
     return Array.from(refs);
   }
 
   function normalizeInputDataReference(value) {
     const text = String(value || "").trim();
     if (!text) return "";
+    const doubleBraceMatch = text.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+    if (doubleBraceMatch) return doubleBraceMatch[1];
     const braceMatch = text.match(/^\$?\{([a-zA-Z0-9_]+)(?:[^}]*)\}$/);
     if (braceMatch) return braceMatch[1];
     return text;
   }
 
-  function getFieldReferenceWarnings({ node, field, upstreamSteps }) {
+  function getFieldReferenceWarnings({ node, field, upstreamSteps, availableVariableNames }) {
     const value = getFieldCurrentValue(node, field);
     const normalizedUpstream = Array.from(new Set((upstreamSteps || []).filter(Boolean)));
     const upstreamSet = new Set(normalizedUpstream);
+    const variableSet = new Set((availableVariableNames || []).filter(Boolean));
+    const supportsVars = !!field.allowVars || field.kind === "combo";
     if (value === undefined || value === null || String(value).trim() === "") return [];
 
     if (field.key === "input_data") {
@@ -220,14 +527,14 @@
       return [`参照先 ${ref} は上流に存在しません。`];
     }
 
-    if (!field.allowVars) return [];
+    if (!supportsVars) return [];
 
-    return extractReferencedStepNames(value)
-      .filter((ref) => !upstreamSet.has(ref))
-      .map((ref) => `参照先 ${ref} は上流に存在しません。`);
+    return extractReferencedVariableNames(value)
+      .filter((ref) => !variableSet.has(ref))
+      .map((ref) => `変数 ${ref} は定義されていません。`);
   }
 
-  function renderField({ node, field, upstreamSteps, onStateChanged }) {
+  function renderField({ node, field, upstreamSteps, availableVariableNames, onStateChanged }) {
     const row = el("div", { class: "row" }, []);
     row.appendChild(el("label", {}, [document.createTextNode(field.label)]));
 
@@ -250,7 +557,7 @@
     }
 
     function updateReferenceWarning() {
-      const warnings = getFieldReferenceWarnings({ node, field, upstreamSteps });
+      const warnings = getFieldReferenceWarnings({ node, field, upstreamSteps, availableVariableNames });
       const hasWarning = warnings.length > 0;
       row.classList.toggle("reference-invalid", hasWarning);
       warningEl.hidden = !hasWarning;
@@ -268,12 +575,24 @@
       if (onStateChanged) onStateChanged();
     }
 
-    if (field.kind === "textarea") {
+    if (field.kind === "textarea" && field.key === "schema") {
+      const rendered = renderSchemaEditor({
+        node,
+        field,
+        current,
+        onInputChanged: notifyLocalChanged,
+        onCommitChanged: notifyCommitted
+      });
+      inputEl = rendered.input;
+      wrapper = rendered.wrapper;
+      field.__skipVarSuggest = !!rendered.skipVarSuggest;
+    } else if (field.kind === "textarea") {
       if (getCodeLanguageClass(field)) {
         const rendered = renderCodeTextarea({
           node,
           field,
           current,
+          availableVariableNames,
           onInputChanged: notifyLocalChanged,
           onCommitChanged: notifyCommitted
         });
@@ -408,8 +727,9 @@
       wrapper = inputEl;
     }
 
-    if (field.allowVars && inputEl && inputEl.tagName !== "SELECT" && !field.__skipVarSuggest) {
-      wrapper = wrapWithVarSuggest(inputEl, upstreamSteps, onStateChanged, wrapper);
+    const supportsVars = !!field.allowVars || field.kind === "combo";
+    if (supportsVars && inputEl && inputEl.tagName !== "SELECT" && !field.__skipVarSuggest) {
+      wrapper = wrapWithVarSuggest(inputEl, availableVariableNames || [], onStateChanged, wrapper);
     }
     delete field.__skipVarSuggest;
 

@@ -11,10 +11,10 @@
   } = window.stateOps;
   const { renderField, getFieldReferenceWarnings } = window.uiFields;
 
-  const NODE_W = 52;
-  const NODE_H = 52;
-  const LEVEL_MARGIN = 112;
-  const MIN_SIBLING_GAP = 44;
+  const NODE_W = 60;
+  const NODE_H = 60;
+  const LEVEL_MARGIN = 128;
+  const MIN_SIBLING_GAP = 56;
   const START_X = 44;
   const START_Y = 40;
   const BTN_X_OFFSET = 12;
@@ -143,7 +143,45 @@
       const actions = config.actions?.[node.connector] || [];
       node.action = actions[0]?.id || "";
     }
+    if (typeof node.description !== "string") node.description = "";
+    if (typeof node.descriptionAuto !== "boolean") {
+      node.descriptionAuto = !String(node.description || "").trim();
+    }
+    if (node.descriptionAuto) {
+      node.description = getNodeDescriptionSeed(config, node.connector, node.action);
+    }
     if (!node.form) node.form = {};
+  }
+
+  function createUiId(prefix = "id") {
+    if (window.crypto && typeof window.crypto.randomUUID === "function") {
+      return `${prefix}_${window.crypto.randomUUID()}`;
+    }
+    return `${prefix}_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
+  }
+
+  function ensureStartParameters(state) {
+    if (!Array.isArray(state.startParameters)) {
+      state.startParameters = [];
+    }
+    state.startParameters = state.startParameters.map((item) => ({
+      id: item?.id || createUiId("start_param"),
+      name: String(item?.name ?? ""),
+      value: String(item?.value ?? "")
+    }));
+    return state.startParameters;
+  }
+
+  function getAvailableVariables(state, node) {
+    const startVariables = ensureStartParameters(state)
+      .map((item) => String(item?.name || "").trim())
+      .filter(Boolean);
+    const upstreamVariables = getUpstreamSteps(state, node.id);
+    return {
+      startVariables,
+      upstreamVariables,
+      suggestNames: Array.from(new Set(startVariables))
+    };
   }
 
   function hasMissingRequiredField(config, node) {
@@ -233,8 +271,16 @@
   function getNodeReferenceWarnings(config, state, node) {
     if (!node) return [];
     const upstreamSteps = getUpstreamSteps(state, node.id);
+    const availableVariables = getAvailableVariables(state, node);
     const schema = getFormSchema(config, node.connector, node.action);
-    return schema.flatMap((field) => getFieldReferenceWarnings({ node, field, upstreamSteps }));
+    return schema.flatMap((field) =>
+      getFieldReferenceWarnings({
+        node,
+        field,
+        upstreamSteps,
+        availableVariableNames: availableVariables.suggestNames
+      })
+    );
   }
 
   function hasInvalidUpstreamReference(config, state, node) {
@@ -382,6 +428,17 @@
     return jpLabel(action || { id: actionId });
   }
 
+  function getConnectorLabel(config, connectorId) {
+    const connector = config.connectors?.find((item) => item.id === connectorId);
+    return jpLabel(connector || { id: connectorId });
+  }
+
+  function getNodeDescriptionSeed(config, connectorId, actionId) {
+    return [getConnectorLabel(config, connectorId), getActionLabel(config, connectorId, actionId)]
+      .filter(Boolean)
+      .join(" / ");
+  }
+
   function buildNodeYamlSettings(node) {
     const out = {
       step: String(node.stepName || ""),
@@ -389,6 +446,9 @@
       action: String(node.action || ""),
       form: { ...(node.form || {}) }
     };
+    if (typeof node.description === "string" && (node.description || node.descriptionAuto === false)) {
+      out.description = node.description;
+    }
     if (node.parentId) out.parent_id = node.parentId;
     if (node.parallelOf) out.parallel_of = node.parallelOf;
     if (node.parallelOrder !== undefined && node.parallelOrder !== null) {
@@ -442,6 +502,13 @@
     { id: "Transform", label: "加工" }
   ];
   const NOIMAGE_SRC = "./img/noimage.png";
+  const CONNECTOR_ICON_SRC = {
+    DataflowConnector: "./icons/dataflow.svg",
+    DummyConnector: "./icons/chess_pawn.svg",
+    DataintegrationConnector: "./icons/brick.svg",
+    VectorConnector: "./icons/vectordb.svg",
+    WebConnector: "./icons/web.svg"
+  };
 
   function isDataConnector(connectorId, config) {
     const connectors = config?.connectors || [];
@@ -474,7 +541,8 @@
   }
 
   function getConnectorImageSrc(connectorId) {
-    return connectorId ? `./img/${connectorId}.png` : NOIMAGE_SRC;
+    if (!connectorId) return NOIMAGE_SRC;
+    return CONNECTOR_ICON_SRC[connectorId] || `./img/${connectorId}.png`;
   }
 
   function getActionTypeItems(config, connectorId, actionType) {
@@ -609,6 +677,9 @@
       node.connector = connectorId;
       node.action = actionId || "";
       if (changed) node.form = {};
+      if (node.descriptionAuto) {
+        node.description = getNodeDescriptionSeed(config, node.connector, node.action);
+      }
       setOpen(false);
       onStateChanged();
     }
@@ -720,7 +791,7 @@
   }
 
   function createTaskView(node, config) {
-    const connectorLabel = jpLabel(config.connectors.find((c) => c.id === node.connector) || { id: node.connector });
+    const connectorLabel = getConnectorLabel(config, node.connector);
     const actionLabel = getActionLabel(config, node.connector, node.action);
     const subtitle = actionLabel;
     return {
@@ -732,7 +803,8 @@
       subtreeHeight: NODE_H,
       children: [],
       title: connectorLabel,
-      subtitle
+      subtitle,
+      description: String(node.description || "")
     };
   }
 
@@ -1150,8 +1222,12 @@
     ctx.fill();
   }
 
-  function getConnectorIconSrc(connectorId) {
-    return getConnectorImageSrc(connectorId);
+  function getConnectorIconSrc(nodeRef) {
+    const explicitConnectorId = String(nodeRef?.form?.selected_connector_icon || "").trim();
+    if (explicitConnectorId) {
+      return getConnectorImageSrc(explicitConnectorId);
+    }
+    return getConnectorImageSrc(nodeRef?.connector);
   }
 
   function ensureConnectorIcon(view, src) {
@@ -1302,7 +1378,11 @@
     const flowControlTextActive = rootStyles.getPropertyValue("--flow-control-text-active").trim() || "#fffefe";
     const surfaceStrong = rootStyles.getPropertyValue("--surface-strong").trim() || "#4b4e63";
     const surfacePage = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
+    const surfaceHover = rootStyles.getPropertyValue("--surface-hover").trim() || "#ececf4";
+    const surfacePseudo = rootStyles.getPropertyValue("--border-grid-flow").trim() || "#e8eaf2";
     const textMuted = rootStyles.getPropertyValue("--text-muted").trim() || "#767b93";
+    const textPrimary = rootStyles.getPropertyValue("--text-primary").trim() || "#4b4e63";
+    const pseudoNodeBorder = rootStyles.getPropertyValue("--border-grid").trim() || "#e1e3ec";
 
     (model.loopFrames || []).forEach((frame) => {
       ctx.fillStyle = flowLoopFrameFill;
@@ -1355,31 +1435,38 @@
       const isEnd = node.kind === "end";
       const isTask = node.kind === "task";
       const isLoopEnd = node.kind === "loop-end";
-      const isSelected = isTask && state.selectedNodeId === node.id;
+      const isSelected = (isTask || isStart) && state.selectedNodeId === node.id;
       const isParallel = isTask && !!node.nodeRef.parallelOf;
       const isDraggingNode = !!(view.dragState && view.dragState.started && view.dragState.nodeId === node.id);
       const hasAlert = isTask && alertNodeIds.has(node.id);
       const hasInvalidReference = isTask && hasInvalidUpstreamReference(config, state, node.nodeRef);
+      const pseudoNodeInset = isStart || isEnd ? 9 : 0;
+      const drawX = node.x + pseudoNodeInset;
+      const drawY = node.y + pseudoNodeInset;
+      const drawW = NODE_W - pseudoNodeInset * 2;
+      const drawH = NODE_H - pseudoNodeInset * 2;
 
       if (isParallel) ctx.setLineDash([4, 2]);
       else ctx.setLineDash([]);
 
-      if (isStart) ctx.fillStyle = surfaceStrong;
-      else if (isEnd) ctx.fillStyle = surfaceStrong;
+      if (isStart) ctx.fillStyle = surfacePseudo;
+      else if (isEnd) ctx.fillStyle = surfacePseudo;
       // else if (isTask && hasAlert) ctx.fillStyle = warningNodeFill;
       else ctx.fillStyle = surfacePage;
 
       ctx.globalAlpha = isDraggingNode ? 0.28 : 1;
       ctx.shadowColor = flowNodeShadow;
-      ctx.shadowBlur = isSelected ? 7 : 5;
+      ctx.shadowBlur = isStart || isEnd ? 2 : isSelected ? 7 : 5;
       ctx.shadowOffsetX = 0;
-      ctx.shadowOffsetY = 2;
-      ctx.strokeStyle = isSelected ? flowNodeBorderSelected : flowNodeBorder;
+      ctx.shadowOffsetY = isStart || isEnd ? 1 : 2;
+      ctx.strokeStyle = isStart || isEnd
+        ? (isSelected ? flowNodeBorderSelected : pseudoNodeBorder)
+        : isSelected ? flowNodeBorderSelected : flowNodeBorder;
       ctx.lineWidth = isSelected ? 2 : 1;
       if (isStart) {
-        drawOneSideRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, "left");
+        drawOneSideRoundedRect(ctx, drawX, drawY, drawW, drawH, "left");
       } else if (isEnd) {
-        drawOneSideRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, "right");
+        drawOneSideRoundedRect(ctx, drawX, drawY, drawW, drawH, "right");
       } else {
         drawRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, 8);
       }
@@ -1429,7 +1516,7 @@
         ctx.textBaseline = "alphabetic";
       }
 
-      const iconSrc = isTask ? getConnectorIconSrc(node.nodeRef.connector) : null;
+      const iconSrc = isTask ? getConnectorIconSrc(node.nodeRef) : null;
       const icon = iconSrc ? ensureConnectorIcon(view, iconSrc) : null;
       const hasIcon = !!(icon && !icon.__failed && icon.complete && icon.naturalWidth > 0);
 
@@ -1439,15 +1526,15 @@
         : "700 15px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "center";
       if (isStart) {
-        const cx = node.x + NODE_W / 2;
-        const cy = node.y + NODE_H / 2;
+        const cx = drawX + drawW / 2;
+        const cy = drawY + drawH / 2;
         const radius = 10;
-        ctx.strokeStyle = surfacePage;
+        ctx.strokeStyle = surfaceStrong;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.arc(cx, cy, radius, 0, Math.PI * 2);
         ctx.stroke();
-        ctx.fillStyle = surfacePage;
+        ctx.fillStyle = surfaceStrong;
         ctx.beginPath();
         ctx.moveTo(cx - 3, cy - 5);
         ctx.lineTo(cx - 3, cy + 5);
@@ -1470,7 +1557,7 @@
         const pad = 14;
         const maxW = NODE_W - pad * 2;
         const maxH = NODE_H - pad * 2;
-        const ratio = Math.min(maxW / icon.naturalWidth, maxH / icon.naturalHeight) * 1.5;
+        const ratio = Math.min(maxW / icon.naturalWidth, maxH / icon.naturalHeight) * 1.15;
         const w = Math.max(1, Math.floor(icon.naturalWidth * ratio));
         const h = Math.max(1, Math.floor(icon.naturalHeight * ratio));
         const x = Math.round(node.x + (NODE_W - w) / 2);
@@ -1487,11 +1574,16 @@
       }
 
       if (isTask) {
-        ctx.fillStyle = flowNodeSubtext;
+        ctx.fillStyle = textPrimary;
         ctx.font = "11px 'Segoe UI', 'Yu Gothic UI', sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
-        ctx.fillText(`${node.title}/${node.subtitle}`, node.x + NODE_W / 2, node.y + NODE_H + 6);
+        if (String(node.description || "").trim()) {
+          const descriptionLines = wrapText(ctx, node.description, NODE_W + 40);
+          descriptionLines.forEach((line, idx) => {
+            ctx.fillText(line, node.x + NODE_W / 2, node.y + NODE_H + 6 + idx * 13);
+          });
+        }
         ctx.textBaseline = "alphabetic";
       }
     });
@@ -1519,6 +1611,16 @@
     for (let i = model.taskViews.length - 1; i >= 0; i--) {
       const n = model.taskViews[i];
       if (x >= n.x && x <= n.x + NODE_W && y >= n.y && y <= n.y + NODE_H) return n;
+    }
+    return null;
+  }
+
+  function hitSelectableNode(model, x, y) {
+    const task = hitTask(model, x, y);
+    if (task) return task;
+    const start = model.start;
+    if (start && x >= start.x && x <= start.x + NODE_W && y >= start.y && y <= start.y + NODE_H) {
+      return start;
     }
     return null;
   }
@@ -1667,9 +1769,8 @@
       view.hoverControl = hitControl(runtime.model, x, y);
       view.dropControl = null;
       showTooltip(view.hoverControl, e.clientX, e.clientY);
-      const hoverTask = hitTask(runtime.model, x, y);
-      const selectableTask = !!(hoverTask && isDraggableNode(hoverTask.nodeRef));
-      canvas.style.cursor = view.hoverControl || selectableTask ? "pointer" : "default";
+      const hoverNode = hitSelectableNode(runtime.model, x, y);
+      canvas.style.cursor = view.hoverControl || hoverNode ? "pointer" : "default";
       drawFlowCanvas(view);
     });
 
@@ -1910,9 +2011,9 @@
         }
       }
 
-      const task = hitTask(runtime.model, x, y);
-      if (task) {
-        setSelectedNode(runtime.state, task.id);
+      const targetNode = hitSelectableNode(runtime.model, x, y);
+      if (targetNode) {
+        setSelectedNode(runtime.state, targetNode.id);
         runtime.onStateChanged();
       }
     });
@@ -1952,9 +2053,96 @@
     }
   }
 
+  function renderStartNodeDetail({ state, root, onStateChanged }) {
+    root.innerHTML = "";
+    const startParameters = ensureStartParameters(state);
+    const body = el("div", { class: "node-body" }, []);
+    body.appendChild(
+      el("div", { class: "node-detail-meta" }, [
+        el("div", { class: "badge" }, [document.createTextNode("{START}")])
+      ])
+    );
+    body.appendChild(
+      el("div", { class: "start-node-note" }, [
+        document.createTextNode("開始ノードで使う初期変数を設定します。変数名と値をペアで追加してください。")
+      ])
+    );
+
+    const paramsList = el("div", { class: "start-param-list" }, []);
+    startParameters.forEach((item) => {
+      const nameInput = el("input", {
+        type: "text",
+        value: item.name,
+        placeholder: "変数名",
+        "aria-label": "変数名",
+        oninput: (e) => {
+          item.name = e.target.value;
+        },
+        onchange: (e) => {
+          item.name = e.target.value;
+          onStateChanged();
+        }
+      });
+      const valueInput = el("input", {
+        type: "text",
+        value: item.value,
+        placeholder: "値",
+        "aria-label": "値",
+        oninput: (e) => {
+          item.value = e.target.value;
+        },
+        onchange: (e) => {
+          item.value = e.target.value;
+          onStateChanged();
+        }
+      });
+      const removeBtn = el(
+        "button",
+        {
+          type: "button",
+          class: "start-param-remove",
+          onclick: () => {
+            state.startParameters = startParameters.filter((param) => param.id !== item.id);
+            onStateChanged();
+          }
+        },
+        [document.createTextNode("削除")]
+      );
+      paramsList.appendChild(
+        el("div", { class: "start-param-fields" }, [nameInput, valueInput, removeBtn])
+      );
+    });
+
+    const addBtn = el(
+      "button",
+      {
+        type: "button",
+        class: "start-param-add",
+        onclick: () => {
+          state.startParameters = [...startParameters, { id: createUiId("start_param"), name: "", value: "" }];
+          onStateChanged();
+        }
+      },
+      [document.createTextNode("+ 変数を追加")]
+    );
+
+    body.appendChild(
+      el("div", { class: "row" }, [
+        el("label", {}, [document.createTextNode("パラメータ")]),
+        el("div", { class: "start-param-editor" }, [paramsList, addBtn])
+      ])
+    );
+
+    root.appendChild(el("section", { class: "node detail-node" }, [body]));
+  }
+
   function renderNodeDetail({ state, config, root, onStateChanged }) {
     root.innerHTML = "";
     if (!state.nodes.length) return;
+    if (state.selectedNodeId === "__start__") {
+      renderStartNodeDetail({ state, root, onStateChanged });
+      return;
+    }
 
     let idx = getSelectedNodeIndex(state);
     let node = state.nodes[idx];
@@ -1963,12 +2151,20 @@
     ensureNodeDefaults(config, node);
 
     const upstreamSteps = getUpstreamSteps(state, node.id);
+    const availableVariables = getAvailableVariables(state, node);
     const schema = getFormSchema(config, node.connector, node.action);
     const actionConfig = getActionConfig(config, node.connector, node.action);
     const detailModal = actionConfig && actionConfig.detailModal;
     const missingRequiredLabels = getMissingRequiredFieldLabels(config, node);
     const referenceWarnings = Array.from(new Set(
-      schema.flatMap((field) => getFieldReferenceWarnings({ node, field, upstreamSteps }))
+      schema.flatMap((field) =>
+        getFieldReferenceWarnings({
+          node,
+          field,
+          upstreamSteps,
+          availableVariableNames: availableVariables.suggestNames
+        })
+      )
     ));
 
     const headActionItems = [];
@@ -1978,10 +2174,19 @@
         el(
           "button",
           {
+            class: "support-btn node-head-icon-btn",
             type: "button",
+            title: detailModal.label,
+            "aria-label": detailModal.label,
             onclick: () => openConfiguredDetailModal({ node, detailModal, onStateChanged })
           },
-          [document.createTextNode(detailModal.label)]
+          [
+            el("img", {
+              src: "./icons/support_agent.svg",
+              alt: "",
+              class: "node-head-icon-btn__icon"
+            })
+          ]
         )
       );
     }
@@ -1990,23 +2195,19 @@
       el(
         "button",
         {
-          class: "run-btn",
+          class: "run-btn node-head-icon-btn",
           type: "button",
-          onclick: () => requestNodeRun(node, "single", onStateChanged)
-        },
-        [document.createTextNode("ステップ実行")]
-      )
-    );
-
-    headActionItems.push(
-      el(
-        "button",
-        {
-          class: "run-btn",
-          type: "button",
+          title: "フロー実行",
+          "aria-label": "フロー実行",
           onclick: () => requestNodeRun(node, "through", onStateChanged)
         },
-        [document.createTextNode("フロー実行")]
+        [
+          el("img", {
+            src: "./icons/run.svg",
+            alt: "",
+            class: "node-head-icon-btn__icon"
+          })
+        ]
       )
     );
 
@@ -2014,11 +2215,19 @@
       el(
         "button",
         {
-          class: "danger",
+          class: "danger node-head-icon-btn",
           type: "button",
+          title: "削除",
+          "aria-label": "削除",
           onclick: () => removeNodeById(state, node.id, onStateChanged)
         },
-        [document.createTextNode("削除")]
+        [
+          el("img", {
+            src: "./icons/delete.svg",
+            alt: "",
+            class: "node-head-icon-btn__icon"
+          })
+        ]
       )
     );
 
@@ -2040,6 +2249,11 @@
       { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "data" },
       [document.createTextNode("データ")]
     );
+    const variablesTabBtn = el(
+      "button",
+      { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "variables" },
+      [document.createTextNode("変数")]
+    );
     const logTabBtn = el(
       "button",
       { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "log" },
@@ -2048,8 +2262,9 @@
     tabBar.appendChild(detailTabBtn);
     tabBar.appendChild(yamlTabBtn);
     tabBar.appendChild(dataTabBtn);
+    tabBar.appendChild(variablesTabBtn);
     tabBar.appendChild(logTabBtn);
-    const tabsHead = el("div", { class: "node-tabs-head" }, [tabBar, headActions]);
+    const tabsHead = el("div", { class: "node-tabs-head" }, [tabBar]);
 
     const detailPane = el("div", { class: "node-tab-pane", "data-tab-key": "detail" }, [body]);
     const yamlText = el("textarea", {
@@ -2077,6 +2292,8 @@
       dataUnsupportedNote,
       dataTableWrap
     ]);
+    const variablesPaneBody = el("div", { class: "variable-pane-body" }, []);
+    const variablesPane = el("div", { class: "node-tab-pane", "data-tab-key": "variables" }, [variablesPaneBody]);
     const logText = el("textarea", {
       class: "node-log-view",
       readonly: "readonly",
@@ -2093,11 +2310,28 @@
       onStateChanged,
       disabled: loopRootSelected
     });
+    const descriptionInput = el("input", {
+      type: "text",
+      value: String(node.description || ""),
+      placeholder: getNodeDescriptionSeed(config, node.connector, node.action),
+      "aria-label": "ノード説明",
+      oninput: (e) => {
+        node.description = e.target.value;
+        node.descriptionAuto = false;
+      },
+      onchange: (e) => {
+        node.description = e.target.value;
+        node.descriptionAuto = false;
+        onStateChanged();
+      }
+    });
     const detailMeta = el("div", { class: "node-detail-meta" }, [
       el("div", { class: "badge" }, [document.createTextNode(`{${node.stepName}}`)]),
+      headActions,
       el("div", { class: "head-selects" }, [
         el("div", { class: "head-select" }, [connectorSelect])
-      ])
+      ]),
+      el("div", { class: "head-description" }, [descriptionInput])
     ]);
     body.appendChild(detailMeta);
 
@@ -2114,7 +2348,7 @@
       nodeWarnings.push(`必須項目が未入力です。${missingRequiredLabels.join(" / ")}`);
     }
     if (referenceWarnings.length) {
-      nodeWarnings.push(`上流でないステップを参照しています。${referenceWarnings.join(" / ")}`);
+      nodeWarnings.push(`未定義の変数参照があります。${referenceWarnings.join(" / ")}`);
     }
 
     if (nodeWarnings.length) {
@@ -2133,7 +2367,13 @@
       );
     } else {
       for (const field of schema) {
-        body.appendChild(renderField({ node, field, upstreamSteps, onStateChanged }));
+        body.appendChild(renderField({
+          node,
+          field,
+          upstreamSteps,
+          availableVariableNames: availableVariables.suggestNames,
+          onStateChanged
+        }));
       }
     }
 
@@ -2155,6 +2395,65 @@
       );
     }
 
+    function buildVariableGroup(title, items, toneClass = "", options = {}) {
+      const showValue = !!options.showValue;
+      const normalizedItems = showValue
+        ? (items || []).map((item) => ({
+          name: String(item?.name || "").trim(),
+          value: String(item?.value ?? "")
+        })).filter((item) => item.name)
+        : Array.from(new Set((items || []).filter(Boolean))).map((name) => ({ name: String(name), value: "" }));
+      const group = el("section", { class: `variable-group${toneClass ? ` ${toneClass}` : ""}` }, [
+        el("div", { class: "variable-group-title" }, [document.createTextNode(title)])
+      ]);
+      if (!normalizedItems.length) {
+        group.appendChild(
+          el("div", { class: "variable-empty" }, [document.createTextNode("利用できる変数はありません。")])
+        );
+        return group;
+      }
+      const tableBody = el("tbody", {}, []);
+      normalizedItems.forEach((item) => {
+        tableBody.appendChild(
+          el("tr", {}, [
+            el("td", { class: "variable-table-name" }, [document.createTextNode(item.name)]),
+            el("td", { class: "variable-table-value" }, [document.createTextNode(showValue ? (item.value || "-") : "-")]),
+            el("td", { class: "variable-table-token" }, [document.createTextNode(`{{${item.name}}}`)])
+          ])
+        );
+      });
+      group.appendChild(
+        el("div", { class: "variable-table-wrap" }, [
+          el("table", { class: "variable-table" }, [
+            el("thead", {}, [
+              el("tr", {}, [
+                el("th", {}, [document.createTextNode("変数名")]),
+                el("th", {}, [document.createTextNode("変数値")]),
+                el("th", {}, [document.createTextNode("参照方法")])
+              ])
+            ]),
+            tableBody
+          ])
+        ])
+      );
+      return group;
+    }
+
+    function syncVariablesView() {
+      variablesPaneBody.innerHTML = "";
+      variablesPaneBody.appendChild(
+        el("div", { class: "variable-help" }, [
+          document.createTextNode("テキスト入力欄では "),
+          el("code", {}, [document.createTextNode("{{変数名}}")]),
+          document.createTextNode(" の形式で参照できます。")
+        ])
+      );
+      variablesPaneBody.appendChild(
+        buildVariableGroup("開始変数", ensureStartParameters(state), "is-start", { showValue: true })
+      );
+      variablesPaneBody.appendChild(buildVariableGroup("上流ステップ出力", availableVariables.upstreamVariables));
+    }
+
     function syncLogView() {
       const lines = getNodeLogLines(node);
       if (!lines.length) {
@@ -2164,15 +2463,16 @@
       logText.value = lines.join("\n");
     }
 
-    const activeTabByRoot = ["detail", "yaml", "data", "log"].includes(root.__nodeDetailActiveTab)
+    const activeTabByRoot = ["detail", "yaml", "data", "variables", "log"].includes(root.__nodeDetailActiveTab)
       ? root.__nodeDetailActiveTab
       : "detail";
     function setActiveTab(tabKey) {
-      const activeTab = ["yaml", "data", "log"].includes(tabKey) ? tabKey : "detail";
+      const activeTab = ["yaml", "data", "variables", "log"].includes(tabKey) ? tabKey : "detail";
       root.__nodeDetailActiveTab = activeTab;
       const showDetail = activeTab === "detail";
       const showYaml = activeTab === "yaml";
       const showData = activeTab === "data";
+      const showVariables = activeTab === "variables";
       const showLog = activeTab === "log";
 
       detailTabBtn.classList.toggle("is-active", showDetail);
@@ -2184,40 +2484,50 @@
       dataTabBtn.classList.toggle("is-active", showData);
       dataTabBtn.setAttribute("aria-selected", showData ? "true" : "false");
 
+      variablesTabBtn.classList.toggle("is-active", showVariables);
+      variablesTabBtn.setAttribute("aria-selected", showVariables ? "true" : "false");
+
       logTabBtn.classList.toggle("is-active", showLog);
       logTabBtn.setAttribute("aria-selected", showLog ? "true" : "false");
 
       detailPane.classList.toggle("is-active", showDetail);
       yamlPane.classList.toggle("is-active", showYaml);
       dataPane.classList.toggle("is-active", showData);
+      variablesPane.classList.toggle("is-active", showVariables);
       logPane.classList.toggle("is-active", showLog);
       detailPane.hidden = !showDetail;
       yamlPane.hidden = !showYaml;
       dataPane.hidden = !showData;
+      variablesPane.hidden = !showVariables;
       logPane.hidden = !showLog;
 
       if (showYaml) syncYamlView();
       if (showData) syncDataView();
+      if (showVariables) syncVariablesView();
       if (showLog) syncLogView();
     }
 
     detailTabBtn.addEventListener("click", () => setActiveTab("detail"));
     yamlTabBtn.addEventListener("click", () => setActiveTab("yaml"));
     dataTabBtn.addEventListener("click", () => setActiveTab("data"));
+    variablesTabBtn.addEventListener("click", () => setActiveTab("variables"));
     logTabBtn.addEventListener("click", () => setActiveTab("log"));
 
     body.addEventListener("input", syncYamlView);
     body.addEventListener("change", syncYamlView);
     body.addEventListener("input", syncDataView);
     body.addEventListener("change", syncDataView);
+    body.addEventListener("input", syncVariablesView);
+    body.addEventListener("change", syncVariablesView);
     body.addEventListener("input", syncLogView);
     body.addEventListener("change", syncLogView);
     syncYamlView();
     syncDataView();
+    syncVariablesView();
     syncLogView();
     setActiveTab(activeTabByRoot);
 
-    root.appendChild(el("section", { class: "node detail-node" }, [tabsHead, detailPane, yamlPane, dataPane, logPane]));
+    root.appendChild(el("section", { class: "node detail-node" }, [tabsHead, detailPane, yamlPane, dataPane, variablesPane, logPane]));
   }
 
   window.uiNode = { normalizeSteps, renderFlowChart, renderNodeDetail };

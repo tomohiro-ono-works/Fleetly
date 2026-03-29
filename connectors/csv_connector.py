@@ -14,7 +14,8 @@ class CSVConnector(BaseConnector):
                 encoding=str(params.get('encoding', 'utf-8')),
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
-                selected_columns=params.get('selected_columns')
+                selected_columns=params.get('selected_columns'),
+                schema=params.get('schema'),
             )
         elif action == "write_csv":
             input_data = params.get('input_data')
@@ -31,7 +32,7 @@ class CSVConnector(BaseConnector):
             )
 
     # --- 内部ロジック ---
-    def read_csv(self, path: str, encoding: str, header_row: int, data_start_row: int, selected_columns: Any):
+    def read_csv(self, path: str, encoding: str, header_row: int, data_start_row: int, selected_columns: Any, schema: Any = None):
         normalized_path = self.normalize_file_path(path)
         if normalized_path is None:
             raise ValueError("file_path は必須です。")
@@ -53,9 +54,9 @@ class CSVConnector(BaseConnector):
                 dtype=object,
             )
         except pd.errors.EmptyDataError:
-            return pd.DataFrame()
+            return self.attach_dataframe_schema(pd.DataFrame(), schema_override=schema)
 
-        return df
+        return self.attach_dataframe_schema(df, schema_override=schema)
 
     def write_csv(self, input_var: str, output_path: str, encoding: str, context: dict[str, Any]):
         normalized_output_path = self.normalize_file_path(output_path)

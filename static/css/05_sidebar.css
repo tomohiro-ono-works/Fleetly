@@ -1,0 +1,217 @@
+/* =========================================================
+   Sidebar
+========================================================= */
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  padding: 14px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  background: var(--alpha-white-94);
+  border-right: 1px solid var(--border-default);
+  box-shadow: var(--shadow-soft-weak);
+  backdrop-filter: blur(18px);
+  z-index: 80;
+}
+
+.sidebar-top {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sidebar-brand-submark {
+  display: none;
+  justify-content: center;
+  padding-top: 2px;
+}
+
+.sidebar-brand-submark img {
+  display: block;
+  width: min(100%, 125px);
+  height: auto;
+  max-height: 32px;
+  object-fit: contain;
+}
+
+.sidebar-nav,
+.sidebar-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sidebar-nav {
+  flex: 1 1 auto;
+}
+
+.sidebar-bottom {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid var(--border-divider);
+}
+
+.sidebar-toggle,
+.sidebar-item {
+  width: 100%;
+  min-height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0;
+  padding: 10px 6px;
+  border-radius: 18px;
+  border: 1px solid transparent;
+  background: transparent;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.sidebar-toggle {
+  min-height: auto;
+  justify-content: center;
+  padding: 4px 0 10px;
+  border: 0;
+  background: transparent;
+}
+
+.sidebar-toggle:hover,
+.sidebar-item:hover {
+  background: var(--surface-hover);
+  border-color: transparent;
+}
+
+.sidebar-toggle:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+.sidebar-toggle:active,
+.sidebar-item:active {
+  transform: translateY(1px);
+}
+
+.sidebar-toggle:active {
+  transform: none;
+}
+
+.sidebar-toggle-icon,
+.sidebar-item-icon {
+  flex: 0 0 auto;
+  width: 36px;
+  height: 36px;
+  border-radius: 12px;
+}
+
+.sidebar-toggle-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: auto;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
+}
+
+.sidebar-item-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(160deg, var(--brand-100) 0%, var(--surface-page) 100%);
+  border: 1px solid var(--border-default);
+}
+
+.sidebar-toggle-icon img,
+.sidebar-item-icon img {
+  display: block;
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+}
+
+.sidebar-toggle-icon img {
+  width: min(100%, 120px);
+  height: auto;
+  max-height: 52px;
+  opacity: 1;
+}
+
+body.sidebar-expanded .sidebar-toggle-icon img {
+  width: min(100%, 185px);
+  max-height: 81px;
+}
+
+body.sidebar-expanded .sidebar-brand-submark {
+  display: flex;
+}
+
+.sidebar-item-settings .sidebar-item-icon {
+  background: linear-gradient(160deg, var(--brand-100) 0%, var(--surface-page) 100%);
+  border-color: var(--border-default);
+}
+
+.sidebar-item-icon img {
+  opacity: 0.88;
+}
+
+.sidebar-item-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: max-width 140ms ease, opacity 100ms ease, transform 120ms ease;
+}
+
+.sidebar-item.is-current {
+  background: var(--surface-page);
+  border-color: var(--brand-600);
+  box-shadow: 0 4px 10px var(--alpha-shadow-06);
+}
+
+.sidebar-item.is-current .sidebar-item-icon {
+  background: var(--brand-600);
+  border-color: var(--brand-600);
+}
+
+.sidebar-item.is-current .sidebar-item-icon img {
+  filter: brightness(0) invert(1);
+  opacity: 1;
+}
+
+.sidebar-item.is-current.sidebar-item-settings .sidebar-item-icon {
+  background: var(--brand-600);
+  border-color: var(--brand-600);
+}
+
+body.sidebar-expanded .sidebar-toggle,
+body.sidebar-expanded .sidebar-item {
+  justify-content: flex-start;
+  gap: 12px;
+  padding-inline: 8px;
+}
+
+body.sidebar-expanded .sidebar-toggle {
+  justify-content: center;
+  gap: 0;
+  padding-inline: 0;
+}
+
+body.sidebar-expanded .sidebar-item-label {
+  max-width: 160px;
+  opacity: 1;
+  transform: translateX(0);
+}

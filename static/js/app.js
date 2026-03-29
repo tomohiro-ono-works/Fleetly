@@ -26,14 +26,6 @@
     return;
   }
 
-  let state;
-  try {
-    state = createDefaultState();
-  } catch (err) {
-    showFatal("??????????????", err);
-    return;
-  }
-
   const flowRoot = document.getElementById("flowchart") || document.getElementById("nodes");
   let detailRoot = document.getElementById("nodeDetail");
 
@@ -53,6 +45,80 @@
   const flowNameInput = document.getElementById("flowName");
   const detailPanel = document.querySelector(".detail-panel");
   const mainRoot = document.querySelector("main");
+  const bodyRoot = document.body;
+  let importInput = null;
+  const sidebarToggle = document.getElementById("sidebarToggle");
+  const sidebarModeItems = Array.from(document.querySelectorAll("[data-app-mode]"));
+  const sidebarActionItems = Array.from(document.querySelectorAll("[data-sidebar-action]"));
+  const SIDEBAR_EXPANDED_CLASS = "sidebar-expanded";
+  const APP_MODES = CONFIG.modes || {};
+  const DEFAULT_APP_MODE = APP_MODES.workflow ? "workflow" : (Object.keys(APP_MODES)[0] || "workflow");
+  const modeStates = {};
+  let activeMode = DEFAULT_APP_MODE;
+  let state;
+
+  function normalizeAppMode(mode) {
+    return APP_MODES[mode] ? mode : DEFAULT_APP_MODE;
+  }
+
+  function getModeMeta(mode) {
+    const normalized = normalizeAppMode(mode);
+    return APP_MODES[normalized] || {
+      id: normalized,
+      label: "フロー",
+      defaultFlowName: "フロー１",
+      fileExtension: ".ziz"
+    };
+  }
+
+  function buildConfigForMode(mode) {
+    const meta = getModeMeta(mode);
+    const connectorIds = Array.isArray(meta.connectorIds) ? meta.connectorIds : [];
+    const connectors = (CONFIG.connectors || []).filter((connector) => {
+      return !connectorIds.length || connectorIds.includes(connector.id);
+    });
+    const actions = {};
+    const forms = {};
+
+    connectors.forEach((connector) => {
+      if (CONFIG.actions?.[connector.id]) {
+        actions[connector.id] = [...CONFIG.actions[connector.id]];
+      }
+    });
+
+    Object.entries(CONFIG.forms || {}).forEach(([key, schema]) => {
+      const connectorId = String(key).split(".")[0] || "";
+      if (!connectorIds.length || connectorIds.includes(connectorId)) {
+        forms[key] = schema;
+      }
+    });
+
+    return {
+      ...CONFIG,
+      appMode: meta.id,
+      connectors,
+      actions,
+      forms
+    };
+  }
+
+  function createStateForMode(mode) {
+    const normalized = normalizeAppMode(mode);
+    const nextState = createDefaultState({ appMode: normalized });
+    if (typeof nextState.flowName !== "string" || !nextState.flowName.trim()) {
+      nextState.flowName = getModeMeta(normalized).defaultFlowName;
+    }
+    nextState.appMode = normalized;
+    return nextState;
+  }
+
+  try {
+    state = createStateForMode(activeMode);
+    modeStates[activeMode] = state;
+  } catch (err) {
+    showFatal("??????????????", err);
+    return;
+  }
 
   function toConnectorExportId(connectorId) {
     return String(connectorId || "")
@@ -94,6 +160,34 @@
     return `node_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
   }
 
+  function normalizeStartParameters(raw) {
+    if (Array.isArray(raw)) {
+      return raw.map((item) => ({
+        id: createLocalNodeId(),
+        name: String(item?.name ?? item?.key ?? ""),
+        value: String(item?.value ?? "")
+      }));
+    }
+    if (raw && typeof raw === "object") {
+      return Object.entries(raw).map(([name, value]) => ({
+        id: createLocalNodeId(),
+        name: String(name || ""),
+        value: String(value ?? "")
+      }));
+    }
+    return [];
+  }
+
+  function serializeStartParameters(items) {
+    if (!Array.isArray(items)) return [];
+    return items
+      .map((item) => ({
+        name: String(item?.name ?? "").trim(),
+        value: String(item?.value ?? "")
+      }))
+      .filter((item) => item.name || item.value);
+  }
+
   function inferNextStepSeq(nodes) {
     let max = 0;
     nodes.forEach((node) => {
@@ -118,6 +212,12 @@
   }
 
   function buildStateFromYaml(data, config) {
+    if (!data || typeof data !== "object") {
+      throw new Error("YAMLのルート構造が不正です");
+    }
+    if (!data.metadata || typeof data.metadata !== "object") {
+      throw new Error("metadata が見つかりません");
+    }
     if (!Array.isArray(data.steps)) {
       throw new Error("steps が見つかりません");
     }
@@ -127,6 +227,9 @@
 
     const nodes = [];
     const nodeByStep = new Map();
+    const startParameters = normalizeStartParameters(
+      data.variables?.start
+    );
     data.steps.forEach((step, idx) => {
       const stepName = String(step.step_id || `step${idx + 1}`);
       if (nodeByStep.has(stepName)) {
@@ -141,12 +244,15 @@
       const form = actionKnown && step.params && typeof step.params === "object"
         ? { ...step.params }
         : {};
+      const hasDescription = Object.prototype.hasOwnProperty.call(step, "description");
 
       const node = {
         id: createLocalNodeId(),
         stepName,
         connector,
         action,
+        description: hasDescription ? String(step.description ?? "") : "",
+        descriptionAuto: !hasDescription,
         form,
         parentId: null,
         parallelOf: null,
@@ -216,14 +322,22 @@
       }
     });
 
+    const rawMode = String(data.metadata?.mode || "").trim();
+    if (!APP_MODES[rawMode]) {
+      throw new Error(`metadata.mode が不正です: ${data.metadata?.mode || ""}`);
+    }
+    const importedMode = normalizeAppMode(rawMode);
+
     return {
       state: {
         version: 3,
+        appMode: importedMode,
+        flowName: String(data.metadata?.name || "").trim() || getModeMeta(importedMode).defaultFlowName,
         nodes,
+        startParameters,
         selectedNodeId: nodes[0]?.id || null,
         nextStepSeq: inferNextStepSeq(nodes)
-      },
-      flowName: String(data.workflow_metadata?.name || "").trim()
+      }
     };
   }
 
@@ -268,15 +382,88 @@
         params,
         output_variable: stepId
       };
+      const description = typeof n.description === "string" ? n.description : "";
 
+      if (description || n.descriptionAuto === false) exported.description = description;
       if (parallelOfStep) exported.parallel_of = parallelOfStep;
       return exported;
     });
   }
 
+  function syncHeaderForMode() {
+    if (!state) return;
+    const meta = getModeMeta(state.appMode);
+    bodyRoot.dataset.appMode = meta.id;
+    if (flowNameInput && document.activeElement !== flowNameInput) {
+      flowNameInput.value = state.flowName || meta.defaultFlowName;
+    }
+    if (flowNameInput) {
+      flowNameInput.placeholder = meta.defaultFlowName;
+      flowNameInput.setAttribute("aria-label", `${meta.label}名`);
+    }
+    if (btnSave) {
+      btnSave.setAttribute("title", `${meta.label}を保存`);
+      btnSave.setAttribute("aria-label", `${meta.label}を保存`);
+    }
+    if (btnReset) {
+      btnReset.setAttribute("title", `${meta.label}をインポート`);
+      btnReset.setAttribute("aria-label", `${meta.label}をインポート`);
+    }
+    if (importInput) {
+      importInput.accept = ".zizw,.zizd,.zizq";
+    }
+  }
+
+  function buildMetadataForMode(mode, name) {
+    const meta = getModeMeta(mode);
+    const base = {
+      name,
+      mode: meta.id,
+      extension: meta.fileExtension || ".ziz"
+    };
+
+    if (meta.id === "workflow") {
+      return {
+        ...base,
+        execution_model: "json",
+        category: "automation"
+      };
+    }
+
+    if (meta.id === "dataflow") {
+      return {
+        ...base,
+        execution_model: "df",
+        category: "etl"
+      };
+    }
+
+    if (meta.id === "query-builder") {
+      return {
+        ...base,
+        goal: "single_sql",
+        step_unit: "cte"
+      };
+    }
+
+    return base;
+  }
+
+  function buildVariablesPayload(startParameters) {
+    return {
+      start: serializeStartParameters(startParameters)
+    };
+  }
+
   function onStateChanged() {
     try {
-      renderApp({ flowRoot, detailRoot, state, config: CONFIG, onStateChanged });
+      if (!state) return;
+      state.appMode = normalizeAppMode(state.appMode);
+      if (typeof state.flowName !== "string" || !state.flowName.trim()) {
+        state.flowName = getModeMeta(state.appMode).defaultFlowName;
+      }
+      syncHeaderForMode();
+      renderApp({ flowRoot, detailRoot, state, config: buildConfigForMode(state.appMode), onStateChanged });
     } catch (err) {
       showFatal("???????????", err);
     }
@@ -348,8 +535,9 @@
   }
 
   function getFlowName() {
-    const name = String(flowNameInput?.value || "").trim();
-    return name || "フロー１";
+    const meta = getModeMeta(state?.appMode);
+    const name = String(flowNameInput?.value || state?.flowName || "").trim();
+    return name || meta.defaultFlowName || "フロー１";
   }
 
   function toSafeFilename(name) {
@@ -362,9 +550,10 @@
 
   function getDetailPanelHeightBounds() {
     const header = document.querySelector("header");
-    const headerH = header ? header.getBoundingClientRect().height : 64;
+    const headerBox = header ? header.getBoundingClientRect() : null;
+    const headerBottom = headerBox ? Math.max(0, Math.floor(headerBox.bottom)) : 76;
     const minH = 88;
-    const maxH = Math.max(minH, Math.floor(window.innerHeight - headerH - 32));
+    const maxH = Math.max(minH, Math.floor(window.innerHeight - headerBottom - 20));
     const midH = Math.max(minH, Math.floor((minH + maxH) / 2));
     return { minH, maxH, midH };
   }
@@ -381,10 +570,91 @@
   function applyFlowViewportHeight() {
     if (!flowRoot || !detailPanel) return;
     const header = document.querySelector("header");
-    const headerH = header ? header.getBoundingClientRect().height : 64;
+    const headerBox = header ? header.getBoundingClientRect() : null;
+    const headerBottom = headerBox ? Math.max(0, Math.floor(headerBox.bottom)) : 76;
     const detailH = detailPanel.getBoundingClientRect().height || 300;
-    const available = Math.floor(window.innerHeight - headerH - detailH - 28);
+    const available = Math.floor(window.innerHeight - headerBottom - detailH - 24);
     flowRoot.style.height = `${Math.max(180, available)}px`;
+  }
+
+  function isSidebarExpanded() {
+    return bodyRoot.classList.contains(SIDEBAR_EXPANDED_CLASS);
+  }
+
+  function applySidebarState(expanded) {
+    bodyRoot.classList.toggle(SIDEBAR_EXPANDED_CLASS, Boolean(expanded));
+    if (sidebarToggle) {
+      sidebarToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+    }
+
+    window.requestAnimationFrame(() => {
+      const current = detailPanel?.getBoundingClientRect().height || 300;
+      applyDetailPanelHeight(current);
+      applyFlowViewportHeight();
+    });
+  }
+
+  function activateSidebarItem(targetMode = state?.appMode) {
+    sidebarModeItems.forEach((item) => {
+      const itemMode = String(item.dataset.appMode || "");
+      const current = itemMode === targetMode;
+      item.classList.toggle("is-current", current);
+      if (current) {
+        item.setAttribute("aria-current", "page");
+      } else {
+        item.removeAttribute("aria-current");
+      }
+    });
+
+    sidebarActionItems.forEach((item) => {
+      item.classList.remove("is-current");
+      item.removeAttribute("aria-current");
+    });
+  }
+
+  function setActiveMode(nextMode) {
+    const normalized = normalizeAppMode(nextMode);
+    if (state) {
+      state.flowName = getFlowName();
+      modeStates[state.appMode] = state;
+    }
+    activeMode = normalized;
+    state = modeStates[normalized] || createStateForMode(normalized);
+    state.appMode = normalized;
+    modeStates[normalized] = state;
+    activateSidebarItem(normalized);
+    onStateChanged();
+  }
+
+  function setupSidebar() {
+    if (sidebarToggle) {
+      sidebarToggle.addEventListener("click", () => {
+        applySidebarState(!isSidebarExpanded());
+      });
+    }
+
+    sidebarModeItems.forEach((item) => {
+      item.addEventListener("click", () => {
+        const itemMode = String(item.dataset.appMode || "");
+        if (APP_MODES[itemMode]) {
+          setActiveMode(itemMode);
+        }
+        if (!isSidebarExpanded()) {
+          applySidebarState(true);
+        }
+      });
+    });
+
+    sidebarActionItems.forEach((item) => {
+      item.addEventListener("click", () => {
+        item.classList.remove("is-current");
+        item.removeAttribute("aria-current");
+        item.blur?.();
+        if (!isSidebarExpanded()) {
+          applySidebarState(true);
+        }
+      });
+    });
   }
 
   function toggleDetailPanelHeight() {
@@ -397,8 +667,6 @@
 
   function setupDetailPanelResizer() {
     if (!detailPanel) return;
-    const handle = detailPanel.querySelector(".detail-resize-handle");
-    if (!handle) return;
 
     applyDetailPanelHeight(detailPanel.getBoundingClientRect().height || 300);
 
@@ -406,7 +674,10 @@
     let startY = 0;
     let startH = 0;
 
-    handle.addEventListener("mousedown", (e) => {
+    detailPanel.addEventListener("mousedown", (e) => {
+      const head = e.target.closest(".node-detail-meta");
+      if (!head) return;
+      if (e.target.closest("button, input, select, textarea, a, label")) return;
       dragging = true;
       startY = e.clientY;
       startH = detailPanel.getBoundingClientRect().height;
@@ -433,21 +704,38 @@
     });
 
     detailPanel.addEventListener("dblclick", (e) => {
-      const hitHandle = e.target.closest(".detail-resize-handle");
-      const hitNodeHead = e.target.closest(".node-head");
-      if (!hitHandle && !hitNodeHead) return;
+      const hitNodeHead = e.target.closest(".node-detail-meta");
+      if (!hitNodeHead) return;
+      if (e.target.closest("button, input, select, textarea, a, label, .connector-flyout, .combo-field, .CodeMirror")) {
+        return;
+      }
       e.preventDefault();
       window.getSelection?.()?.removeAllRanges?.();
       toggleDetailPanelHeight();
     });
   }
 
+  setupSidebar();
+  activateSidebarItem(activeMode);
   setupDetailPanelResizer();
   applyFlowViewportHeight();
 
+  if (flowNameInput) {
+    flowNameInput.addEventListener("input", (e) => {
+      if (!state) return;
+      state.flowName = String(e.target.value || "");
+    });
+    flowNameInput.addEventListener("change", (e) => {
+      if (!state) return;
+      state.flowName = String(e.target.value || "").trim() || getModeMeta(state.appMode).defaultFlowName;
+      syncHeaderForMode();
+    });
+  }
+
   if (btnSave) {
     btnSave.addEventListener("click", () => {
-      const requiredErrors = validateRequiredFields(state.nodes, CONFIG);
+      const activeConfig = buildConfigForMode(state.appMode);
+      const requiredErrors = validateRequiredFields(state.nodes, activeConfig);
       if (requiredErrors.length) {
         window.alert(
           `必須パラメータが未入力です。\n\n${requiredErrors.join("\n")}`
@@ -455,23 +743,25 @@
         return;
       }
 
+      const flowName = getFlowName();
+      const variables = buildVariablesPayload(state.startParameters);
+
       const payload = {
-        workflow_metadata: {
-          name: getFlowName()
-        },
-        steps: buildExportSteps(state.nodes, CONFIG),
+        metadata: buildMetadataForMode(state.appMode, flowName),
+        variables,
+        steps: buildExportSteps(state.nodes, activeConfig),
         flows: buildFlows(state.nodes)
       };
 
-      const fileName = `${toSafeFilename(getFlowName())}.mkm`;
+      const fileName = `${toSafeFilename(flowName)}${getModeMeta(state.appMode).fileExtension || ".ziz"}`;
       window.utils?.downloadYaml?.(fileName, payload);
     });
   }
 
   if (btnReset) {
-    const importInput = document.createElement("input");
+    importInput = document.createElement("input");
     importInput.type = "file";
-    importInput.accept = ".mkm";
+    importInput.accept = ".zizw,.zizd,.zizq";
     importInput.style.display = "none";
     document.body.appendChild(importInput);
 
@@ -487,10 +777,12 @@
         const text = await file.text();
         const yaml = parseYamlText(text);
         const imported = buildStateFromYaml(yaml, CONFIG);
+        const importedMode = normalizeAppMode(imported.state?.appMode);
+        imported.state.appMode = importedMode;
+        modeStates[importedMode] = imported.state;
+        activeMode = importedMode;
         state = imported.state;
-        if (flowNameInput && imported.flowName) {
-          flowNameInput.value = imported.flowName;
-        }
+        activateSidebarItem(importedMode);
         onStateChanged();
       } catch (err) {
         window.alert(`インポートに失敗しました。\n${err?.message || err}`);

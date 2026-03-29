@@ -5,7 +5,7 @@ def setup_logger():
     if not os.path.exists('logs'):
         os.makedirs('logs')
     
-    logger = logging.getLogger("mokuromi")
+    logger = logging.getLogger("ziz")
     logger.setLevel(logging.INFO)
     logger.handlers = [] # 重複防止
 

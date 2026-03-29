@@ -2,6 +2,15 @@
    Responsive
 ========================================================= */
 @media (max-width: 768px) {
+  body {
+    --sidebar-width: 60px;
+    --app-gutter: 8px;
+  }
+
+  body.sidebar-expanded {
+    --sidebar-width: 184px;
+  }
+
   .panel { padding: 12px; }
   .flow-column { width: 88px; min-width: 88px; }
   .flow-edge { width: 36px; min-width: 36px; }
@@ -9,15 +18,31 @@
 }
 
 @media (max-width: 640px) {
+  body.sidebar-expanded {
+    --sidebar-width: 172px;
+  }
+
   .head-selects { width: 100%; }
-  .head-selects select { width: 100%; }
+  .head-select,
+  .head-description { width: 100%; min-width: 0; flex-basis: 100%; }
 
   .connector-flyout,
   .connector-flyout-trigger { width: 100%; }
 
   .connector-flyout-menu {
+    left: 0;
     width: min(96vw, 272px);
     grid-template-columns: 78px 83px 1fr;
+  }
+
+  .sidebar {
+    padding-inline: 8px;
+  }
+
+  .sidebar-toggle,
+  .sidebar-item {
+    min-height: 52px;
+    border-radius: 16px;
   }
 }
 

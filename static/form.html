@@ -3,9 +3,11 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Flow Prototype</title>
+  <title>ziz</title>
+  <link rel="icon" href="./icons/icon.png">
   <link rel="stylesheet" href="./css/00_tokens.css">
   <link rel="stylesheet" href="./css/01_base.css">
+  <link rel="stylesheet" href="./css/05_sidebar.css">
   <link rel="stylesheet" href="./css/10_header.css">
   <link rel="stylesheet" href="./css/20_node-detail.css">
   <link rel="stylesheet" href="./css/30_flowchart.css">
@@ -16,40 +18,80 @@
   <link rel="stylesheet" href="./vendor/codemirror/codemirror.min.css">
 </head>
 <body>
-  <header>
-    <div class="header-inner">
-      <div class="header-left">
-        <img
-          src="./img/icon.png"
-          alt="App Icon"
-          class="app-icon"
-        />
-        <input id="flowName" class="flow-name-input" type="text" value="フロー１" />
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主要ナビゲーション">
+      <div class="sidebar-top">
+        <button
+          id="sidebarToggle"
+          class="sidebar-toggle"
+          type="button"
+          aria-label="メニューを開閉"
+          aria-expanded="false"
+          aria-controls="sidebarNav"
+          title="メニューを開閉"
+        >
+          <span class="sidebar-toggle-icon" aria-hidden="true">
+            <img src="./icons/icon.png" alt="" />
+          </span>
+        </button>
+        <div class="sidebar-brand-submark" aria-hidden="true">
+          <img src="./icons/icon2.png" alt="" />
+        </div>
       </div>
-      <div class="actions">
-        <button id="btnReset" class="danger">インポート</button>
-        <button id="btnSave" class="primary">保存</button>
 
+      <nav id="sidebarNav" class="sidebar-nav">
+        <button class="sidebar-item is-current" type="button" data-app-mode="workflow" aria-current="page" title="ワークフロー作成">
+          <span class="sidebar-item-icon"><img src="./icons/workflow.svg" alt="" /></span>
+          <span class="sidebar-item-label">ワークフロー作成</span>
+        </button>
+        <button class="sidebar-item" type="button" data-app-mode="dataflow" title="データフロー作成">
+          <span class="sidebar-item-icon"><img src="./icons/dataflow.svg" alt="" /></span>
+          <span class="sidebar-item-label">データフロー作成</span>
+        </button>
+        <button class="sidebar-item" type="button" data-app-mode="query-builder" title="クエリビルダー">
+          <span class="sidebar-item-icon"><img src="./icons/database.svg" alt="" /></span>
+          <span class="sidebar-item-label">クエリビルダー</span>
+        </button>
+        <button class="sidebar-item" type="button" data-sidebar-action="form" title="入力フォーム作成">
+          <span class="sidebar-item-icon"><img src="./icons/form.svg" alt="" /></span>
+          <span class="sidebar-item-label">入力フォーム作成</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button class="sidebar-item sidebar-item-settings" type="button" data-sidebar-action="settings" title="設定">
+          <span class="sidebar-item-icon"><img src="./icons/settings.svg" alt="" /></span>
+          <span class="sidebar-item-label">設定</span>
+        </button>
       </div>
+    </aside>
+
+    <div class="app-main">
+      <header>
+        <div class="header-inner">
+          <div class="header-left">
+            <input id="flowName" class="flow-name-input" type="text" value="フロー１" />
+          </div>
+          <div class="actions">
+            <button id="btnReset" class="danger" type="button" aria-label="インポート" title="インポート">
+              <img src="./icons/import.svg" alt="" />
+            </button>
+            <button id="btnSave" class="primary" type="button" aria-label="保存" title="保存">
+              <img src="./icons/save.svg" alt="" />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <div id="flowchart"></div>
+
+        <section class="panel detail-panel">
+          <div id="nodeDetail"></div>
+        </section>
+      </main>
     </div>
-  </header>
-
-  <main>
-    <!-- <div class="hint">
-      ・上部のフローチャートでノードを選択すると、下部に詳細フォームが表示されます。<br/>
-      ・右側ボタンは <code>I</code> / <code>P</code> です。右ノード未作成時は <code>I</code> のみ表示されます。
-    </div> -->
-
-    <!-- <section class="panel flow-panel">
-      <h2>Flowchart</h2> -->
-      <div id="flowchart"></div>
-    <!-- </section> -->
-
-    <section class="panel detail-panel">
-      <div class="detail-resize-handle" aria-label="Resize Node Details"></div>
-      <div id="nodeDetail"></div>
-    </section>
-  </main>
+  </div>
 
   <div id="excelModal" class="mdl" aria-hidden="true">
     <div class="mdl__backdrop" data-mdl-close></div>
@@ -83,9 +125,9 @@
   </div>
 
   <!-- B方式：モジュール不使用。順番が命 -->
-  <script src="./js/config.js"></script>
-  <script src="./js/utils.js"></script>
-  <script src="./js/state.js"></script>
+  <script src="./js/config.js?v=20260329-2"></script>
+  <script src="./js/utils.js?v=20260329-1"></script>
+  <script src="./js/state.js?v=20260329-1"></script>
   <script src="./js/vars.js"></script>
   <script src="./vendor/js-yaml/js-yaml.min.js"></script>
   <script src="./vendor/sheetjs/xlsx.full.min.js"></script>
@@ -94,11 +136,11 @@
   <script src="./vendor/codemirror/mode/python.min.js"></script>
   <script src="./modal/modal_core.js"></script>
   <script src="./modal/excel_modal.js"></script>
-  <script src="./js/code.editor.js"></script>
-  <script src="./js/ui.suggest.js"></script>
-  <script src="./js/ui.fields.js"></script>
-  <script src="./js/ui.node.js"></script>
+  <script src="./js/code.editor.js?v=20260328-2"></script>
+  <script src="./js/ui.suggest.js?v=20260328-1"></script>
+  <script src="./js/ui.fields.js?v=20260329-2"></script>
+  <script src="./js/ui.node.js?v=20260329-7"></script>
   <script src="./js/ui.renderer.js"></script>
-  <script src="./js/app.js"></script>
+  <script src="./js/app.js?v=20260329-5"></script>
 </body>
 </html>

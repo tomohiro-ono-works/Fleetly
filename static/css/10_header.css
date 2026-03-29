@@ -4,18 +4,21 @@
 header {
   position: sticky;
   top: 0;
-  z-index: 50;
-  background: var(--brand-600);
-  color: var(--surface-page);
-  border-bottom: 0;
-  box-shadow: var(--shadow-soft);
+  z-index: 90;
+  margin: 0;
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  border-bottom: 1px solid var(--border-default);
+  border-radius: 0;
+  box-shadow: var(--shadow-soft-weak);
+  overflow: hidden;
 }
 
 .header-inner {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 0 14px 0 0;
+  padding: 10px 14px;
   gap: 12px;
   flex-wrap: wrap;
 }
@@ -23,41 +26,49 @@ header {
 .header-left {
   display: flex;
   align-items: center;
-  gap: 10px;
-}
-
-.app-icon {
-  width: 52px;
-  height: 52px;
-  object-fit: contain;
-  flex: 0 0 auto;
+  gap: 0;
+  flex: 1 1 auto;
 }
 
 .flow-name-input {
   min-width: 480px;
   max-width: 560px;
-  border: 0;
-  background: var(--surface-header);
-  color: var(--surface-page);
+  border: 1px solid var(--border-default);
+  background: var(--surface-page);
+  color: var(--text-primary);
   font-size: 13px;
   font-weight: 500;
   line-height: 1.2;
-  padding: 6px 12px;
-  border-radius: 8px;
+  padding: 8px 12px;
+  border-radius: 10px;
 }
 
 .flow-name-input:focus {
   outline: none;
-  border-color: transparent;
-  box-shadow: 0 0 0 2px var(--alpha-white-18);
+  border-color: var(--brand-600);
+  box-shadow: 0 0 0 2px var(--alpha-brand-15);
 }
 
 header .actions button {
-  background: var(--surface-strong);
-  border: 0;
-  color: var(--surface-page);
+  min-width: 42px;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-base);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 0;
 }
-header .actions button:hover { background: var(--surface-strong-hover); }
+header .actions button:hover { background: var(--surface-hover); }
+
+header .actions button img {
+  display: block;
+  width: 26px;
+  height: 26px;
+  object-fit: contain;
+  filter: none;
+}
 
 header .actions #btnRunFlow {
   background: var(--brand-650);

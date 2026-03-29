@@ -61,6 +61,7 @@ class ExcelConnector(BaseConnector):
         sheet_name: str,
         header_row: int,
         data_start_row: int,
+        schema: Any = None,
     ) -> pd.DataFrame:
         workbook = load_workbook(normalized_path, data_only=True)
         try:
@@ -81,7 +82,42 @@ class ExcelConnector(BaseConnector):
                 rows.append(dict(zip(headers, values)))
 
         workbook.close()
-        return pd.DataFrame(rows)
+        return self.attach_dataframe_schema(pd.DataFrame(rows), schema_override=schema)
+
+    def _build_dataframe_from_worksheet_rows(
+        self,
+        rows: list[list[Any]],
+        header_row: int,
+        data_start_row: int,
+        preserve_display: bool = False,
+        schema: Any = None,
+    ) -> pd.DataFrame:
+        if not rows:
+            return self.attach_dataframe_schema(pd.DataFrame(), schema_override=schema)
+        if header_row < 1:
+            raise ValueError("header_row は 1 以上で指定してください。")
+        if data_start_row < header_row:
+            raise ValueError("data_start_row は header_row 以上で指定してください。")
+        if header_row > len(rows):
+            raise ValueError("header_row が読込範囲を超えています。")
+        if data_start_row > len(rows) + 1:
+            raise ValueError("data_start_row が読込範囲を超えています。")
+
+        header_cells = rows[header_row - 1]
+        headers = [
+            str(cell) if cell is not None and str(cell) != "" else f"col_{index}"
+            for index, cell in enumerate(header_cells)
+        ]
+
+        records: list[dict[str, Any]] = []
+        for raw_row in rows[data_start_row - 1:]:
+            if preserve_display:
+                normalized_row = raw_row
+            else:
+                normalized_row = [self._normalize_excel_value(value) for value in raw_row]
+            if any(value is not None and value != "" for value in normalized_row):
+                records.append(dict(zip(headers, normalized_row)))
+        return self.attach_dataframe_schema(pd.DataFrame(records), schema_override=schema)
 
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
         if action == "read_excel":
@@ -94,6 +130,23 @@ class ExcelConnector(BaseConnector):
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
                 preserve_display=self._as_bool(params.get('preserve_display', False)),
+                schema=params.get('schema'),
+            )
+        elif action == "read_excel_range":
+            file_path = params.get('file_path')
+            cell_range = params.get('cell_range')
+            if not file_path:
+                raise ValueError("file_path が指定されていません。")
+            if not cell_range:
+                raise ValueError("cell_range が指定されていません。")
+            return self.read_excel_range(
+                path=str(file_path),
+                sheet_name=str(params.get('sheet_name', "")),
+                cell_range=str(cell_range),
+                header_row=int(params.get('header_row', 1)),
+                data_start_row=int(params.get('data_start_row', 2)),
+                preserve_display=self._as_bool(params.get('preserve_display', False)),
+                schema=params.get('schema'),
             )
         elif action == "write_excel":
             input_data = params.get('input_data')
@@ -106,7 +159,9 @@ class ExcelConnector(BaseConnector):
                 str(input_data),
                 str(output_path),
                 str(params.get('sheet_name', 'Sheet1')),
-                context)
+                context,
+                str(params.get('mode', 'create_or_replace')),
+            )
 
     # --- 内部ロジック ---
 
@@ -117,6 +172,7 @@ class ExcelConnector(BaseConnector):
         header_row: int,
         data_start_row: int,
         preserve_display: bool = False,
+        schema: Any = None,
     ) -> pd.DataFrame:
         normalized_path = self.normalize_file_path(path)
         if normalized_path is None or not os.path.exists(normalized_path):
@@ -132,6 +188,7 @@ class ExcelConnector(BaseConnector):
                 sheet_name,
                 header_row,
                 data_start_row,
+                schema,
             )
 
         skiprows = list(range(header_row, data_start_row - 1)) if data_start_row > header_row + 1 else None
@@ -156,17 +213,73 @@ class ExcelConnector(BaseConnector):
             str(column) if column is not None and not pd.isna(column) else f"col_{index}"
             for index, column in enumerate(df.columns)
         ]
-        return df.apply(lambda col: col.map(self._normalize_excel_value))
+        normalized_df = df.apply(lambda col: col.map(self._normalize_excel_value))
+        return self.attach_dataframe_schema(normalized_df, schema_override=schema)
+
+    def read_excel_range(
+        self,
+        path: str,
+        sheet_name: str,
+        cell_range: str,
+        header_row: int,
+        data_start_row: int,
+        preserve_display: bool = False,
+        schema: Any = None,
+    ) -> pd.DataFrame:
+        normalized_path = self.normalize_file_path(path)
+        if normalized_path is None or not os.path.exists(normalized_path):
+            raise FileNotFoundError(f"ファイルが見つかりません: {normalized_path}")
+
+        workbook = load_workbook(normalized_path, data_only=True)
+        try:
+            worksheet = workbook[sheet_name] if sheet_name else workbook.active
+        except KeyError as exc:
+            workbook.close()
+            raise ValueError(f"シートが見つかりませんでした: {sheet_name}") from exc
+
+        try:
+            range_values = worksheet[cell_range]
+        except ValueError as exc:
+            workbook.close()
+            raise ValueError(f"cell_range の指定が不正です: {cell_range}") from exc
+
+        if not isinstance(range_values, tuple):
+            range_rows = [[
+                self._format_display_value(range_values) if preserve_display else range_values.value
+            ]]
+        else:
+            range_rows = []
+            for row in range_values:
+                normalized_row = []
+                for cell in row:
+                    normalized_row.append(
+                        self._format_display_value(cell) if preserve_display else cell.value
+                    )
+                range_rows.append(normalized_row)
+
+        workbook.close()
+        return self._build_dataframe_from_worksheet_rows(
+            rows=range_rows,
+            header_row=header_row,
+            data_start_row=data_start_row,
+            preserve_display=preserve_display,
+            schema=schema,
+        )
 
     def write_excel(self, input_var: str, output_path: str, sheet_name: str, context: dict[str, Any], mode: str = 'create_or_replace'):
         """
         mode:
         'create_or_replace': 指定シートを「初期化」して書き込む（他のシートは維持）
-        'insert_or_replace': 指定シートの「末尾に追記」して書き込む（他のシートは維持）
+        'create_or_insert': 指定シートの「末尾に追記」して書き込む（他のシートは維持）
         """
         normalized_output_path = self.normalize_file_path(output_path)
         if normalized_output_path is None:
             raise ValueError("output_path が指定されていません。")
+        mode = str(mode or "create_or_replace").strip()
+        if mode == "insert_or_replace":
+            mode = "create_or_insert"
+        if mode not in {"create_or_replace", "create_or_insert"}:
+            raise ValueError(f"未対応の書き込みモードです: {mode}")
         data = context.get(input_var)
         if data is None:
             raise ValueError("データが空です")

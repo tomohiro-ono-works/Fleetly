@@ -92,7 +92,15 @@ window.utils = {
         return keys
           .map((k) => {
             const vv = v[k];
-            if (Array.isArray(vv) || (vv && typeof vv === "object")) {
+            const isArray = Array.isArray(vv);
+            const isObject = !!vv && typeof vv === "object";
+            if (isArray || isObject) {
+              if (isArray && vv.length === 0) {
+                return `${indent(lvl)}${k}: []`;
+              }
+              if (isObject && !isArray && Object.keys(vv).length === 0) {
+                return `${indent(lvl)}${k}: {}`;
+              }
               const rendered = dump(vv, lvl + 1);
               return `${indent(lvl)}${k}:\n${rendered}`;
             } else {

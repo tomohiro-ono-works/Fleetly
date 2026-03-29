@@ -8,6 +8,7 @@ from core.workflow_engine import WorkflowEngine
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 WORKFLOW_DIR = os.path.join(BASE_DIR, "workflows")
+FLOW_EXTENSIONS = (".zizw", ".zizd", ".zizq")
 
 logger = setup_logger()
 engine = WorkflowEngine(logger)
@@ -16,14 +17,18 @@ if not os.path.exists(WORKFLOW_DIR):
     os.makedirs(WORKFLOW_DIR)
 
 
-def list_workflows_local():
-    workflows_by_path = {}
+def has_flow_extension(path: str) -> bool:
+    return str(path or "").lower().endswith(FLOW_EXTENSIONS)
 
-    for full_path in _discover_workflow_paths():
+
+def list_flows_local():
+    flows_by_path = {}
+
+    for full_path in _discover_flow_paths():
         if not os.path.exists(full_path):
             continue
         normalized = os.path.abspath(full_path)
-        workflows_by_path[normalized] = {
+        flows_by_path[normalized] = {
             "filename": os.path.basename(normalized),
             "path": normalized,
             "directory": os.path.dirname(normalized),
@@ -31,20 +36,24 @@ def list_workflows_local():
         }
 
     return sorted(
-        workflows_by_path.values(),
+        flows_by_path.values(),
         key=lambda item: (-item["modified_at"], item["filename"].lower(), item["path"].lower()),
     )
 
 
-def _discover_workflow_paths():
+def list_workflows_local():
+    return list_flows_local()
+
+
+def _discover_flow_paths():
     discovered_paths = []
 
     if os.path.exists(WORKFLOW_DIR):
         for name in os.listdir(WORKFLOW_DIR):
-            if name.endswith(".mkm"):
+            if has_flow_extension(name):
                 discovered_paths.append(os.path.join(WORKFLOW_DIR, name))
 
-    for item in _discover_workflow_paths_from_powershell():
+    for item in _discover_flow_paths_from_powershell():
         path = item.get("path")
         if path:
             discovered_paths.append(path)
@@ -60,7 +69,7 @@ def _discover_workflow_paths():
     return unique_paths
 
 
-def _discover_workflow_paths_from_powershell():
+def _discover_flow_paths_from_powershell():
     if os.name != "nt":
         return []
 
@@ -86,11 +95,13 @@ $targetFolders = $targetFolders | Where-Object { $_ } | Select-Object -Unique
 
 $results = foreach ($folder in $targetFolders) {
     if (Test-Path $folder) {
-        Get-ChildItem -Path $folder -Filter *.mkm -File -ErrorAction SilentlyContinue | ForEach-Object {
-            [PSCustomObject]@{
-                path = $_.FullName
+        Get-ChildItem -Path $folder -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.Extension -in @('.zizw', '.zizd', '.zizq') } |
+            ForEach-Object {
+                [PSCustomObject]@{
+                    path = $_.FullName
+                }
             }
-        }
     }
 }
 
@@ -125,7 +136,7 @@ $results | ConvertTo-Json -Depth 2 -Compress
     return []
 
 
-def resolve_workflow_path(yaml_path: str):
+def resolve_flow_path(yaml_path: str):
     raw_path = str(yaml_path or "").strip()
     if not raw_path:
         return None
@@ -155,7 +166,7 @@ def resolve_workflow_path(yaml_path: str):
 
 
 def run_cli(yaml_path):
-    resolved_path = resolve_workflow_path(yaml_path)
+    resolved_path = resolve_flow_path(yaml_path)
     if not resolved_path or not os.path.exists(resolved_path):
         display_path = str(yaml_path or "").strip()
         if len(display_path) >= 2 and display_path[0] == display_path[-1] and display_path[0] in {"\"", "'"}:
@@ -163,6 +174,8 @@ def run_cli(yaml_path):
         message = f"ファイルが見つかりません: {display_path}"
         logger.error(message)
         return {
+            "flow_path": os.path.abspath(display_path) if display_path else "",
+            "flow_name": "Untitled",
             "workflow_path": os.path.abspath(display_path) if display_path else "",
             "workflow_name": "Untitled",
             "status": "error",
@@ -171,7 +184,7 @@ def run_cli(yaml_path):
         }
 
     logger.info(f"CLIモードで実行開始: {resolved_path}")
-    report = engine.run_workflow(resolved_path)
+    report = engine.run_flow(resolved_path)
     if report.get("status") == "success":
         logger.info("CLI実行が正常に完了しました。")
     else:
@@ -181,7 +194,7 @@ def run_cli(yaml_path):
 
 def main():
     if len(sys.argv) < 2:
-        print("usage: python main.py <workflow_path>")
+        print("usage: python main.py <flow_path>")
         return 1
 
     report = run_cli(sys.argv[1])
