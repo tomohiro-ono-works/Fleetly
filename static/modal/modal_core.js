@@ -47,5 +47,6 @@
     return { open, close, q, root: rootEl };
   }
 
-  window.ModalCore = { create };
+  const modalCore = { create };
+  window.ModalCore = modalCore;
 })();

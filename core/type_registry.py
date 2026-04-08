@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, time
 from decimal import Decimal
+import re
 
 import pandas as pd
 from pandas.api.types import (
@@ -219,6 +220,9 @@ def _infer_string_family(values: list[str]) -> str:
 def _looks_like_date(value: str) -> bool:
     normalized = value.replace("年", "-").replace("月", "-").replace("日", "")
     normalized = normalized.replace("/", "-")
+    compact_date_match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})", normalized)
+    if compact_date_match:
+        normalized = f"{compact_date_match.group(1)}-{compact_date_match.group(2)}-{compact_date_match.group(3)}"
     parts = normalized.split("-")
     if len(parts) != 3:
         return False

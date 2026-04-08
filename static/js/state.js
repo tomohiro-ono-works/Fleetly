@@ -1,4 +1,4 @@
-window.stateOps = {
+const stateOps = {
   createDefaultState(options = {}) {
     const appMode = normalizeAppMode(typeof options === "string" ? options : options?.appMode);
     const first = createDefaultNode(appMode);
@@ -13,6 +13,7 @@ window.stateOps = {
       nodes: [first],
       startParameters: [],
       selectedNodeId: first.id,
+      pendingMergeSourceId: null,
       nextStepSeq: 2
     };
   },
@@ -38,6 +39,28 @@ window.stateOps = {
     if (anchorId === undefined) return;
     addParallelAtAnchor(state, anchorId);
     refreshParallelOfForParent(state, anchorId);
+  },
+
+  duplicateNodeAfter(state, nodeId, payload) {
+    const targetIndex = state.nodes.findIndex((node) => node.id === nodeId);
+    if (targetIndex < 0 || !payload || typeof payload !== "object") return false;
+    const target = state.nodes[targetIndex];
+    if (!target || isLoopRootStateNode(target) || target.loopOwnerId) return false;
+
+    const beforeIds = new Set(state.nodes.map((node) => node.id));
+    const anchor = state.nodes[targetIndex];
+    if (!anchor) return false;
+    insertAtAnchor(state, anchor.id);
+    refreshParallelOfForParent(state, anchor.id);
+    const newNode = state.nodes.find((node) => !beforeIds.has(node.id));
+    if (!newNode) return false;
+
+    newNode.connector = String(payload.connector || newNode.connector || "");
+    newNode.action = String(payload.action || newNode.action || "");
+    newNode.description = typeof payload.description === "string" ? payload.description : "";
+    newNode.descriptionAuto = payload.descriptionAuto !== undefined ? !!payload.descriptionAuto : true;
+    newNode.form = cloneStateValue(payload.form) || {};
+    return true;
   },
 
   moveNodeToInsert(state, nodeId, options = {}) {
@@ -101,7 +124,11 @@ window.stateOps = {
     state.nodes.forEach((n) => {
       if (n.parentId && !idSet.has(n.parentId)) n.parentId = null;
       if (n.parallelOf && !idSet.has(n.parallelOf)) n.parallelOf = null;
+      n.mergeParentIds = getValidMergeParentIds(n, idSet);
     });
+    if (state.pendingMergeSourceId && !idSet.has(state.pendingMergeSourceId)) {
+      state.pendingMergeSourceId = null;
+    }
 
     refreshParallelOfForParent(state, parentId);
     children.forEach((child) => refreshParallelOfForParent(state, child.id));
@@ -114,8 +141,54 @@ window.stateOps = {
 
   setSelectedNode(state, nodeId) {
     state.selectedNodeId = nodeId;
+  },
+
+  setPendingMergeSource(state, nodeId) {
+    const node = state.nodes.find((item) => item.id === nodeId);
+    if (!node || isLoopRootStateNode(node) || node.loopOwnerId) {
+      state.pendingMergeSourceId = null;
+      return false;
+    }
+    state.pendingMergeSourceId = nodeId;
+    return true;
+  },
+
+  clearPendingMergeSource(state) {
+    state.pendingMergeSourceId = null;
+  },
+
+  addMergeParent(state, sourceId, targetId) {
+    const source = state.nodes.find((item) => item.id === sourceId);
+    const target = state.nodes.find((item) => item.id === targetId);
+    if (!source || !target) return { ok: false, reason: "not_found" };
+    if (source.id === target.id) return { ok: false, reason: "self" };
+    if (isLoopRootStateNode(source) || isLoopRootStateNode(target)) return { ok: false, reason: "loop_root" };
+    if (source.loopOwnerId || target.loopOwnerId) return { ok: false, reason: "loop_internal" };
+    if ((target.parentId ?? null) === source.id) return { ok: false, reason: "already_primary" };
+    const mergeParentIds = getMergeParentIds(target);
+    if (mergeParentIds.includes(source.id)) return { ok: false, reason: "already_merge" };
+    if (hasReachablePath(state, source.id, target.id) || hasReachablePath(state, target.id, source.id)) {
+      return { ok: false, reason: "connected" };
+    }
+    target.mergeParentIds = [...mergeParentIds, source.id];
+    return { ok: true };
+  },
+
+  removeMergeParent(state, sourceId, targetId) {
+    const target = state.nodes.find((item) => item.id === targetId);
+    if (!target) return false;
+    const currentIds = getMergeParentIds(target);
+    const nextIds = currentIds.filter((id) => id !== sourceId);
+    if (nextIds.length === currentIds.length) return false;
+    target.mergeParentIds = nextIds;
+    return true;
   }
 };
+
+window.stateOps = stateOps;
+const __zizPackagesState = window.zizPackages = window.zizPackages || {};
+const __zizCoreState = __zizPackagesState.core = __zizPackagesState.core || {};
+__zizCoreState.stateOps = stateOps;
 
 function isLoopRootStateNode(node) {
   return !!node && node.action === "loop_tasks" && !node.loopOwnerId;
@@ -168,7 +241,11 @@ function removeLoopRootNode(state, target, index) {
   state.nodes.forEach((node) => {
     if (node.parentId && !idSet.has(node.parentId)) node.parentId = null;
     if (node.parallelOf && !idSet.has(node.parallelOf)) node.parallelOf = null;
+    node.mergeParentIds = getValidMergeParentIds(node, idSet);
   });
+  if (state.pendingMergeSourceId && !idSet.has(state.pendingMergeSourceId)) {
+    state.pendingMergeSourceId = null;
+  }
 
   refreshParallelOfForParent(state, parentId);
   outsideChildren.forEach((child) => refreshParallelOfForParent(state, child.id));
@@ -341,6 +418,43 @@ function getChildren(state, parentId) {
     });
 }
 
+function getMergeParentIds(node) {
+  if (!Array.isArray(node?.mergeParentIds)) return [];
+  return node.mergeParentIds
+    .map((id) => String(id || "").trim())
+    .filter(Boolean);
+}
+
+function getValidMergeParentIds(node, idSet) {
+  const primaryParentId = node?.parentId ?? null;
+  return Array.from(new Set(
+    getMergeParentIds(node).filter((id) => id !== primaryParentId && idSet.has(id))
+  ));
+}
+
+function getOutgoingNodeIds(state, sourceId) {
+  return state.nodes
+    .filter((node) => (node.parentId ?? null) === sourceId || getMergeParentIds(node).includes(sourceId))
+    .map((node) => node.id);
+}
+
+function hasReachablePath(state, sourceId, targetId) {
+  if (!sourceId || !targetId) return false;
+  if (sourceId === targetId) return true;
+  const visited = new Set();
+  const queue = [sourceId];
+  while (queue.length) {
+    const currentId = queue.shift();
+    if (!currentId || visited.has(currentId)) continue;
+    visited.add(currentId);
+    if (currentId === targetId) return true;
+    getOutgoingNodeIds(state, currentId).forEach((childId) => {
+      if (!visited.has(childId)) queue.push(childId);
+    });
+  }
+  return false;
+}
+
 function getNextChildOrder(state, parentId) {
   const children = getChildren(state, parentId);
   if (!children.length) return 1;
@@ -366,8 +480,8 @@ function collectRelatedNodeIds(state, nodeId) {
     const currentId = queue.shift();
     if (!currentId || seen.has(currentId)) continue;
     seen.add(currentId);
-    getChildren(state, currentId).forEach((child) => {
-      if (!seen.has(child.id)) queue.push(child.id);
+    getOutgoingNodeIds(state, currentId).forEach((childId) => {
+      if (!seen.has(childId)) queue.push(childId);
     });
   }
   return seen;
@@ -409,7 +523,7 @@ function createId() {
 }
 
 function getConfigObject() {
-  return window.CONFIG || {};
+  return (window.zizPackages && window.zizPackages.core && window.zizPackages.core.CONFIG) || {};
 }
 
 function normalizeAppMode(appMode) {
@@ -459,6 +573,7 @@ function createDefaultNode(appMode) {
     descriptionAuto: true,
     form: {},
     parentId: null,
+    mergeParentIds: [],
     parallelOf: null,
     parallelOrder: 1,
     outputs: ["step1"]
@@ -477,6 +592,7 @@ function createNewNode(stepName, appMode) {
     descriptionAuto: true,
     form: {},
     parentId: null,
+    mergeParentIds: [],
     parallelOf: null,
     parallelOrder: 1,
     outputs: []
@@ -498,4 +614,15 @@ function inferNextStepSeq(state) {
     if (Number.isFinite(n) && n > max) max = n;
   });
   return max + 1;
+}
+
+function cloneStateValue(value) {
+  if (typeof window.structuredClone === "function") {
+    try {
+      return window.structuredClone(value);
+    } catch (error) {
+      // fallback below
+    }
+  }
+  return JSON.parse(JSON.stringify(value ?? null));
 }

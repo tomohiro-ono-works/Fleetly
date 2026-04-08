@@ -1,6 +1,12 @@
 (function () {
-  const { el } = window.utils;
-  const { wrapWithVarSuggest } = window.uiSuggest;
+  const packages = window.zizPackages || {};
+  const corePkg = packages.core || {};
+  const uiPkg = packages.ui || {};
+  const bridgeApi = corePkg.bridge || null;
+  const dialogApi = corePkg.dialog || null;
+  const codeEditors = corePkg.codeEditors || null;
+  const { el } = (corePkg.utils || {});
+  const { wrapWithVarSuggest } = (uiPkg.suggest || {});
 
   /* =========================================================
      combo input (free input + full dropdown list)
@@ -145,9 +151,9 @@
 
   function renderInputDataSelect({ node, field, current, upstreamSteps, onValueChanged }) {
     const select = el("select", {
-      onchange: (e) => {
+      onchange: async (e) => {
         node.form[field.key] = e.target.value;
-        if (onValueChanged) onValueChanged();
+        if (onValueChanged) await onValueChanged();
       }
     });
 
@@ -229,11 +235,277 @@
     return JSON.stringify(normalizeSimpleSchemaItems(items), null, 2);
   }
 
+  const FILTER_OPERATOR_OPTIONS = [
+    { value: "exact", label: "完全一致" },
+    { value: "prefix", label: "前方一致" },
+    { value: "suffix", label: "後方一致" },
+    { value: "contains", label: "部分一致" },
+    { value: "range", label: "範囲一致" }
+  ];
+
+  function parseFilterConditionText(value) {
+    const text = String(value || "").trim();
+    if (!text) return { items: [], invalid: false, raw: "[]" };
+    try {
+      const parsed = JSON.parse(text);
+      if (!Array.isArray(parsed)) throw new Error("conditions must be an array");
+      return {
+        items: parsed,
+        invalid: false,
+        raw: JSON.stringify(parsed, null, 2)
+      };
+    } catch (error) {
+      return {
+        items: [],
+        invalid: true,
+        raw: text,
+        error
+      };
+    }
+  }
+
+  function normalizeFilterConditions(items) {
+    return (Array.isArray(items) ? items : []).map((item) => ({
+      field: String(item?.field || ""),
+      operator: String(item?.operator || "exact").trim().toLowerCase() || "exact",
+      value: String(item?.value || ""),
+      value_to: String(item?.value_to || "")
+    }));
+  }
+
+  function stringifyFilterConditions(items) {
+    return JSON.stringify(normalizeFilterConditions(items), null, 2);
+  }
+
+  function extractSchemaFieldNames(schemaValue) {
+    const parsed = Array.isArray(schemaValue)
+      ? { items: schemaValue, invalid: false }
+      : parseSchemaText(schemaValue);
+    if (parsed.invalid) return [];
+    const names = [];
+    parsed.items.forEach((item) => {
+      if (!item || typeof item !== "object") return;
+      const name = String(item.new_name || item.origin_name || item.name_en || item.name_ja || "").trim();
+      if (name && !names.includes(name)) names.push(name);
+    });
+    return names;
+  }
+
+  async function resolveFilterFieldOptions({ node, state }) {
+    const stepRef = normalizeInputDataReference(node?.form?.input_data || "");
+    if (!stepRef) return [];
+    const sourceNode = findNodeByStepName(state, stepRef);
+    if (!sourceNode) return [];
+
+    const fromForm = extractSchemaFieldNames(sourceNode?.form?.schema || "");
+    if (fromForm.length) return fromForm;
+
+    if (!bridgeApi?.available?.() || !window.__zizCurrentRunId) return [];
+
+    try {
+      const schemaDto = await bridgeApi.call("result.getSchema", {
+        run_id: window.__zizCurrentRunId,
+        step_id: String(sourceNode.stepName || "")
+      });
+      const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
+      return columns
+        .map((item) => String(item?.new_name || item?.origin_name || "").trim())
+        .filter((name, index, list) => !!name && list.indexOf(name) === index);
+    } catch (error) {
+      console.warn("filter field options resolve failed", error);
+      return [];
+    }
+  }
+
+  function renderFilterBuilder({ node, field, current, state, onInputChanged, onCommitChanged }) {
+    const parsed = parseFilterConditionText(current);
+    const wrapper = el("div", { class: "filter-builder" }, []);
+    const toolbar = el("div", { class: "filter-builder-toolbar" }, []);
+    const addRowBtn = el("button", { type: "button", class: "filter-add-row-btn" }, [document.createTextNode("+ 条件追加")]);
+    const hint = el("div", { class: "filter-builder-hint" }, []);
+    const header = el("div", { class: "filter-builder-header" }, [
+      el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("対象フィールド")]),
+      el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("演算子")]),
+      el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("値")]),
+      el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("範囲終点")]),
+      el("div", { class: "filter-builder-header__cell filter-builder-header__cell--action" }, [document.createTextNode("")])
+    ]);
+    const rowsHost = el("div", { class: "filter-builder-rows" }, []);
+    const hiddenValue = el("textarea", {
+      class: "filter-builder-value",
+      hidden: "hidden",
+      tabindex: "-1",
+      "aria-hidden": "true"
+    });
+
+    let conditions = normalizeFilterConditions(parsed.items);
+    let fieldOptions = [];
+
+    function syncNodeForm(value, committed) {
+      hiddenValue.value = value;
+      node.form[field.key] = value;
+      if (committed) {
+        if (onCommitChanged) onCommitChanged();
+      } else if (onInputChanged) {
+        onInputChanged();
+      }
+    }
+
+    function collectConditions() {
+      return Array.from(rowsHost.querySelectorAll(".filter-builder-row")).map((row) => ({
+        field: row.querySelector("[data-filter-key='field']")?.value || "",
+        operator: row.querySelector("[data-filter-key='operator']")?.value || "exact",
+        value: row.querySelector("[data-filter-key='value']")?.value || "",
+        value_to: row.querySelector("[data-filter-key='value_to']")?.value || ""
+      }));
+    }
+
+    function updateHint() {
+      if (!String(node?.form?.input_data || "").trim()) {
+        hint.textContent = "先に入力データを選択すると、対象フィールド候補を表示できます。";
+        return;
+      }
+      if (!fieldOptions.length) {
+        hint.textContent = "参照元のスキーマが未取得のため、対象フィールド候補を表示できません。";
+        return;
+      }
+      hint.textContent = "条件はすべて AND で結合されます。";
+    }
+
+    function createFieldSelect(currentField) {
+      const select = el("select", { "data-filter-key": "field" }, []);
+      select.appendChild(el("option", { value: "" }, [document.createTextNode("選択してください")]));
+      const options = fieldOptions.slice();
+      if (currentField && !options.includes(currentField)) options.unshift(currentField);
+      options.forEach((name) => {
+        const opt = el("option", { value: name }, [document.createTextNode(name)]);
+        if (name === currentField) opt.selected = true;
+        select.appendChild(opt);
+      });
+      return select;
+    }
+
+    function updateRangeState(row, operator) {
+      const endInput = row.querySelector("[data-filter-key='value_to']");
+      if (!endInput) return;
+      const isRange = operator === "range";
+      endInput.disabled = !isRange;
+      row.classList.toggle("is-range", isRange);
+      if (!isRange) {
+        endInput.value = "";
+      }
+    }
+
+    function renderConditionRows() {
+      rowsHost.innerHTML = "";
+      if (!conditions.length) {
+        conditions.push({ field: "", operator: "exact", value: "", value_to: "" });
+      }
+
+      conditions.forEach((item, index) => {
+        const row = el("div", { class: "filter-builder-row" }, []);
+        const fieldSelect = createFieldSelect(item.field);
+        fieldSelect.dataset.filterKey = "field";
+        fieldSelect.onchange = () => {
+          conditions = collectConditions();
+          syncNodeForm(stringifyFilterConditions(conditions), true);
+        };
+
+        const operatorSelect = el("select", {
+          "data-filter-key": "operator",
+          onchange: () => {
+            updateRangeState(row, operatorSelect.value);
+            conditions = collectConditions();
+            syncNodeForm(stringifyFilterConditions(conditions), true);
+          }
+        });
+        FILTER_OPERATOR_OPTIONS.forEach((option) => {
+          const opt = el("option", { value: option.value }, [document.createTextNode(option.label)]);
+          if (option.value === item.operator) opt.selected = true;
+          operatorSelect.appendChild(opt);
+        });
+
+        const valueInput = el("input", {
+          type: "text",
+          value: item.value,
+          "data-filter-key": "value",
+          placeholder: "値",
+          oninput: () => {
+            conditions = collectConditions();
+            syncNodeForm(stringifyFilterConditions(conditions), false);
+          },
+          onchange: () => {
+            conditions = collectConditions();
+            syncNodeForm(stringifyFilterConditions(conditions), true);
+          }
+        });
+
+        const valueToInput = el("input", {
+          type: "text",
+          value: item.value_to,
+          "data-filter-key": "value_to",
+          placeholder: "範囲終点",
+          oninput: () => {
+            conditions = collectConditions();
+            syncNodeForm(stringifyFilterConditions(conditions), false);
+          },
+          onchange: () => {
+            conditions = collectConditions();
+            syncNodeForm(stringifyFilterConditions(conditions), true);
+          }
+        });
+
+        const removeBtn = el("button", {
+          type: "button",
+          class: "filter-remove-row-btn",
+          onclick: () => {
+            conditions.splice(index, 1);
+            renderConditionRows();
+            syncNodeForm(stringifyFilterConditions(conditions), true);
+          }
+        }, [document.createTextNode("削除")]);
+
+        row.appendChild(fieldSelect);
+        row.appendChild(operatorSelect);
+        row.appendChild(valueInput);
+        row.appendChild(valueToInput);
+        row.appendChild(removeBtn);
+        rowsHost.appendChild(row);
+        updateRangeState(row, item.operator);
+      });
+      updateHint();
+    }
+
+    async function refreshFieldOptions() {
+      fieldOptions = await resolveFilterFieldOptions({ node, state });
+      renderConditionRows();
+    }
+
+    addRowBtn.addEventListener("click", () => {
+      conditions.push({ field: "", operator: "exact", value: "", value_to: "" });
+      renderConditionRows();
+      syncNodeForm(stringifyFilterConditions(conditions), true);
+    });
+
+    toolbar.appendChild(addRowBtn);
+    wrapper.appendChild(toolbar);
+    wrapper.appendChild(hint);
+    wrapper.appendChild(header);
+    wrapper.appendChild(rowsHost);
+    wrapper.appendChild(hiddenValue);
+
+    hiddenValue.value = parsed.raw;
+    renderConditionRows();
+    void refreshFieldOptions();
+    return { input: hiddenValue, wrapper, skipVarSuggest: true };
+  }
+
   function renderSchemaEditor({ node, field, current, onInputChanged, onCommitChanged }) {
     const parsed = parseSchemaText(current);
     const initialMode = canUseSchemaFormMode(parsed) ? "form" : "json";
     const wrapper = el("div", { class: "schema-editor" }, []);
     const toolbar = el("div", { class: "schema-editor-toolbar" }, []);
+    const toolbarMain = el("div", { class: "schema-editor-toolbar-main" }, []);
     const modeSwitch = el("div", { class: "schema-editor-mode" }, []);
     const formBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("フォーム")]);
     const jsonBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("JSON")]);
@@ -242,6 +514,13 @@
     const formPane = el("div", { class: "schema-form-pane" }, []);
     const jsonPane = el("div", { class: "schema-json-pane" }, []);
     const addRowBtn = el("button", { type: "button", class: "schema-add-row-btn" }, [document.createTextNode("+ カラム追加")]);
+    const headerRow = el("div", { class: "schema-form-header" }, [
+      el("div", { class: "schema-form-header__cell" }, [document.createTextNode("元フィールド名")]),
+      el("div", { class: "schema-form-header__cell" }, [document.createTextNode("新フィールド名")]),
+      el("div", { class: "schema-form-header__cell" }, [document.createTextNode("説明")]),
+      el("div", { class: "schema-form-header__cell" }, [document.createTextNode("データ型")]),
+      el("div", { class: "schema-form-header__cell schema-form-header__cell--action" }, [document.createTextNode("")])
+    ]);
     const rowsHost = el("div", { class: "schema-form-rows" }, []);
     const textarea = el("textarea", {
       class: "schema-json-input",
@@ -397,6 +676,7 @@
       jsonBtn.classList.toggle("is-active", mode === "json");
       formPane.classList.toggle("is-hidden", mode !== "form");
       jsonPane.classList.toggle("is-hidden", mode !== "json");
+      addRowBtn.classList.toggle("is-hidden", mode !== "form");
       syncHint();
     }
 
@@ -411,8 +691,10 @@
 
     modeSwitch.appendChild(formBtn);
     modeSwitch.appendChild(jsonBtn);
-    toolbar.appendChild(modeSwitch);
-    formPane.appendChild(addRowBtn);
+    toolbarMain.appendChild(modeSwitch);
+    toolbarMain.appendChild(addRowBtn);
+    toolbar.appendChild(toolbarMain);
+    formPane.appendChild(headerRow);
     formPane.appendChild(rowsHost);
     jsonPane.appendChild(textarea);
     body.appendChild(formPane);
@@ -445,8 +727,8 @@
     const host = el("div", { class: "code-editor-host", "data-language": language }, []);
     const wrapper = el("div", { class: "code-editor" }, [host, textarea]);
 
-    if (window.codeEditors && typeof window.codeEditors.mountCodeEditor === "function" && language) {
-      window.codeEditors
+    if (codeEditors && typeof codeEditors.mountCodeEditor === "function" && language) {
+      codeEditors
         .mountCodeEditor({
           host,
           value: textarea.value,
@@ -513,6 +795,55 @@
     return text;
   }
 
+  function isWriteOutputConnector(node) {
+    const connector = String(node?.connector || "");
+    const action = String(node?.action || "");
+    return (connector === "CSVConnector" && action === "write_csv")
+      || (connector === "ExcelConnector" && action === "write_excel");
+  }
+
+  function findNodeByStepName(state, stepName) {
+    if (!state || !Array.isArray(state.nodes)) return null;
+    return state.nodes.find((node) => String(node?.stepName || "") === String(stepName || "")) || null;
+  }
+
+  function toSchemaText(schemaValue) {
+    if (Array.isArray(schemaValue)) {
+      return stringifySchemaItems(schemaValue);
+    }
+    const text = String(schemaValue || "").trim();
+    if (!text) return "";
+    const parsed = parseSchemaText(text);
+    if (parsed.invalid) return "";
+    return JSON.stringify(parsed.items, null, 2);
+  }
+
+  function isHiddenBindingRef(value) {
+    return typeof value === "string" && /^\{\{hidden\.[^}]+\}\}$/.test(value.trim());
+  }
+
+  function getHiddenBindingMeta(value, hiddenBindings) {
+    if (!isHiddenBindingRef(value)) return null;
+    if (!hiddenBindings || typeof hiddenBindings !== "object") return null;
+    const meta = hiddenBindings[value];
+    return meta && typeof meta === "object" ? meta : null;
+  }
+
+  function buildFileDialogFilters(field) {
+    const accept = String(field?.accept || "").trim();
+    if (!accept) return [];
+    const patterns = accept
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean)
+      .map((item) => item.startsWith(".") ? `*${item}` : item);
+    if (!patterns.length) return [];
+    return [{
+      label: field.label || "ファイル",
+      patterns
+    }];
+  }
+
   function getFieldReferenceWarnings({ node, field, upstreamSteps, availableVariableNames }) {
     const value = getFieldCurrentValue(node, field);
     const normalizedUpstream = Array.from(new Set((upstreamSteps || []).filter(Boolean)));
@@ -534,7 +865,7 @@
       .map((ref) => `変数 ${ref} は定義されていません。`);
   }
 
-  function renderField({ node, field, upstreamSteps, availableVariableNames, onStateChanged }) {
+  function renderField({ node, field, upstreamSteps, availableVariableNames, hiddenBindings, state, config, onStateChanged }) {
     const row = el("div", { class: "row" }, []);
     row.appendChild(el("label", {}, [document.createTextNode(field.label)]));
 
@@ -543,6 +874,7 @@
     let inputEl = null;
     let wrapper = null;
     const warningEl = el("div", { class: "field-warning", hidden: "hidden" }, []);
+    const hiddenMetaEl = el("div", { class: "sub field-secret-meta", hidden: "hidden" }, []);
 
     function updateRequiredState() {
       if (!field.required || !inputEl) {
@@ -567,12 +899,19 @@
     function notifyLocalChanged() {
       updateRequiredState();
       updateReferenceWarning();
+      updateHiddenBindingMeta();
     }
 
     function notifyCommitted() {
       updateRequiredState();
       updateReferenceWarning();
+      updateHiddenBindingMeta();
       if (onStateChanged) onStateChanged();
+    }
+
+    function updateHiddenBindingMeta() {
+      hiddenMetaEl.hidden = true;
+      hiddenMetaEl.textContent = "";
     }
 
     if (field.kind === "textarea" && field.key === "schema") {
@@ -580,6 +919,18 @@
         node,
         field,
         current,
+        onInputChanged: notifyLocalChanged,
+        onCommitChanged: notifyCommitted
+      });
+      inputEl = rendered.input;
+      wrapper = rendered.wrapper;
+      field.__skipVarSuggest = !!rendered.skipVarSuggest;
+    } else if (field.kind === "filter-builder") {
+      const rendered = renderFilterBuilder({
+        node,
+        field,
+        current,
+        state,
         onInputChanged: notifyLocalChanged,
         onCommitChanged: notifyCommitted
       });
@@ -617,6 +968,8 @@
     } else if (field.kind === "number") {
       inputEl = el("input", {
         type: "number",
+        min: field.min !== undefined ? String(field.min) : undefined,
+        max: field.max !== undefined ? String(field.max) : undefined,
         placeholder: field.placeholder || "",
         oninput: (e) => {
           node.form[field.key] = e.target.value;
@@ -629,13 +982,29 @@
       });
       inputEl.value = current;
       wrapper = inputEl;
+    } else if (field.kind === "checkbox") {
+      inputEl = el("input", {
+        type: "checkbox",
+        onchange: (e) => {
+          node.form[field.key] = !!e.target.checked;
+          notifyCommitted();
+        }
+      });
+      inputEl.checked = !!current;
+      const checkboxLabel = el("label", { class: "checkbox-field" }, [
+        inputEl,
+        el("span", { class: "checkbox-field__text" }, [document.createTextNode(field.label || field.key)])
+      ]);
+      wrapper = checkboxLabel;
     } else if (field.key === "input_data") {
       const r = renderInputDataSelect({
         node,
         field,
         current,
         upstreamSteps,
-        onValueChanged: notifyCommitted
+        onValueChanged: () => {
+          notifyCommitted();
+        }
       });
       inputEl = r.input;
       wrapper = r.wrapper;
@@ -654,6 +1023,42 @@
       inputEl = r.input;
       wrapper = r.wrapper;
     } else if (field.kind === "file" || field.kind === "dir") {
+      async function openNativePicker() {
+        if (bridgeApi?.available?.()) {
+          try {
+            const type = field.kind === "dir" ? "file.pickFolder" : "file.pickFile";
+            const currentValue = getFieldCurrentValue(node, field);
+            const payload = {
+              title: field.kind === "dir" ? `${field.label || "フォルダ"}を選択` : `${field.label || "ファイル"}を選択`,
+              step_name: String(node.stepName || "global"),
+              field_key: String(field.key || ""),
+              current_ref: isHiddenBindingRef(currentValue) ? currentValue : "",
+              current_value: isHiddenBindingRef(currentValue) ? "" : String(currentValue || "")
+            };
+            if (field.kind !== "dir") {
+              payload.filters = buildFileDialogFilters(field);
+            }
+            const result = await bridgeApi.call(type, payload);
+            if (!result || result.selected === false || !result.ref) return true;
+            node.form[field.key] = result.ref;
+            if (hiddenBindings && typeof hiddenBindings === "object") {
+              hiddenBindings[result.ref] = {
+                display_name: String(result.display_name || ""),
+                display_hint: String(result.display_hint || "")
+              };
+            }
+            text.value = node.form[field.key];
+            notifyCommitted();
+            return true;
+          } catch (error) {
+            if (dialogApi?.show) dialogApi.show(`選択に失敗しました。\n${error?.message || error}`, { kind: "error", title: "選択エラー" });
+            else window.alert(`選択に失敗しました。\n${error?.message || error}`);
+            return true;
+          }
+        }
+        return false;
+      }
+
       const text = el("input", {
         type: "text",
         placeholder:
@@ -665,6 +1070,13 @@
         onchange: (e) => {
           node.form[field.key] = e.target.value;
           notifyCommitted();
+        },
+        onclick: async (e) => {
+          if (!bridgeApi?.available?.()) return;
+          const currentValue = getFieldCurrentValue(node, field);
+          if (!isHiddenBindingRef(currentValue)) return;
+          e.preventDefault();
+          await openNativePicker();
         }
       });
       text.value = current;
@@ -677,13 +1089,17 @@
         picker.multiple = true;
       } else {
         picker.multiple = false;
+        if (field.accept) picker.setAttribute("accept", String(field.accept));
       }
 
       const btn = el(
         "button",
         {
           type: "button",
-          onclick: () => picker.click()
+          onclick: async () => {
+            if (await openNativePicker()) return;
+            picker.click();
+          }
         },
         [document.createTextNode(field.kind === "dir" ? "フォルダ選択" : "ファイル選択")]
       );
@@ -711,18 +1127,18 @@
         picker
       ]);
     } else {
-      inputEl = el("input", {
-        type: "text",
-        placeholder: field.placeholder || "",
-        oninput: (e) => {
-          node.form[field.key] = e.target.value;
-          notifyLocalChanged();
-        },
-        onchange: (e) => {
-          node.form[field.key] = e.target.value;
-          notifyCommitted();
-        }
-      });
+        inputEl = el("input", {
+          type: "text",
+          placeholder: field.placeholder || "",
+          oninput: (e) => {
+            node.form[field.key] = e.target.value;
+            notifyLocalChanged();
+          },
+          onchange: (e) => {
+            node.form[field.key] = e.target.value;
+            notifyCommitted();
+          }
+        });
       inputEl.value = current;
       wrapper = inputEl;
     }
@@ -737,12 +1153,15 @@
     if (field.required) {
       right.appendChild(el("div", { class: "sub" }, [document.createTextNode("必須")]));
     }
+    right.appendChild(hiddenMetaEl);
     right.appendChild(warningEl);
     row.appendChild(right);
     updateRequiredState();
     updateReferenceWarning();
+    updateHiddenBindingMeta();
     return row;
   }
 
-  window.uiFields = { renderField, getFieldReferenceWarnings };
+  const uiFields = { renderField, getFieldReferenceWarnings };
+  window.uiFields = uiFields;
 })();

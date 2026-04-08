@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
 
+import pandas as pd
 from prompt_toolkit import PromptSession
 from prompt_toolkit.application import Application
 from prompt_toolkit.completion import WordCompleter
@@ -67,7 +68,7 @@ def show_banner():
         "exit",
     ])
     logo_block = render_cli_logo()
-    subtitle = Text("flow execution via main.py", style="dim")
+    subtitle = Text("flow execution via app.main", style="dim")
     command_text = Text(commands)
     console.print(
         Panel.fit(
@@ -271,7 +272,6 @@ def render_steps(report, indent=0):
         table.add_row(str(index), str(step.get("step_id")), str(step.get("status")))
     console.print(Padding(table, (0, 0, 0, indent)))
 
-
 def is_dataframe_like(value):
     return all(hasattr(value, attr) for attr in ("head", "shape", "columns", "itertuples"))
 
@@ -285,7 +285,8 @@ def stringify_cell(value):
 
 def render_dataframe(value, indent=0):
     preview = value.head(100)
-    preview_text = preview.fillna("").astype(str).to_string(index=False)
+    preview_display = preview.astype("object").where(pd.notna(preview), "")
+    preview_text = preview_display.astype(str).to_string(index=False)
     console.print(Padding("[bold]データプレビュー[/bold]", (0, 0, 0, indent)))
     console.print(Padding(preview_text, (0, 0, 0, indent)))
     rows, columns = value.shape

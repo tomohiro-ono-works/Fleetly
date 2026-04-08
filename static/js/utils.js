@@ -1,4 +1,4 @@
-window.utils = {
+const utils = {
   el(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
@@ -9,6 +9,10 @@ window.utils = {
     }
     for (const c of children) node.appendChild(c);
     return node;
+  },
+
+  getFormSchema(config, connector, action) {
+    return (config?.forms && config.forms[`${connector}.${action}`]) || [];
   },
 
   downloadText(filename, text) {
@@ -116,3 +120,8 @@ window.utils = {
     return dump(obj, 0) + "\n";
   }
 };
+
+window.utils = utils;
+const __zizPackagesUtils = window.zizPackages = window.zizPackages || {};
+const __zizCoreUtils = __zizPackagesUtils.core = __zizPackagesUtils.core || {};
+__zizCoreUtils.utils = utils;

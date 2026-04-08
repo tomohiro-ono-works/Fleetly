@@ -22,6 +22,18 @@
   flex-direction: column;
 }
 
+.detail-panel[hidden] {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+body[data-home-visible="true"] .detail-panel {
+  display: none !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
 .detail-panel h2 { margin: 10px 14px 8px; }
 
 .detail-panel .node-detail-meta {

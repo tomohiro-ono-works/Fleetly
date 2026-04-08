@@ -1,6 +1,7 @@
 from typing import Optional, List, Dict, Any
 import os
-from datetime import datetime, date  # date型もインポート
+from datetime import datetime, date, time
+from decimal import Decimal
 import json
 import re
 
@@ -149,33 +150,189 @@ class BQConnector(BaseConnector):
         # ここには到達しないはずだが、戻り値の型(str)を保証するために例外を置く
         raise RuntimeError("予期しないエラー: クエリを取得できませんでした。")
 
-    def _clean_date_columns(self, data: Any, schema: Optional[List[Any]]) -> List[Dict[str, Any]]:
-        records = self._to_bq_records(data)
+    @staticmethod
+    def _is_nullish(value: Any) -> bool:
+        if value is None:
+            return True
+        if value is pd.NA:
+            return True
+        if isinstance(value, float) and pd.isna(value):
+            return True
+        try:
+            return bool(pd.isna(value))
+        except Exception:
+            return False
+
+    @staticmethod
+    def _normalize_temporal_text(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = text.replace("年", "-").replace("月", "-").replace("日", "")
+        text = text.replace("/", "-")
+        text = re.sub(r"\s+", " ", text)
+        return text
+
+    def _serialize_records_for_schema(
+        self,
+        records: List[Dict[str, Any]],
+        schema: Optional[List[bigquery.SchemaField]],
+    ) -> List[Dict[str, Any]]:
         if not records or not schema:
             return records
+        return [self._serialize_record_for_schema(row, schema) for row in records]
 
-        # スキーマから日付・時刻系のカラム名を一括抽出
-        target_cols = {f.name for f in schema if getattr(f, "field_type", "").upper() in ['DATE', 'DATETIME', 'TIMESTAMP']}
+    def _serialize_record_for_schema(
+        self,
+        row: Dict[str, Any],
+        schema: List[bigquery.SchemaField],
+    ) -> Dict[str, Any]:
+        serialized = {}
+        for field in schema:
+            serialized[field.name] = self._serialize_value_for_field(row.get(field.name), field)
+        return serialized
 
-        for row in records:
-            for col in target_cols:
-                val = row.get(col)
-                if val is None:
-                    continue
+    def _serialize_value_for_field(self, value: Any, field: bigquery.SchemaField) -> Any:
+        if self._is_nullish(value):
+            return [] if getattr(field, "mode", "").upper() == "REPEATED" else None
 
-                # 1. datetime / date オブジェクトの場合
-                if isinstance(val, (datetime, date)):
-                    # タイムゾーンを消し、ISO文字列化（DATEは YYYY-MM-DD, DATETIMEは T付き に自動変換）
-                    dt_val = val.replace(tzinfo=None) if isinstance(val, datetime) else val
-                    row[col] = dt_val.isoformat()
+        if getattr(field, "mode", "").upper() == "REPEATED":
+            if isinstance(value, (list, tuple, set)):
+                values = list(value)
+            else:
+                values = [value]
+            element_field = bigquery.SchemaField(
+                field.name,
+                field.field_type,
+                mode="NULLABLE",
+                fields=field.fields,
+                description=field.description,
+            )
+            return [self._serialize_value_for_field(item, element_field) for item in values]
 
-                # 2. 文字列の場合（"2026/1/31" などを "2026-01-31" へ）
-                elif isinstance(val, str):
-                    nums = re.findall(r'\d+', val)
-                    if len(nums) == 3:
-                        y, m, d = nums
-                        row[col] = f"{y}-{m.zfill(2)}-{d.zfill(2)}"
-        return records
+        field_type = str(getattr(field, "field_type", "") or "").upper()
+        if field_type == "RECORD":
+            return self._serialize_record_value(value, field.fields or [])
+        if field_type == "DATE":
+            return self._serialize_date(value)
+        if field_type == "DATETIME":
+            return self._serialize_datetime(value)
+        if field_type == "TIMESTAMP":
+            return self._serialize_timestamp(value)
+        if field_type == "TIME":
+            return self._serialize_time(value)
+        if field_type in {"NUMERIC", "BIGNUMERIC"}:
+            return self._serialize_numeric(value)
+        if field_type in {"INT64", "INTEGER"}:
+            return int(value)
+        if field_type in {"FLOAT64", "FLOAT"}:
+            return float(value)
+        if field_type in {"BOOL", "BOOLEAN"}:
+            return bool(value)
+        if field_type == "BYTES":
+            return bytes(value) if isinstance(value, bytearray) else value
+        return value
+
+    def _serialize_record_value(
+        self,
+        value: Any,
+        fields: List[bigquery.SchemaField],
+    ) -> Optional[Dict[str, Any]]:
+        if self._is_nullish(value):
+            return None
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return None
+            try:
+                value = json.loads(text)
+            except json.JSONDecodeError:
+                raise ValueError(f"STRUCT 値を JSON として解釈できません: {value}")
+        if hasattr(value, "to_dict") and not isinstance(value, dict):
+            value = value.to_dict()
+        if not isinstance(value, dict):
+            raise ValueError(f"STRUCT 値は dict である必要があります: {value}")
+        serialized = {}
+        for child in fields:
+            serialized[child.name] = self._serialize_value_for_field(value.get(child.name), child)
+        return serialized
+
+    def _serialize_date(self, value: Any) -> Optional[str]:
+        if self._is_nullish(value):
+            return None
+        if isinstance(value, pd.Timestamp):
+            return value.date().isoformat()
+        if isinstance(value, datetime):
+            return value.date().isoformat()
+        if isinstance(value, date):
+            return value.isoformat()
+        normalized = self._normalize_temporal_text(value)
+        parsed = pd.to_datetime(normalized, errors="coerce")
+        if pd.isna(parsed):
+            raise ValueError(f"DATE 値を解釈できません: {value}")
+        return parsed.date().isoformat()
+
+    def _serialize_datetime(self, value: Any) -> Optional[str]:
+        if self._is_nullish(value):
+            return None
+        if isinstance(value, pd.Timestamp):
+            if value.tzinfo is not None:
+                value = value.tz_convert("UTC").tz_localize(None)
+            return value.isoformat()
+        if isinstance(value, datetime):
+            if value.tzinfo is not None:
+                normalized = pd.Timestamp(value).tz_convert("UTC").tz_localize(None).to_pydatetime()
+            else:
+                normalized = value
+            return normalized.isoformat()
+        normalized = self._normalize_temporal_text(value)
+        parsed = pd.to_datetime(normalized, errors="coerce")
+        if pd.isna(parsed):
+            raise ValueError(f"DATETIME 値を解釈できません: {value}")
+        if isinstance(parsed, pd.Timestamp) and parsed.tzinfo is not None:
+            parsed = parsed.tz_convert("UTC").tz_localize(None)
+        return parsed.isoformat()
+
+    def _serialize_timestamp(self, value: Any) -> Optional[str]:
+        if self._is_nullish(value):
+            return None
+        if isinstance(value, pd.Timestamp):
+            parsed = value
+        elif isinstance(value, datetime):
+            parsed = pd.Timestamp(value)
+        else:
+            normalized = self._normalize_temporal_text(value)
+            parsed = pd.to_datetime(normalized, errors="coerce", utc=True)
+            if pd.isna(parsed):
+                raise ValueError(f"TIMESTAMP 値を解釈できません: {value}")
+        if parsed.tzinfo is None:
+            parsed = parsed.tz_localize("UTC")
+        else:
+            parsed = parsed.tz_convert("UTC")
+        return parsed.isoformat().replace("+00:00", "Z")
+
+    def _serialize_time(self, value: Any) -> Optional[str]:
+        if self._is_nullish(value):
+            return None
+        if isinstance(value, pd.Timestamp):
+            return value.time().isoformat()
+        if isinstance(value, datetime):
+            return value.time().isoformat()
+        if isinstance(value, time):
+            return value.isoformat()
+        normalized = self._normalize_temporal_text(value)
+        parsed = pd.to_datetime(normalized, errors="coerce")
+        if pd.isna(parsed):
+            raise ValueError(f"TIME 値を解釈できません: {value}")
+        return parsed.time().isoformat()
+
+    @staticmethod
+    def _serialize_numeric(value: Any) -> Optional[str]:
+        if value is None:
+            return None
+        if isinstance(value, Decimal):
+            return format(value, "f")
+        return str(value)
 
     def _resolve_schema_definition(self, data: Any, schema: Any) -> Optional[List[bigquery.SchemaField]]:
         schema_value = schema
@@ -320,8 +477,8 @@ class BQConnector(BaseConnector):
 
         resolved_schema = self._resolve_schema_definition(data, schema)
 
-        # 1. データのクレンジング（utilsへ委譲）
-        records = self._clean_date_columns(records, resolved_schema)
+        # 1. schema に従って BigQuery JSON へ直列化
+        records = self._serialize_records_for_schema(records, resolved_schema)
 
         # 2. 引数の変換
         disposition_map = {

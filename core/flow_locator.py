@@ -1,20 +1,17 @@
+from __future__ import annotations
+
 import json
 import os
 import subprocess
-import sys
+from pathlib import Path
 
-from core.logger import setup_logger
-from core.workflow_engine import WorkflowEngine
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-WORKFLOW_DIR = os.path.join(BASE_DIR, "workflows")
+BASE_DIR = Path(__file__).resolve().parents[1]
+WORKFLOW_DIR = BASE_DIR / "workflows"
+TEMPLATE_DIR = BASE_DIR / "template"
+CONFIG_DIR = BASE_DIR / "config"
+RECENT_FLOWS_FILE = CONFIG_DIR / "recent_flows.json"
 FLOW_EXTENSIONS = (".zizw", ".zizd", ".zizq")
-
-logger = setup_logger()
-engine = WorkflowEngine(logger)
-
-if not os.path.exists(WORKFLOW_DIR):
-    os.makedirs(WORKFLOW_DIR)
 
 
 def has_flow_extension(path: str) -> bool:
@@ -22,22 +19,39 @@ def has_flow_extension(path: str) -> bool:
 
 
 def list_flows_local():
-    flows_by_path = {}
-
-    for full_path in _discover_flow_paths():
-        if not os.path.exists(full_path):
+    items = []
+    for entry in load_recent_flows():
+        path = str(entry.get("path") or "").strip()
+        if not path:
             continue
-        normalized = os.path.abspath(full_path)
-        flows_by_path[normalized] = {
+        normalized = os.path.abspath(path)
+        items.append({
             "filename": os.path.basename(normalized),
             "path": normalized,
             "directory": os.path.dirname(normalized),
-            "modified_at": os.path.getmtime(normalized),
-        }
+            "modified_at": float(entry.get("opened_at_ts") or 0),
+        })
+    return items
+
+
+def list_templates_local():
+    if not TEMPLATE_DIR.exists():
+        return []
+
+    items = []
+    for path in TEMPLATE_DIR.rglob("*"):
+        if not path.is_file() or not has_flow_extension(path.name):
+            continue
+        items.append({
+            "filename": path.name,
+            "path": str(path.resolve()),
+            "directory": str(path.parent.resolve()),
+            "modified_at": path.stat().st_mtime,
+        })
 
     return sorted(
-        flows_by_path.values(),
-        key=lambda item: (-item["modified_at"], item["filename"].lower(), item["path"].lower()),
+        items,
+        key=lambda item: (item["filename"].lower(), item["path"].lower()),
     )
 
 
@@ -45,13 +59,68 @@ def list_workflows_local():
     return list_flows_local()
 
 
-def _discover_flow_paths():
+def load_recent_flows():
+    if not RECENT_FLOWS_FILE.exists():
+        return []
+    try:
+        data = json.loads(RECENT_FLOWS_FILE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    items = data.get("items") if isinstance(data, dict) else []
+    if not isinstance(items, list):
+        return []
+    normalized_items = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        path = str(item.get("path") or "").strip()
+        if not path:
+            continue
+        normalized_items.append({
+            "path": os.path.abspath(path),
+            "opened_at": str(item.get("opened_at") or ""),
+            "opened_at_ts": float(item.get("opened_at_ts") or 0),
+        })
+    return normalized_items
+
+
+def save_recent_flows(items):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    payload = {"items": items}
+    RECENT_FLOWS_FILE.write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
+def register_recent_flow(path: str, *, opened_at_iso: str | None = None, max_items: int = 10):
+    normalized = os.path.abspath(str(path or "").strip())
+    if not normalized:
+        return
+    existing = [item for item in load_recent_flows() if os.path.abspath(str(item.get("path") or "")) != normalized]
+    opened_at = str(opened_at_iso or "")
+    timestamp = 0.0
+    if opened_at:
+        try:
+            from datetime import datetime
+            timestamp = datetime.fromisoformat(opened_at.replace("Z", "+00:00")).timestamp()
+        except ValueError:
+            timestamp = 0.0
+    existing.insert(0, {
+        "path": normalized,
+        "opened_at": opened_at,
+        "opened_at_ts": timestamp,
+    })
+    save_recent_flows(existing[: max(1, int(max_items or 10))])
+
+
+def discover_flow_paths():
     discovered_paths = []
 
-    if os.path.exists(WORKFLOW_DIR):
+    if WORKFLOW_DIR.exists():
         for name in os.listdir(WORKFLOW_DIR):
             if has_flow_extension(name):
-                discovered_paths.append(os.path.join(WORKFLOW_DIR, name))
+                discovered_paths.append(str(WORKFLOW_DIR / name))
 
     for item in _discover_flow_paths_from_powershell():
         path = item.get("path")
@@ -106,7 +175,7 @@ $results = foreach ($folder in $targetFolders) {
 }
 
 $results | ConvertTo-Json -Depth 2 -Compress
-""" % WORKFLOW_DIR.replace("\\", "\\\\")
+""" % str(WORKFLOW_DIR).replace("\\", "\\\\")
 
     try:
         process = subprocess.run(
@@ -136,8 +205,8 @@ $results | ConvertTo-Json -Depth 2 -Compress
     return []
 
 
-def resolve_flow_path(yaml_path: str):
-    raw_path = str(yaml_path or "").strip()
+def resolve_flow_path(flow_path: str):
+    raw_path = str(flow_path or "").strip()
     if not raw_path:
         return None
     if len(raw_path) >= 2 and raw_path[0] == raw_path[-1] and raw_path[0] in {"\"", "'"}:
@@ -150,9 +219,9 @@ def resolve_flow_path(yaml_path: str):
         candidates.append(raw_path)
     else:
         candidates.append(os.path.abspath(raw_path))
-        candidates.append(os.path.abspath(os.path.join(BASE_DIR, raw_path)))
+        candidates.append(os.path.abspath(str(BASE_DIR / raw_path)))
         if not os.path.dirname(raw_path):
-            candidates.append(os.path.abspath(os.path.join(WORKFLOW_DIR, raw_path)))
+            candidates.append(os.path.abspath(str(WORKFLOW_DIR / raw_path)))
 
     seen = set()
     for candidate in candidates:
@@ -162,44 +231,4 @@ def resolve_flow_path(yaml_path: str):
         seen.add(normalized)
         if os.path.exists(normalized):
             return normalized
-    return os.path.abspath(os.path.join(BASE_DIR, raw_path))
-
-
-def run_cli(yaml_path):
-    resolved_path = resolve_flow_path(yaml_path)
-    if not resolved_path or not os.path.exists(resolved_path):
-        display_path = str(yaml_path or "").strip()
-        if len(display_path) >= 2 and display_path[0] == display_path[-1] and display_path[0] in {"\"", "'"}:
-            display_path = display_path[1:-1].strip()
-        message = f"ファイルが見つかりません: {display_path}"
-        logger.error(message)
-        return {
-            "flow_path": os.path.abspath(display_path) if display_path else "",
-            "flow_name": "Untitled",
-            "workflow_path": os.path.abspath(display_path) if display_path else "",
-            "workflow_name": "Untitled",
-            "status": "error",
-            "steps": [],
-            "error": message,
-        }
-
-    logger.info(f"CLIモードで実行開始: {resolved_path}")
-    report = engine.run_flow(resolved_path)
-    if report.get("status") == "success":
-        logger.info("CLI実行が正常に完了しました。")
-    else:
-        logger.error(f"CLI実行中にエラーが発生しました: {report.get('error')}")
-    return report
-
-
-def main():
-    if len(sys.argv) < 2:
-        print("usage: python main.py <flow_path>")
-        return 1
-
-    report = run_cli(sys.argv[1])
-    return 0 if report.get("status") == "success" else 1
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+    return os.path.abspath(str(BASE_DIR / raw_path))

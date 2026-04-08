@@ -4,11 +4,12 @@
 .sidebar {
   position: sticky;
   top: 0;
+  width: 72px;
   height: 100vh;
-  padding: 14px 6px;
+  padding: 10px 5px;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
   background: var(--alpha-white-94);
   border-right: 1px solid var(--border-default);
   box-shadow: var(--shadow-soft-weak);
@@ -19,7 +20,7 @@
 .sidebar-top {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 
 .sidebar-brand-submark {
@@ -40,7 +41,7 @@
 .sidebar-bottom {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .sidebar-nav {
@@ -56,13 +57,13 @@
 .sidebar-toggle,
 .sidebar-item {
   width: 100%;
-  min-height: 56px;
+  min-height: 50px;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 0;
-  padding: 10px 6px;
-  border-radius: 18px;
+  padding: 8px 5px;
+  border-radius: 16px;
   border: 1px solid transparent;
   background: transparent;
   transition:
@@ -75,7 +76,7 @@
 .sidebar-toggle {
   min-height: auto;
   justify-content: center;
-  padding: 4px 0 10px;
+  padding: 2px 0 8px;
   border: 0;
   background: transparent;
 }
@@ -103,9 +104,9 @@
 .sidebar-toggle-icon,
 .sidebar-item-icon {
   flex: 0 0 auto;
-  width: 36px;
-  height: 36px;
-  border-radius: 12px;
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
 }
 
 .sidebar-toggle-icon {
@@ -130,8 +131,8 @@
 .sidebar-toggle-icon img,
 .sidebar-item-icon img {
   display: block;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   object-fit: contain;
 }
 
@@ -202,6 +203,10 @@ body.sidebar-expanded .sidebar-item {
   justify-content: flex-start;
   gap: 12px;
   padding-inline: 8px;
+}
+
+body.sidebar-expanded .sidebar {
+  width: 196px;
 }
 
 body.sidebar-expanded .sidebar-toggle {

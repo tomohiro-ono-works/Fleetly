@@ -4,19 +4,10 @@ from typing import Any
 
 import pandas as pd
 from openpyxl import load_workbook
-from openpyxl.styles.numbers import is_date_format
 
 from connectors.base_connector import BaseConnector
 
 class ExcelConnector(BaseConnector):
-    @staticmethod
-    def _as_bool(value: Any) -> bool:
-        if isinstance(value, bool):
-            return value
-        if isinstance(value, str):
-            return value.strip().lower() in {"1", "true", "yes", "on"}
-        return bool(value)
-
     @staticmethod
     def _normalize_excel_value(value: Any) -> Any:
         if pd.isna(value):
@@ -29,67 +20,11 @@ class ExcelConnector(BaseConnector):
             return value.isoformat()
         return value
 
-    @staticmethod
-    def _format_display_value(cell: Any) -> Any:
-        value = cell.value
-        if value is None:
-            return None
-
-        if isinstance(value, datetime):
-            normalized = value.replace(tzinfo=None) if value.tzinfo is not None else value
-            if is_date_format(cell.number_format):
-                formatted = normalized.strftime("%Y-%m-%d %H:%M:%S")
-                return formatted[:-9] if formatted.endswith(" 00:00:00") else formatted
-            return normalized.isoformat()
-
-        if isinstance(value, date):
-            if is_date_format(cell.number_format):
-                return value.strftime("%Y-%m-%d")
-            return value.isoformat()
-
-        if isinstance(value, (int, float)):
-            number_format = str(cell.number_format or "")
-            if number_format and set(number_format) <= {"0"}:
-                if isinstance(value, float) and not float(value).is_integer():
-                    return value
-                return str(int(value)).zfill(len(number_format))
-        return value
-
-    def _read_excel_display_mode(
-        self,
-        normalized_path: str,
-        sheet_name: str,
-        header_row: int,
-        data_start_row: int,
-        schema: Any = None,
-    ) -> pd.DataFrame:
-        workbook = load_workbook(normalized_path, data_only=True)
-        try:
-            worksheet = workbook[sheet_name] if sheet_name else workbook.active
-        except KeyError as exc:
-            workbook.close()
-            raise ValueError(f"シートが見つかりませんでした: {sheet_name}") from exc
-
-        headers = [
-            str(cell.value) if cell.value is not None else f"col_{index}"
-            for index, cell in enumerate(worksheet[header_row])
-        ]
-
-        rows: list[dict[str, Any]] = []
-        for row in worksheet.iter_rows(min_row=data_start_row):
-            values = [self._format_display_value(cell) for cell in row]
-            if any(value is not None and value != "" for value in values):
-                rows.append(dict(zip(headers, values)))
-
-        workbook.close()
-        return self.attach_dataframe_schema(pd.DataFrame(rows), schema_override=schema)
-
     def _build_dataframe_from_worksheet_rows(
         self,
         rows: list[list[Any]],
         header_row: int,
         data_start_row: int,
-        preserve_display: bool = False,
         schema: Any = None,
     ) -> pd.DataFrame:
         if not rows:
@@ -111,10 +46,7 @@ class ExcelConnector(BaseConnector):
 
         records: list[dict[str, Any]] = []
         for raw_row in rows[data_start_row - 1:]:
-            if preserve_display:
-                normalized_row = raw_row
-            else:
-                normalized_row = [self._normalize_excel_value(value) for value in raw_row]
+            normalized_row = [self._normalize_excel_value(value) for value in raw_row]
             if any(value is not None and value != "" for value in normalized_row):
                 records.append(dict(zip(headers, normalized_row)))
         return self.attach_dataframe_schema(pd.DataFrame(records), schema_override=schema)
@@ -129,7 +61,6 @@ class ExcelConnector(BaseConnector):
                 sheet_name=str(params.get('sheet_name', "")),
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
-                preserve_display=self._as_bool(params.get('preserve_display', False)),
                 schema=params.get('schema'),
             )
         elif action == "read_excel_range":
@@ -145,12 +76,11 @@ class ExcelConnector(BaseConnector):
                 cell_range=str(cell_range),
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
-                preserve_display=self._as_bool(params.get('preserve_display', False)),
                 schema=params.get('schema'),
             )
         elif action == "write_excel":
             input_data = params.get('input_data')
-            output_path = params.get('output_path')
+            output_path = self._resolve_output_path(params)
             if not input_data:
                 raise ValueError("input_data が指定されていません。")
             if not output_path:
@@ -161,7 +91,22 @@ class ExcelConnector(BaseConnector):
                 str(params.get('sheet_name', 'Sheet1')),
                 context,
                 str(params.get('mode', 'create_or_replace')),
+                params.get('schema'),
             )
+
+    def _resolve_output_path(self, params: dict[str, Any]) -> str | None:
+        explicit = params.get("output_path")
+        if explicit:
+            return str(explicit)
+
+        output_folder = str(params.get("output_folder") or "").strip()
+        file_name = str(params.get("file_name") or "").strip()
+        if not output_folder or not file_name:
+            return None
+
+        if not os.path.splitext(file_name)[1]:
+            file_name = f"{file_name}.xlsx"
+        return os.path.join(output_folder, file_name)
 
     # --- 内部ロジック ---
 
@@ -171,7 +116,6 @@ class ExcelConnector(BaseConnector):
         sheet_name: str,
         header_row: int,
         data_start_row: int,
-        preserve_display: bool = False,
         schema: Any = None,
     ) -> pd.DataFrame:
         normalized_path = self.normalize_file_path(path)
@@ -181,15 +125,6 @@ class ExcelConnector(BaseConnector):
             raise ValueError("header_row は 1 以上で指定してください。")
         if data_start_row < header_row:
             raise ValueError("data_start_row は header_row 以上で指定してください。")
-
-        if preserve_display:
-            return self._read_excel_display_mode(
-                normalized_path,
-                sheet_name,
-                header_row,
-                data_start_row,
-                schema,
-            )
 
         skiprows = list(range(header_row, data_start_row - 1)) if data_start_row > header_row + 1 else None
         target_sheet = sheet_name or 0
@@ -223,7 +158,6 @@ class ExcelConnector(BaseConnector):
         cell_range: str,
         header_row: int,
         data_start_row: int,
-        preserve_display: bool = False,
         schema: Any = None,
     ) -> pd.DataFrame:
         normalized_path = self.normalize_file_path(path)
@@ -244,17 +178,13 @@ class ExcelConnector(BaseConnector):
             raise ValueError(f"cell_range の指定が不正です: {cell_range}") from exc
 
         if not isinstance(range_values, tuple):
-            range_rows = [[
-                self._format_display_value(range_values) if preserve_display else range_values.value
-            ]]
+            range_rows = [[range_values.value]]
         else:
             range_rows = []
             for row in range_values:
                 normalized_row = []
                 for cell in row:
-                    normalized_row.append(
-                        self._format_display_value(cell) if preserve_display else cell.value
-                    )
+                    normalized_row.append(cell.value)
                 range_rows.append(normalized_row)
 
         workbook.close()
@@ -262,11 +192,10 @@ class ExcelConnector(BaseConnector):
             rows=range_rows,
             header_row=header_row,
             data_start_row=data_start_row,
-            preserve_display=preserve_display,
             schema=schema,
         )
 
-    def write_excel(self, input_var: str, output_path: str, sheet_name: str, context: dict[str, Any], mode: str = 'create_or_replace'):
+    def write_excel(self, input_var: str, output_path: str, sheet_name: str, context: dict[str, Any], mode: str = 'create_or_replace', schema: Any = None):
         """
         mode:
         'create_or_replace': 指定シートを「初期化」して書き込む（他のシートは維持）
@@ -287,6 +216,9 @@ class ExcelConnector(BaseConnector):
         if df.empty:
             raise ValueError("データが空です")
         df_to_write = df.copy()
+        if schema is not None and str(schema).strip() != "":
+            schema_items = self.parse_schema_definition(schema)
+            df_to_write = self.apply_schema_to_dataframe(df_to_write, schema_items)
 
         if not os.path.exists(normalized_output_path):
             with pd.ExcelWriter(normalized_output_path, engine="openpyxl", mode="w") as writer:

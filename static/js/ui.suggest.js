@@ -1,5 +1,7 @@
 (function () {
-  const { el } = window.utils;
+  const packages = window.zizPackages || {};
+  const corePkg = packages.core || {};
+  const { el } = (corePkg.utils || {});
 
   /* =========================================================
      {{var}} suggest (text/textarea/combo)
@@ -155,5 +157,6 @@
     editor.on("blur", () => setTimeout(hide, 150));
   }
 
-  window.uiSuggest = { wrapWithVarSuggest, attachCodeEditorVarSuggest };
+  const uiSuggest = { wrapWithVarSuggest, attachCodeEditorVarSuggest };
+  window.uiSuggest = uiSuggest;
 })();

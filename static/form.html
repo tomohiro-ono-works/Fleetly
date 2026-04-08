@@ -8,10 +8,13 @@
   <link rel="stylesheet" href="./css/00_tokens.css">
   <link rel="stylesheet" href="./css/01_base.css">
   <link rel="stylesheet" href="./css/05_sidebar.css">
-  <link rel="stylesheet" href="./css/10_header.css">
-  <link rel="stylesheet" href="./css/20_node-detail.css">
+  <link rel="stylesheet" href="./css/10_header.css?v=20260408-2">
+  <link rel="stylesheet" href="./css/12_home.css?v=20260406-5">
+  <link rel="stylesheet" href="./css/15_dialog.css?v=20260406-3">
+  <link rel="stylesheet" href="./css/20_node-detail.css?v=20260407-1">
   <link rel="stylesheet" href="./css/30_flowchart.css">
-  <link rel="stylesheet" href="./css/40_detail-panel.css">
+  <link rel="stylesheet" href="./css/40_detail-panel.css?v=20260406-2">
+  <link rel="stylesheet" href="./sqlbilder/sqlbilder.css?v=20260408-3">
   <link rel="stylesheet" href="./css/90_responsive.css">
   <link rel="stylesheet" href="./modal/modal_core.css">
   <link rel="stylesheet" href="./modal/excel_modal.css">
@@ -25,10 +28,10 @@
           id="sidebarToggle"
           class="sidebar-toggle"
           type="button"
-          aria-label="メニューを開閉"
+          aria-label="トップ画面へ戻る"
           aria-expanded="false"
           aria-controls="sidebarNav"
-          title="メニューを開閉"
+          title="トップ画面へ戻る"
         >
           <span class="sidebar-toggle-icon" aria-hidden="true">
             <img src="./icons/icon.png" alt="" />
@@ -73,12 +76,23 @@
             <input id="flowName" class="flow-name-input" type="text" value="フロー１" />
           </div>
           <div class="actions">
+            <button id="btnRun" class="primary" type="button" aria-label="実行" title="実行">
+              <img src="./icons/run.svg" alt="" />
+            </button>
+            <button id="btnDiagnostics" class="header-text-btn" type="button" aria-label="診断" title="診断">
+              診断
+            </button>
             <button id="btnReset" class="danger" type="button" aria-label="インポート" title="インポート">
               <img src="./icons/import.svg" alt="" />
             </button>
             <button id="btnSave" class="primary" type="button" aria-label="保存" title="保存">
               <img src="./icons/save.svg" alt="" />
             </button>
+            <div class="window-actions" aria-label="ウィンドウ操作">
+              <button id="btnWindowMinimize" class="window-control-btn" type="button" aria-label="最小化" title="最小化">-</button>
+              <button id="btnWindowMaximize" class="window-control-btn" type="button" aria-label="拡大" title="拡大">□</button>
+              <button id="btnWindowClose" class="window-control-btn is-close" type="button" aria-label="閉じる" title="閉じる">×</button>
+            </div>
           </div>
         </div>
       </header>
@@ -103,7 +117,8 @@
       </div>
 
       <div class="mdl__bar">
-        <input id="xFile" class="minput" type="file" accept=".xlsx,.xlsm" />
+        <button id="xPick" class="mbtn" type="button">ファイル選択</button>
+        <span id="xFileLabel" class="mdl__hint">未選択</span>
         <label class="mdl__hint">シート:
           <select id="xSheet" class="mselect" disabled></select>
         </label>
@@ -112,7 +127,7 @@
         <span class="mdl__hint">クリック: ヘッダー行 / ダブルクリック: データ開始行（上から30行）</span>
       </div>
 
-      <div id="xTableWrap" class="mdl__tablewrap"></div>
+      <div id="xTableWrap" class="mdl__tablewrap preview-tablewrap"></div>
 
       <div class="mdl__footer">
         <span class="mdl__hint" id="xPicked"></span>
@@ -124,23 +139,98 @@
     </div>
   </div>
 
+  <div id="csvModal" class="mdl" aria-hidden="true">
+    <div class="mdl__backdrop" data-mdl-close></div>
+
+    <div class="mdl__panel" role="dialog" aria-modal="true" aria-labelledby="csvTitle">
+      <div class="mdl__header">
+        <div class="mdl__title" id="csvTitle">CSVアシスタント</div>
+        <button class="mbtn" type="button" data-mdl-close>閉じる</button>
+      </div>
+
+      <div class="mdl__bar">
+        <button id="cPick" class="mbtn" type="button">ファイル選択</button>
+        <span id="cFileLabel" class="mdl__hint">未選択</span>
+        <input id="cFile" class="minput" type="file" accept=".csv,.tsv,.txt" style="display:none" />
+        <label class="mdl__hint">文字コード:
+          <select id="cEncoding" class="mselect">
+            <option value="utf8">utf8</option>
+            <option value="shift_jis">shift_jis</option>
+            <option value="cp932">cp932</option>
+          </select>
+        </label>
+        <label class="mdl__hint">区切り文字:
+          <select id="cDelimiter" class="mselect">
+            <option value=",">カンマ (,)</option>
+            <option value="\t">タブ (TAB)</option>
+            <option value=";">セミコロン (;)</option>
+            <option value="|">パイプ (|)</option>
+          </select>
+        </label>
+
+        <span class="mdl__hint" id="cStatus"></span>
+        <span class="mdl__hint">クリック: ヘッダー行 / ダブルクリック: データ開始行（上から30行）</span>
+      </div>
+
+      <div id="cTableWrap" class="mdl__tablewrap preview-tablewrap"></div>
+
+      <div class="mdl__footer">
+        <span class="mdl__hint" id="cPicked"></span>
+        <div class="mdl__actions">
+          <button class="mbtn" type="button" data-mdl-close>キャンセル</button>
+          <button class="mbtn mbtn--primary" type="button" id="cOk">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="appDialog" class="app-dialog" aria-hidden="true">
+    <div class="app-dialog__backdrop" data-app-dialog-close></div>
+    <div class="app-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle">
+      <div class="app-dialog__icon" id="appDialogIcon" aria-hidden="true">i</div>
+      <div class="app-dialog__body">
+        <div class="app-dialog__title" id="appDialogTitle">お知らせ</div>
+        <div class="app-dialog__message" id="appDialogMessage"></div>
+      </div>
+      <div class="app-dialog__actions">
+        <button id="appDialogCancel" class="app-dialog__button app-dialog__button--secondary" type="button" hidden>キャンセル</button>
+        <button id="appDialogOk" class="app-dialog__button" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
   <!-- B方式：モジュール不使用。順番が命 -->
-  <script src="./js/config.js?v=20260329-2"></script>
-  <script src="./js/utils.js?v=20260329-1"></script>
-  <script src="./js/state.js?v=20260329-1"></script>
+  <script src="./js/config.js?v=20260407-3"></script>
+  <script src="./js/packages/core.package.js?v=20260406-2"></script>
+  <script src="./js/packages/ui.package.js?v=20260406-1"></script>
+  <script src="./js/packages/modal.package.js?v=20260406-2"></script>
+  <script src="./js/packages/sqlbilder.package.js?v=20260407-1"></script>
+  <script src="./js/utils.js?v=20260406-1"></script>
+  <script src="./js/dialog.js?v=20260406-5"></script>
+  <script src="./js/state.js?v=20260406-1"></script>
   <script src="./js/vars.js"></script>
   <script src="./vendor/js-yaml/js-yaml.min.js"></script>
-  <script src="./vendor/sheetjs/xlsx.full.min.js"></script>
   <script src="./vendor/codemirror/codemirror.min.js"></script>
   <script src="./vendor/codemirror/mode/sql.min.js"></script>
   <script src="./vendor/codemirror/mode/python.min.js"></script>
-  <script src="./modal/modal_core.js"></script>
-  <script src="./modal/excel_modal.js"></script>
-  <script src="./js/code.editor.js?v=20260328-2"></script>
-  <script src="./js/ui.suggest.js?v=20260328-1"></script>
-  <script src="./js/ui.fields.js?v=20260329-2"></script>
-  <script src="./js/ui.node.js?v=20260329-7"></script>
-  <script src="./js/ui.renderer.js"></script>
-  <script src="./js/app.js?v=20260329-5"></script>
+  <script src="./js/bridge.js?v=20260406-1"></script>
+  <script src="./modal/modal_core.js?v=20260407-1"></script>
+  <script src="./modal/preview_schema.js?v=20260407-1"></script>
+  <script src="./modal/excel_modal.js?v=20260407-1"></script>
+  <script src="./modal/csv_modal.js?v=20260407-1"></script>
+  <script src="./sqlbilder/sqlbilder.state.js?v=20260408-2"></script>
+  <script src="./sqlbilder/sqlbilder.layout.js?v=20260408-3"></script>
+  <script src="./sqlbilder/sqlbilder.flowlist.js?v=20260407-3"></script>
+  <script src="./sqlbilder/sqlbilder.catalog.data.js?v=20260407-2"></script>
+  <script src="./sqlbilder/sqlbilder.catalog.sql.js?v=20260407-2"></script>
+  <script src="./sqlbilder/sqlbilder.editor.js?v=20260407-3"></script>
+  <script src="./sqlbilder/sqlbilder.yaml.js?v=20260407-2"></script>
+  <script src="./sqlbilder/sqlbilder.page.js?v=20260408-3"></script>
+  <script src="./js/code.editor.js?v=20260406-1"></script>
+  <script src="./js/ui.suggest.js?v=20260407-1"></script>
+  <script src="./js/ui.fields.js?v=20260407-3"></script>
+  <script src="./js/ui.node.js?v=20260407-2"></script>
+  <script src="./js/ui.renderer.js?v=20260407-2"></script>
+  <script src="./js/app.js?v=20260408-2"></script>
 </body>
 </html>

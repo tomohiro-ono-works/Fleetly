@@ -1,6 +1,7 @@
 from abc import ABC, abstractmethod
 import json
 import re
+from decimal import Decimal, InvalidOperation
 
 import pandas as pd
 
@@ -136,6 +137,8 @@ class BaseConnector(ABC):
             return pd.to_numeric(series, errors="coerce").astype("Int64")
         if ziz_type == "FLOAT64":
             return pd.to_numeric(series, errors="coerce")
+        if ziz_type == "NUMERIC":
+            return series.map(BaseConnector._to_decimal_or_na)
         if ziz_type == "BOOL":
             return series.map(BaseConnector._to_bool_or_na).astype("boolean")
         if ziz_type == "DATE":
@@ -163,6 +166,30 @@ class BaseConnector(ABC):
         return pd.NA
 
     @staticmethod
+    def _to_decimal_or_na(value):
+        if value is None or pd.isna(value):
+            return None
+        if isinstance(value, Decimal):
+            return value
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return Decimal(value)
+        if isinstance(value, float):
+            if pd.isna(value):
+                return None
+            return Decimal(str(value))
+
+        text = str(value).strip()
+        if not text:
+            return None
+        text = text.replace(",", "")
+        try:
+            return Decimal(text)
+        except (InvalidOperation, ValueError):
+            return None
+
+    @staticmethod
     def _normalize_temporal_text(value):
         if value is None or pd.isna(value):
             return None
@@ -174,6 +201,9 @@ class BaseConnector(ABC):
         text = text.replace("年", "-").replace("月", "-").replace("日", "")
         text = text.replace("/", "-")
         text = re.sub(r"\s+", " ", text)
+        compact_date_match = re.fullmatch(r"(\d{4})(\d{2})(\d{2})", text)
+        if compact_date_match:
+            return f"{compact_date_match.group(1)}-{compact_date_match.group(2)}-{compact_date_match.group(3)}"
         return text
 
     @staticmethod

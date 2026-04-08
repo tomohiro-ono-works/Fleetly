@@ -2,16 +2,12 @@
 (function () {
   "use strict";
 
-  function colIndexToLetters(idx0) {
-    let n = idx0 + 1;
-    let s = "";
-    while (n > 0) {
-      const r = (n - 1) % 26;
-      s = String.fromCharCode(65 + r) + s;
-      n = Math.floor((n - 1) / 26);
-    }
-    return s;
-  }
+  const packages = window.zizPackages || {};
+  const modalPkg = packages.modal || {};
+  const corePkg = packages.core || {};
+  const modalCoreApi = modalPkg.modalCore || null;
+  const previewSchemaApi = modalPkg.previewSchema || null;
+  const bridgeApi = corePkg.bridge || null;
 
   function buildSheetSelect($sheet, wb) {
     $sheet.innerHTML = "";
@@ -24,41 +20,6 @@
     $sheet.disabled = wb.SheetNames.length === 0;
   }
 
-  function loadTop30As2D(ws) {
-    const ref = ws["!ref"];
-    if (!ref) return { columns: [], rows2d: [], baseRow: 0, colCount: 0 };
-
-    const rng = XLSX.utils.decode_range(ref);
-
-    // 列ズレ対策：開始列を必ずAに固定
-    rng.s.c = 0;
-
-    // 上から30行のみ（0..29）
-    rng.s.r = 0;
-    rng.e.r = Math.min(rng.e.r, 29);
-
-    const colCount = rng.e.c - rng.s.c + 1;
-    const columns = Array.from({ length: colCount }, (_, i) => colIndexToLetters(i));
-
-    const rows2dRaw = XLSX.utils.sheet_to_json(ws, {
-      header: 1,
-      raw: true,
-      defval: null,
-      range: rng
-    });
-
-    // 30行固定（空行も保持）
-    const wantRows = 30;
-    const rows2d = [];
-    for (let r = 0; r < wantRows; r++) {
-      const row = rows2dRaw[r] || [];
-      const fixed = Array.from({ length: colCount }, (_, c) => (c < row.length ? (row[c] ?? null) : null));
-      rows2d.push(fixed);
-    }
-
-    return { columns, rows2d, baseRow: 0, colCount };
-  }
-
   function paintRowMarks(tbody, headerRowInView, dataStartRowInView) {
     tbody.querySelectorAll("tr").forEach((tr) => {
       const r = Number(tr.dataset.r);
@@ -67,27 +28,22 @@
     });
   }
 
-  async function readWorkbook(file) {
-    const buf = await file.arrayBuffer();
-    return XLSX.read(buf, { type: "array" });
-  }
-
   function createExcelModal(modalId = "excelModal") {
-    if (!window.ModalCore) throw new Error("ModalCore is not loaded.");
-    if (!window.XLSX) throw new Error("XLSX is not loaded.");
+    if (!modalCoreApi) throw new Error("ModalCore is not loaded.");
+    if (!previewSchemaApi) throw new Error("PreviewSchema is not loaded.");
 
     const root = document.getElementById(modalId);
     if (!root) throw new Error(`Modal DOM not found: #${modalId}`);
 
-    const core = window.ModalCore.create(root);
-    const $file = core.q("#xFile");
+    const core = modalCoreApi.create(root);
+    const $pick = core.q("#xPick");
+    const $fileLabel = core.q("#xFileLabel");
     const $sheet = core.q("#xSheet");
     const $status = core.q("#xStatus");
     const $picked = core.q("#xPicked");
     const $wrap = core.q("#xTableWrap");
     const $ok = core.q("#xOk");
 
-    let workbook = null;
     let fileName = null;
 
     let view = { columns: [], rows2d: [], baseRow: 0, colCount: 0 };
@@ -95,9 +51,15 @@
     let dataStartRowInView = 1;
 
     let onOk = null;
+    let currentRef = "";
+    let currentValue = "";
+    let currentStepName = "global";
+    let currentFieldKey = "file_path";
+    let currentHiddenBindings = {};
     let clickTimer = null;
 
     function setStatus(msg) { $status.textContent = msg || ""; }
+    function setFileLabel(text) { if ($fileLabel) $fileLabel.textContent = text || "未選択"; }
 
     function setPickedText() {
       const headerExcelRow = view.baseRow + headerRowInView + 1;
@@ -111,7 +73,62 @@
       view = { columns: [], rows2d: [], baseRow: 0, colCount: 0 };
       headerRowInView = 0;
       dataStartRowInView = 1;
+      setFileLabel(fileName || "");
       setPickedText();
+    }
+
+    function applyBridgePreview(payload) {
+      fileName = payload.file_name || payload.display_name || null;
+      currentRef = payload.ref || currentRef || "";
+      if (currentRef && currentHiddenBindings) {
+        currentHiddenBindings[currentRef] = {
+          display_name: String(payload.display_name || fileName || ""),
+          display_hint: String(payload.display_hint || "")
+        };
+      }
+      setFileLabel(payload.display_name || fileName || "未選択");
+      buildSheetSelect($sheet, { SheetNames: payload.sheet_names || [] });
+      $sheet.value = payload.sheet_name || (payload.sheet_names && payload.sheet_names[0]) || "";
+      view = {
+        columns: payload.columns || [],
+        rows2d: payload.rows2d || [],
+        baseRow: Number(payload.base_row || 0),
+        colCount: Number(payload.col_count || 0)
+      };
+      headerRowInView = 0;
+      dataStartRowInView = 1;
+      renderTable();
+    }
+
+    async function loadBridgePreview(sheetName) {
+      if (!bridgeApi?.available?.()) return false;
+      if (!currentRef && !currentValue) return false;
+      const payload = await bridgeApi.call("preview.readExcel", {
+        current_ref: currentRef || "",
+        current_value: currentRef ? "" : String(currentValue || ""),
+        field_key: currentFieldKey,
+        sheet_name: sheetName || ""
+      });
+      applyBridgePreview(payload || {});
+      return true;
+    }
+
+    async function pickBridgeFile() {
+      if (!bridgeApi?.available?.()) return false;
+      const picked = await bridgeApi.call("file.pickFile", {
+        title: "Excelファイルを選択",
+        step_name: currentStepName,
+        field_key: currentFieldKey,
+        current_ref: currentRef || "",
+        current_value: currentRef ? "" : String(currentValue || ""),
+        filters: [{ label: "Excel", patterns: ["*.xlsx", "*.xlsm", "*.xls"] }]
+      });
+      if (!picked || picked.selected === false || !picked.ref) return true;
+      currentRef = picked.ref;
+      currentValue = "";
+      await loadBridgePreview("");
+      setStatus(`読み込み完了: ${fileName || "-"} / ${$sheet.value || "-"}`);
+      return true;
     }
 
     function renderTable() {
@@ -187,46 +204,22 @@
       setPickedText();
     }
 
-    // events
-    $file.addEventListener("change", async () => {
+    if ($pick) {
+      $pick.addEventListener("click", async () => {
+        try {
+          await pickBridgeFile();
+        } catch (err) {
+          setStatus(`ERROR: ${err.message || err}`);
+          clearTable();
+        }
+      });
+    }
+
+    $sheet.addEventListener("change", async () => {
       try {
-        clearTable();
-        const file = $file.files && $file.files[0];
-        if (!file) return;
-
-        setStatus("Excelを読み込み中…");
-        workbook = await readWorkbook(file);
-        fileName = file.name;
-
-        buildSheetSelect($sheet, workbook);
-
-        const initialSheet = workbook.SheetNames[0];
-        if (!initialSheet) { setStatus("シートがありません。"); return; }
-
-        $sheet.value = initialSheet;
-        view = loadTop30As2D(workbook.Sheets[initialSheet]);
-
-        headerRowInView = 0;
-        dataStartRowInView = 1;
-
-        renderTable();
-        setStatus(`読み込み完了: ${file.name} / ${initialSheet}`);
-      } catch (err) {
-        setStatus(`ERROR: ${err.message || err}`);
-        clearTable();
-      }
-    });
-
-    $sheet.addEventListener("change", () => {
-      try {
-        if (!workbook) return;
         const name = $sheet.value;
-
-        view = loadTop30As2D(workbook.Sheets[name]);
-        headerRowInView = 0;
-        dataStartRowInView = 1;
-
-        renderTable();
+        if (!bridgeApi?.available?.() || (!currentRef && !currentValue)) return;
+        await loadBridgePreview(name);
         setStatus(`表示中: ${name}`);
       } catch (err) {
         setStatus(`ERROR: ${err.message || err}`);
@@ -239,11 +232,12 @@
       const dataStartRow = view.baseRow + dataStartRowInView + 1;
 
       const result = {
-        fileName,
+        fileName: currentRef || fileName,
         sheetName: $sheet.value || null,
         headerRow,
-        dataStartRow
-      };
+        dataStartRow,
+         schema: JSON.stringify(previewSchemaApi.buildPreviewSchema(view.rows2d, headerRowInView, dataStartRowInView), null, 2)
+       };
 
       if (onOk) onOk(result);
       core.close();
@@ -251,8 +245,31 @@
 
     function open(opts = {}) {
       onOk = typeof opts.onOk === "function" ? opts.onOk : null;
+      currentStepName = String(opts.stepName || "global");
+      currentFieldKey = String(opts.fieldKey || "file_path");
+      currentValue = String(opts.currentValue || "");
+      currentHiddenBindings = (opts.hiddenBindings && typeof opts.hiddenBindings === "object") ? opts.hiddenBindings : {};
+      currentRef = (typeof currentValue === "string" && /^\{\{hidden\.[^}]+\}\}$/.test(currentValue.trim())) ? currentValue.trim() : "";
+      fileName = null;
+      clearTable();
+      if (currentRef && currentHiddenBindings[currentRef]) {
+        setFileLabel(String(currentHiddenBindings[currentRef].display_name || currentRef));
+      } else if (currentValue) {
+        setFileLabel(String(currentValue).split(/[\\/]/).pop());
+      } else {
+        setFileLabel("未選択");
+      }
       core.open();
       setPickedText();
+      if (bridgeApi?.available?.() && (currentRef || currentValue)) {
+        loadBridgePreview("").then(() => {
+          setStatus(`読み込み完了: ${fileName || "-"} / ${$sheet.value || "-"}`);
+        }).catch((err) => {
+          setStatus(`ERROR: ${err.message || err}`);
+        });
+      } else {
+        setStatus("WebView モードでのみ利用できます。");
+      }
     }
 
     return { open, close: core.close };
@@ -261,11 +278,12 @@
   // グローバルAPI（1行呼び出し）
   let _instance = null;
 
-  window.ExcelModal = {
+  const excelModalApi = {
     open: (opts) => {
       if (!_instance) _instance = createExcelModal("excelModal");
       _instance.open(opts);
     },
     close: () => { if (_instance) _instance.close(); }
   };
+  window.ExcelModal = excelModalApi;
 })();

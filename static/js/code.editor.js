@@ -227,5 +227,9 @@
     return Promise.resolve(editor);
   }
 
-  window.codeEditors = { mountCodeEditor };
+  const codeEditors = { mountCodeEditor };
+  window.codeEditors = codeEditors;
+  const packages = window.zizPackages = window.zizPackages || {};
+  const core = packages.core = packages.core || {};
+  core.codeEditors = codeEditors;
 })();

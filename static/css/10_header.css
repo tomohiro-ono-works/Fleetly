@@ -18,7 +18,7 @@ header {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  padding: 10px 14px;
+  padding: 2px 8px;
   gap: 12px;
   flex-wrap: wrap;
 }
@@ -30,6 +30,12 @@ header {
   flex: 1 1 auto;
 }
 
+header .actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
 .flow-name-input {
   min-width: 480px;
   max-width: 560px;
@@ -39,8 +45,8 @@ header {
   font-size: 13px;
   font-weight: 500;
   line-height: 1.2;
-  padding: 8px 12px;
-  border-radius: 10px;
+  padding: 5px 10px;
+  border-radius: 9px;
 }
 
 .flow-name-input:focus {
@@ -50,8 +56,8 @@ header {
 }
 
 header .actions button {
-  min-width: 42px;
-  min-height: 42px;
+  min-width: 36px;
+  min-height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -64,10 +70,61 @@ header .actions button:hover { background: var(--surface-hover); }
 
 header .actions button img {
   display: block;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   object-fit: contain;
   filter: none;
+}
+
+header .actions .header-text-btn {
+  min-width: 56px;
+  min-height: 36px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.window-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: 2px;
+}
+
+body[data-native-frame="false"] header {
+  user-select: none;
+}
+
+body[data-native-frame="false"] .header-inner,
+body[data-native-frame="false"] .header-left,
+body[data-native-frame="false"] .actions {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+body[data-native-frame="false"] button,
+body[data-native-frame="false"] input,
+body[data-native-frame="false"] .header-text-btn,
+body[data-native-frame="false"] .window-actions,
+body[data-native-frame="false"] .window-actions * {
+  -webkit-user-select: auto;
+  user-select: auto;
+}
+
+header .actions .window-control-btn {
+  min-width: 28px;
+  min-height: 28px;
+  border-radius: 8px;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+header .actions .window-control-btn.is-close:hover {
+  background: rgba(214, 72, 104, 0.14);
+  border-color: rgba(214, 72, 104, 0.22);
+  color: #c9475c;
 }
 
 header .actions #btnRunFlow {
@@ -92,4 +149,3 @@ header .actions #btnRunFlow:hover {
   font-size: 12px;
   color: var(--text-secondary);
 }
-

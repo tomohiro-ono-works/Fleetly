@@ -1,50 +1,211 @@
-# ziz-ai
-迅速にデータ加工できるETLツール。隹（ふるとり）
+# zizai
 
-![説明文](static\img\icon2.png)
+ローカル環境で動作する、PySide6 + WebView ベースのデータ加工 / ワークフロー作成アプリです。  
+主な用途は、非エンジニア向けの ETL、業務自動化、SQL 作成補助です。
+
+![zizai icon](static/img/icon2.png)
+
+## 概要
+
+`zizai` は Windows ローカル環境で動くデスクトップアプリです。  
+ネイティブ側は `PySide6`、UI は `Qt WebEngine` 上の HTML / CSS / JavaScript で構成しています。
+
+現在の主要モード:
+
+- ワークフロー作成
+- データフロー作成
+- クエリビルダー
+- 入力フォーム作成
+
+## 主な機能
+
+### データフロー
+
+- Excel / CSV / JSON / BigQuery からの読込
+- Excel / CSV / JSON / BigQuery への出力
+- データ加工コネクタ
+  - RENAME リストからのフィールド名変更
+  - 行フィルタ
+- Windows 操作コネクタ
+  - ファイル名変更＆移動
+  - ファイル名検索
+  - ファイル内文字列検索
+  - Markdown 作成
+- Web / Slack / Windows 操作系コネクタの一部利用
+
+### ワークフロー
+
+- ブラウザ操作
+- Slack 操作
+- Windows 操作
+- API 実行
+
+### クエリビルダー
+
+- `--@cte:` 単位の縦フロー表示
+- 左右 2 ペインの SQL エディタ
+- カタログ / フロー / SQL 編集 / 結果表示の分割 UI
+- コマンドサジェスト
+  - `Ctrl+@`
+- エリア選択
+  - `Ctrl+P`
+- SQL 集計補助
+  - Python 側の `sqlglot` を使った集計コマンド
+
+## セキュリティ方針
+
+- WebView 自体の外部通信は制限
+- 外部ナビゲーションは制限
+- DevTools は通常起動では無効
+- `gui --debug` 時のみ DevTools 利用可
+- API / Web 接続制御は `config/security_policies.yml` で管理
+  - `apis.profiles`
+  - `web.allowlist`
+
+補足:
+
+- `api_profile.certificate` の Windows 証明書ストア実解決は未実装です
+
+## ディレクトリ構成
+
+```text
+app/
+  gui/
+    bridge.py
+    host.py
+  main.py
+
+cli/
+connectors/
+core/
+config/
+scripts/
+static/
+  css/
+  img/
+  icons/
+  js/
+  modal/
+  sqlbilder/
+template/
+workflows/
+zizai.py
+requirements.txt
+```
+
+主な役割:
+
+- `zizai.py`
+  - 起動エントリポイント
+- `app/main.py`
+  - アプリ起動と CLI / GUI の振り分け
+- `app/gui/host.py`
+  - Qt / WebView ホスト
+- `app/gui/bridge.py`
+  - WebView と Python の bridge
+- `connectors/`
+  - コネクタ実装
+- `core/`
+  - 共通ロジック
+- `static/`
+  - フロントエンド UI
+- `static/sqlbilder/`
+  - クエリビルダー専用 UI
+
+## 起動方法
+
+仮想環境を有効化したうえで実行します。
+
+```powershell
+.\.env\Scripts\python.exe zizai.py gui
+```
+
+DevTools を有効にする場合:
+
+```powershell
+.\.env\Scripts\python.exe zizai.py gui --debug
+```
+
+CLI を使う場合:
+
+```powershell
+.\.env\Scripts\python.exe zizai.py --help
+```
+
+## 設定ファイル
+
+### `config/security_policies.yml`
+
+外部接続のポリシーを管理します。
+
+例:
+
+```yaml
+version: 1
+
+apis:
+  profiles:
+    sales_orders_api:
+      base_url: "https://api.example.com/orders"
+      timeout_sec: 30
+
+web:
+  allowlist:
+    - domain: "fonts.google.com"
+      path_prefixes:
+        - "/icons"
+```
+
+### `config/rename.csv`
+
+RENAME リストから列名を一括変更するためのサンプル CSV です。
+
+### `config/recent_flows.json`
+
+最近使ったファイルのローカル履歴です。  
+ローカル運用前提のファイルです。
+
+## 保存形式
+
+- データフロー: `.zizd`
+- ワークフロー: `.zizw`
+- クエリビルダー: `.zizq`
+
+クエリビルダーの SQL 本文自体は `.sql` ベースの扱いを前提にしています。
+
+## 主なショートカット
+
+- `Ctrl+S`
+  - 保存
+- `Ctrl+Enter`
+  - 実行
+- `Ctrl+@`
+  - SQL ビルダーのコマンドサジェスト
+- `Ctrl+P`
+  - SQL ビルダーのエリア選択
+
+## 依存ライブラリ
+
+Python 依存は [requirements.txt](requirements.txt) を参照してください。  
+外部ライブラリと JS ベンダーの簡易一覧は [THIRD_PARTY_INVENTORY.md](THIRD_PARTY_INVENTORY.md) にまとめています。
+
+## ライセンス補足
+
+このプロジェクトは `PySide6` を利用しています。  
+`PySide6` は Qt for Python として LGPL 系ライセンスで提供されています。  
+実際の配布形態では、同梱方法とライセンス条件を別途確認してください。
+
+CodeMirror 5.65.16 
+ReDoS は Regular Expression Denial of Service です。
+正規表現の処理に時間がかかりすぎて、アプリが極端に重くなったり止まったりする問題があるバージョン
 
 
-# アプリケーション要件定義書
-
-## 1. サービス概要
-*   **アプリ名：** ziz-ai(ジズAI)
-*   **コンセプト：** AIエージェントでなんでも自由自在に
-*   **ターゲットユーザー：** 非エンジニアでBI業務を行う方
-*   **解決したい課題：** 定常業務の短縮と作業簡素化
-
-## 2. 主要機能（MVPスコープ）
-*   **機能A：** データ取得機能（Excel,csv,json、bigquery(SQL)）
-*   **機能B：** データ出力機能（Excel,csv,json、bigquery(SQL)）
-*   **機能C：** データフロー作成＆保存＆読込
-*   **機能D：** BigQuerySQL実行
-*   **機能E：** batやマクロ実行
-*   **機能F：** ログ吐き出し
-
-## 3. ユーザーフロー（操作の流れ）
-1.  ユーザーがブラウザでアプリにアクセスする。
-2.  ワークフロー一覧画面に遷移する。
-2.  ワークフローを作成ボタンを押す。ワークフロー編集ページへ遷移
-3.  ステップが表示される。
-4.  ユーザーが選択を行い、入力処理、加工処理、出力処理を選択。
-5.  次のステップを追加できる。
-6.  保存ができる
-7.  ワークフロー一覧画面に表示される
-7.  実行ができる
+logistroを利用
+マイナーなため、情報少なめ。後でライブラリ変更するかも
 
 
-## 4. 技術スタック（2026年推奨構成）
-*   **Frontend:** html,js,CSS
-*   **Backend:** Python
-*   **Infrastructure:** ローカル環境
+MouseInfo
+GPLv3+ だからです。MIT/BSD/Apache 系と違って、再配布や組み込み配布のときに条件が重くなります。
 
-## 5. 画面設計（UI/UX）
-*   **ワークフロー一覧画面:** サイトバーで画面選択。ワークフローの一覧が表示される。
-*   **ワークフロー編集画面:** サイトバーで画面選択。画面中央はドラッグ＆ドロップ対応でステップを入力できるUI。画面右はステップごとの入力設定項目。画面下部はデータ表示など
-
-## 6. 非機能要件・その他
-*   **コード設計:** 入力や出力でのコネクターはファイルごとに別で作成すること。無理のない範囲で標準ライブラリを使うこと。
-ファイルサイズが重い場合は分割すること
-
-
-
-
+orjson です。
+危険という意味ではなく、ライセンス構成が単純ではないため、社内台帳には「MIT」だけでなく MPL-2.0 AND (Apache-2.0 OR MIT) と正確に書いておく方がよいです。

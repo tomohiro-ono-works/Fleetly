@@ -1,21 +1,46 @@
 import os
 import shutil
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlparse
 
+import pandas as pd
+
 from connectors.base_connector import BaseConnector
+from core.security_policies import is_web_target_allowed
 
 
 class WebConnector(BaseConnector):
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
-        if action == "open_chrome_page":
-            target = self._normalize_optional_text(params.get("url"))
-            if not target:
-                raise ValueError("url は必須です。")
-            return self.open_chrome_page(target)
-        raise ValueError(f"Unknown action: {action}")
+        if action not in {"open_chrome_page", "lookat_pages", "lookat_page"}:
+            raise ValueError(f"Unknown action: {action}")
+
+        target = self._normalize_optional_text(params.get("url"))
+        if not target:
+            return self._build_result_dataframe(
+                action=action,
+                target="",
+                status="error",
+                message="url は必須です。",
+            )
+
+        try:
+            result = self.open_chrome_page(target)
+            return self._build_result_dataframe(
+                action=action,
+                target=result["target"],
+                status="success",
+                message=result["message"],
+            )
+        except Exception as error:
+            return self._build_result_dataframe(
+                action=action,
+                target=str(target),
+                status="error",
+                message=str(error),
+            )
 
     @staticmethod
     def _normalize_optional_text(value: Any) -> Optional[str]:
@@ -40,6 +65,16 @@ class WebConnector(BaseConnector):
                 return str(candidate)
         return None
 
+    def _build_result_dataframe(self, *, action: str, target: str, status: str, message: str) -> pd.DataFrame:
+        return pd.DataFrame([{
+            "status": str(status),
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "connector": "WebConnector",
+            "action": str(action),
+            "target": str(target or ""),
+            "message": str(message or ""),
+        }])
+
     def _resolve_open_target(self, target: str) -> str:
         normalized_target = self.normalize_file_path(target)
         if not normalized_target:
@@ -58,11 +93,17 @@ class WebConnector(BaseConnector):
 
         return f"https://{normalized_target}"
 
-    def open_chrome_page(self, target: str) -> str:
+    def open_chrome_page(self, target: str) -> dict[str, str]:
         chrome_path = self._find_chrome_executable()
         if not chrome_path:
             raise FileNotFoundError("Chrome が見つかりませんでした。")
 
         open_target = self._resolve_open_target(target)
+        parsed = urlparse(open_target)
+        if parsed.scheme in {"http", "https"} and not is_web_target_allowed(open_target):
+            raise ValueError(f"Web allowlist に未登録のため開けません: {parsed.netloc}{parsed.path or '/'}")
         subprocess.Popen([chrome_path, open_target])
-        return f"Chrome で開きました: {open_target}"
+        return {
+            "target": open_target,
+            "message": f"Chrome で開きました: {open_target}",
+        }

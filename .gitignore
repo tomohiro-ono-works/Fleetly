@@ -1,26 +1,49 @@
-# Pythonのキャッシュファイルを無視
+# Python
 __pycache__/
-*.pyc
-.codex/
-.vscode
-.ziz
+*.py[cod]
+*.pyo
 
-# 仮想環境フォルダを無視
+# Virtual environments
 env/
 .env/
 
-
-
-# OS固有のファイルを無視
+# Editor / OS
+.vscode/
 .DS_Store
 Thumbs.db
-*.ipynb
 *.ps1
-slack_client.py
-memo.md
 
-workflows/
+# Python test / cache artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Local app/runtime artifacts
 logs/
-static/old
-docs/
+workflows/
+static/old/
+*.log
+*.tmp
+*.bak
+*.orig
 
+# Local-only personal files
+memo.md
+slack_client.py
+
+# Local docs / Codex assets
+docs/
+.codex/
+tests/
+
+# App-specific generated files
+.ziz
+
+# Playwright / Node.js test artifacts
+tests/playwright/node_modules/
+tests/playwright/reports/
+tests/playwright/results/
+tests/playwright/.cache/
+tests/playwright/.auth/

@@ -3,7 +3,14 @@ dataset_options=["defult_dataset1","defult_dataset2"]
 pyenv_options=["defult","venv1","venv2"]
 python_path=["xxxxxxx/xxxxxx/xxxxxxx"]
 ziz_path=["yyyyyy/yyyyyy/yyyyyy/main.py"]
-window.CONFIG = {
+csv_encoding_options=["utf8","shift_jis","cp932"]
+csv_delimiter_options=[
+  { value:",", label:"カンマ (,)" },
+  { value:"\\t", label:"タブ (TAB)" },
+  { value:";", label:"セミコロン (;)" },
+  { value:"|", label:"パイプ (|)" }
+]
+const CONFIG = {
   version: 3,
 
   modes: {
@@ -12,33 +19,38 @@ window.CONFIG = {
       label: "ワークフロー",
       defaultFlowName: "ワークフロー１",
       fileExtension: ".zizw",
-      connectorIds: [
-        "DataflowConnector",
-        "DummyConnector",
-        "OperationConnector",
-        "ExcelConnector",
-        "WindowsConnector",
-        "WebConnector",
-        "RpaSlackConnector",
-        "PlotlyConnector",
-        "PPTConnector",
-        "OutlookConnector"
-      ]
+        connectorIds: [
+          "DataflowConnector",
+          "DummyConnector",
+          "OperationConnector",
+          "ExcelConnector",
+          "WindowsConnector",
+          "WebConnector",
+          "APIConnector",
+          "RpaSlackConnector",
+          "PlotlyConnector",
+          "PPTConnector",
+          "OutlookConnector"
+        ]
     },
     dataflow: {
       id: "dataflow",
       label: "データフロー",
       defaultFlowName: "データフロー１",
       fileExtension: ".zizd",
-      connectorIds: [
-        "BQConnector",
-        "DummyConnector",
-        "ExcelConnector",
-        "CSVConnector",
-        "PythonConnector",
-        "DataintegrationConnector",
-        "VectorConnector"
-      ]
+        connectorIds: [
+          "BQConnector",
+          "DummyConnector",
+          "ExcelConnector",
+          "CSVConnector",
+          "APIConnector",
+          "PythonConnector",
+          "DataintegrationConnector",
+          "VectorConnector",
+          "WindowsConnector",
+          "WebConnector",
+          "RpaSlackConnector"
+        ]
     },
     "query-builder": {
       id: "query-builder",
@@ -71,7 +83,7 @@ window.CONFIG = {
     { id: "VectorConnector",          label: "VectorDB", exportId: "vector_connector"},
     // { id: "LLMConnector",             label: "LLM", exportId: "llm_connector"},
 
-    // { id: "APIConnector",             label: "API実行", exportId: "api_connector"},
+    { id: "APIConnector",             label: "API実行", exportId: "api_connector"},
 
   ],
 
@@ -88,7 +100,23 @@ window.CONFIG = {
       { id: "load_data",        label: "データロード" , rpaType: "Load"}
     ],
     CSVConnector: [
-      { id: "read_csv",  label: "読み込み" , rpaType: "Extract"},
+      {
+        id: "read_csv",
+        label: "読み込み",
+        rpaType: "Extract",
+        detailModal: {
+          type: "csv",
+          label: "ファイルを開く",
+          resultFieldMap: {
+            fileName: "file_path",
+            encoding: "encoding",
+            delimiter: "delimiter",
+            headerRow: "header_row",
+            dataStartRow: "data_start_row",
+            schema: "schema"
+          }
+        }
+      },
       { id: "write_csv", label: "書き込み" , rpaType: "Load"}
     ],
     ExcelConnector: [
@@ -98,12 +126,13 @@ window.CONFIG = {
         rpaType: "Extract",
         detailModal: {
           type: "excel",
-          label: "Excelアシスタントを開く",
+          label: "ファイルを開く",
           resultFieldMap: {
             fileName: "file_path",
             sheetName: "sheet_name",
             headerRow: "header_row",
-            dataStartRow: "data_start_row"
+            dataStartRow: "data_start_row",
+            schema: "schema"
           }
         }
       },
@@ -125,11 +154,8 @@ window.CONFIG = {
       { id: "execute_move", label: "ファイル移動" , rpaType: "Transform"}
     ],
     DataintegrationConnector: [
-      { id: "filter_fields", label: "列指定" , rpaType: "Transform"},
-      { id: "filter_fields", label: "条件指定" , rpaType: "Transform"},
-      { id: "rename_fields", label: "フィールド名変更" , rpaType: "Transform"},
-      { id: "rename_field_list", label: "フィールド名をリストで変更" , rpaType: "Transform"},
-      { id: "pivot_axis", label: "ピボット処理" , rpaType: "Transform"}
+      { id: "replace_fields_forrenamelist", label: "フィールド名をRENAMEリストから変更" , rpaType: "Transform"},
+      { id: "filter_rows", label: "条件指定" , rpaType: "Transform"}
     ],
     ShellConnector: [
       { id: "execute_bat", label: "バッチ実行" , rpaType: "Transform"}
@@ -166,6 +192,12 @@ window.CONFIG = {
       { id: "write_draft", label: "下書き入力" , rpaType: "Transform"},
       { id: "get_chrome_info", label: "Chrome情報取得" , rpaType: "Extract"}
     ],
+    WindowsConnector: [
+      { id: "rename_and_move_file", label: "ファイル名変更＆移動", rpaType: "Transform" },
+      { id: "search_files_by_name", label: "ファイル名検索", rpaType: "Extract" },
+      { id: "search_text_in_files", label: "ファイル内の文字列検索", rpaType: "Extract" },
+      { id: "create_markdown_file", label: "マークダウンを作成", rpaType: "Load" }
+    ],
     OutlookConnector: [
       { id: "search_mail", label: "メール検索" , rpaType: "Extract"},
       { id: "download_attachments", label: "添付ファイル保存" , rpaType: "Load"},
@@ -190,14 +222,15 @@ window.CONFIG = {
         options:[
           { value:"DataflowConnector", label:"データフロー", image:"./icons/dataflow.svg" },
           { value:"DummyConnector", label:"ダミー", image:"./icons/chess_pawn.svg" },
-          { value:"DataintegrationConnector", label:"データ加工", image:"./icons/brick.svg" },
-          { value:"VectorConnector", label:"VectorDB", image:"./icons/vectordb.svg" },
-          { value:"WebConnector", label:"Web操作", image:"./icons/web.svg" },
-          { value:"ExcelConnector", label:"Excel", image:"./img/ExcelConnector.png" },
-          { value:"BQConnector", label:"BigQuery", image:"./img/BQConnector.png" }
-        ]
-      }
-    ],
+            { value:"DataintegrationConnector", label:"データ加工", image:"./icons/brick.svg" },
+            { value:"VectorConnector", label:"VectorDB", image:"./icons/vectordb.svg" },
+            { value:"WebConnector", label:"Web操作", image:"./icons/web.svg" },
+            { value:"APIConnector", label:"API実行", image:"./icons/web.svg" },
+            { value:"ExcelConnector", label:"Excel", image:"./img/ExcelConnector.png" },
+            { value:"BQConnector", label:"BigQuery", image:"./img/BQConnector.png" }
+          ]
+        }
+      ],
 
     "BQConnector.execute_sql": [
       { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
@@ -220,18 +253,37 @@ window.CONFIG = {
     ],
 
     "CSVConnector.read_csv": [
-      { key:"file_path", label:"ファイル", kind:"file", required:true },
-      { key:"encoding", label:"文字コード", kind:"combo", required:true, default:"utf8", options:["utf8","shift_jis","cp932"] },
+      { key:"file_path", label:"ファイル", kind:"file", required:true, accept:".csv,.tsv,.txt" },
+      { key:"encoding", label:"文字コード", kind:"combo", required:true, default:"utf8", options:csv_encoding_options },
+      {
+        key:"delimiter",
+        label:"区切り文字",
+        kind:"combo",
+        required:true,
+        default:",",
+        allowCustom:false,
+        options:csv_delimiter_options
+      },
       { key:"header_row", label:"ヘッダ行", kind:"number", required:true, default:1 },
       { key:"data_start_row", label:"データ開始行", kind:"number", required:true, default:2 },
-      { key:"selected_columns", label:"対象カラム", kind:"text", required:false, allowVars:true },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
     "CSVConnector.write_csv": [
       { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
-      { key:"output_path", label:"出力ファイル", kind:"file", required:true },
-      { key:"encoding", label:"文字コード", kind:"combo", required:true, default:"utf8", options:["utf8","shift_jis","cp932"] }
+      { key:"output_folder", label:"出力フォルダ", kind:"dir", required:true },
+      { key:"file_name", label:"出力ファイル名", kind:"text", required:true, default:"output.csv", allowVars:true, placeholder:"例: result.csv" },
+      { key:"encoding", label:"文字コード", kind:"combo", required:true, default:"utf8", options:csv_encoding_options },
+      {
+        key:"delimiter",
+        label:"区切り文字",
+        kind:"combo",
+        required:true,
+        default:",",
+        allowCustom:false,
+        options:csv_delimiter_options
+      },
+      { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
     "ExcelConnector.read_excel": [
@@ -239,25 +291,16 @@ window.CONFIG = {
       { key:"sheet_name", label:"シート名", kind:"text", required:true, default:"シート1", allowVars:true },
       { key:"header_row", label:"ヘッダ行", kind:"number", required:true, default:1 },
       { key:"data_start_row", label:"データ開始行", kind:"number", required:true, default:2 },
-      {
-        key:"preserve_display",
-        label:"表示値を保持",
-        kind:"combo",
-        required:false,
-        default:"",
-        options:[
-          { value:"", label:"通常値" },
-          { value:"1", label:"表示値を保持" }
-        ]
-      },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
     "ExcelConnector.write_excel": [
       { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
-      { key:"output_path", label:"出力ファイル", kind:"file", required:true },
+      { key:"output_folder", label:"出力フォルダ", kind:"dir", required:true },
+      { key:"file_name", label:"出力ファイル名", kind:"text", required:true, default:"output.xlsx", allowVars:true, placeholder:"例: result.xlsx" },
       { key:"sheet_name", label:"シート名", kind:"text", required:true, default:"シート1", allowVars:true },
-      { key:"mode", label:"書き込みモード", kind:"combo", required:true, default:"create_or_replace", options:["create_or_replace","create_or_insert"] }
+      { key:"mode", label:"書き込みモード", kind:"combo", required:true, default:"create_or_replace", options:["create_or_replace","create_or_insert"] },
+      { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
     "ExcelConnector.read_excel_range": [
@@ -266,17 +309,6 @@ window.CONFIG = {
       { key:"cell_range", label:"読込範囲", kind:"text", required:true, allowVars:true, placeholder:"例: A1:D100" },
       { key:"header_row", label:"ヘッダ行(範囲内)", kind:"number", required:true, default:1 },
       { key:"data_start_row", label:"データ開始行(範囲内)", kind:"number", required:true, default:2 },
-      {
-        key:"preserve_display",
-        label:"表示値を保持",
-        kind:"combo",
-        required:false,
-        default:"",
-        options:[
-          { value:"", label:"通常値" },
-          { value:"1", label:"表示値を保持" }
-        ]
-      },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
@@ -349,6 +381,16 @@ window.CONFIG = {
       { key:"script", label:"スクリプト", kind:"textarea", codeLanguage:"python", required:true, allowVars:true, default:"def main():\n    output = None\n    return output", placeholder:"def main():\n    output = None\n    return output" }
     ],
 
+    "DataintegrationConnector.replace_fields_forrenamelist": [
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
+      { key:"rename_list_path", label:"RENAMEリストファイル", kind:"file", required:true, default:"config\\rename.csv", accept:".csv" }
+    ],
+
+    "DataintegrationConnector.filter_rows": [
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
+      { key:"conditions", label:"条件指定", kind:"filter-builder", required:false }
+    ],
+
     "RpaSlackConnector.move_channel": [
       { key:"base_url", label:"Slack URL", kind:"text", required:true, allowVars:true, placeholder:"例: https://app.slack.com/client/..." },
       { key:"channel_name", label:"チャンネル名", kind:"text", required:true, allowVars:true, placeholder:"例: general" },
@@ -367,12 +409,59 @@ window.CONFIG = {
     "RpaSlackConnector.get_chrome_info": [
     ],
 
-    "WebConnector.open_chrome_page": [
-      { key:"url", label:"URL / ファイルパス", kind:"text", required:true, allowVars:true, placeholder:"例: https://example.com または C:/work/index.html" }
+    "WindowsConnector.rename_and_move_file": [
+      { key:"source_file_path", label:"対象ファイル", kind:"file", required:true, allowVars:true },
+      { key:"destination_folder", label:"変更後フォルダ", kind:"dir", required:false, allowVars:true },
+      { key:"destination_file_name", label:"変更後ファイル名", kind:"text", required:false, allowVars:true, placeholder:"未指定の場合は変更しない" },
+      { key:"allow_missing_source", label:"対象ファイルが存在しない場合は成功扱いにする", kind:"checkbox", required:false, default:false }
     ],
 
-    "OutlookConnector.search_mail": [
-      { key:"limit", label:"取得件数", kind:"number", required:true, default:10 },
+    "WindowsConnector.search_files_by_name": [
+      { key:"root_folder", label:"ルートフォルダ", kind:"dir", required:true, allowVars:true },
+      { key:"recursive", label:"再帰的に子階層のフォルダを検索する", kind:"checkbox", required:false, default:false },
+      { key:"file_name_pattern", label:"検索するファイル名（正規表現）", kind:"text", required:false, allowVars:true, placeholder:"例: ^売上_.*" },
+      { key:"file_extension_pattern", label:"検索するファイルの拡張子（正規表現）", kind:"text", required:false, allowVars:true, placeholder:"例: csv|xlsx" },
+      { key:"max_elapsed_seconds", label:"最大経過時間（秒）", kind:"number", required:true, default:120, min:30, max:480 }
+    ],
+
+    "WindowsConnector.search_text_in_files": [
+      { key:"root_folder", label:"ルートフォルダ", kind:"dir", required:true, allowVars:true },
+      { key:"recursive", label:"再帰的に子階層のフォルダを検索する", kind:"checkbox", required:false, default:false },
+      { key:"file_name_pattern", label:"検索するファイル名（正規表現）", kind:"text", required:false, allowVars:true, placeholder:"例: ^売上_.*" },
+      { key:"file_extension_pattern", label:"検索するファイルの拡張子（正規表現）", kind:"text", required:false, allowVars:true, placeholder:"例: md|txt" },
+      { key:"content_pattern", label:"検索する文字列（正規表現）", kind:"text", required:true, allowVars:true, placeholder:"例: error|warning" },
+      { key:"context_lines", label:"取得行（前後行数）", kind:"number", required:true, default:0, min:0, max:200 },
+      { key:"max_elapsed_seconds", label:"最大経過時間（秒）", kind:"number", required:true, default:120, min:30, max:480 }
+    ],
+
+    "WindowsConnector.create_markdown_file": [
+      { key:"write_mode", label:"書き込みモード", kind:"combo", required:true, default:"replace", options:[
+        { value:"replace", label:"置換" },
+        { value:"append", label:"追記" }
+      ]},
+      { key:"target_file_path", label:"対象ファイル", kind:"file", required:true, allowVars:true, accept:".md,.markdown,.txt" },
+      { key:"content", label:"入力内容", kind:"textarea", required:true, allowVars:true, placeholder:"{{step1.field_name}} で step の1行目を参照できます。" }
+    ],
+
+      "WebConnector.open_chrome_page": [
+        { key:"url", label:"URL / ファイルパス", kind:"text", required:true, allowVars:true, placeholder:"例: https://example.com または C:/work/index.html" }
+      ],
+      "WebConnector.lookat_pages": [
+        { key:"url", label:"URL", kind:"text", required:true, allowVars:true, placeholder:"例: https://example.com/list" }
+      ],
+      "WebConnector.lookat_page": [
+        { key:"url", label:"URL", kind:"text", required:true, allowVars:true, placeholder:"例: https://example.com/detail" }
+      ],
+      "APIConnector.run_api": [
+        { key:"api_profile", label:"API Profile", kind:"text", required:true, allowVars:true, placeholder:"例: sales_orders_api" },
+        { key:"path", label:"相対パス", kind:"text", required:false, allowVars:true, placeholder:"例: /v1/orders" },
+        { key:"method", label:"メソッド", kind:"combo", required:true, default:"GET", options:["GET","POST","PUT","PATCH","DELETE"] },
+        { key:"headers", label:"ヘッダー(JSON)", kind:"textarea", required:false, placeholder:'例: {\"Accept\":\"application/json\"}' },
+        { key:"body", label:"リクエスト本文", kind:"textarea", required:false, allowVars:true, placeholder:"必要な場合のみ入力" }
+      ],
+
+      "OutlookConnector.search_mail": [
+        { key:"limit", label:"取得件数", kind:"number", required:true, default:10 },
       { key:"sender", label:"送信者", kind:"text", required:false, allowVars:true },
       { key:"subject", label:"件名", kind:"text", required:false, allowVars:true },
       { key:"has_attachments", label:"添付有無", kind:"combo", required:false, default:"true", options:["true","false"] },
@@ -402,3 +491,8 @@ window.CONFIG = {
 
   }
 };
+
+window.CONFIG = CONFIG;
+const __zizPackagesConfig = window.zizPackages = window.zizPackages || {};
+const __zizCoreConfig = __zizPackagesConfig.core = __zizPackagesConfig.core || {};
+__zizCoreConfig.CONFIG = CONFIG;

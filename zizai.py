@@ -52,7 +52,7 @@ def main():
                 handle_schema(state)
                 continue
             if command == "gui":
-                open_gui(FORM_HTML_PATH)
+                open_gui(FORM_HTML_PATH, debug=bool((argument or {}).get("debug")))
                 continue
 
             console.print(f"[{ERROR_COLOR}]unknown command[/{ERROR_COLOR}]")

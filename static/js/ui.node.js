@@ -1,15 +1,45 @@
 (function () {
-  const { el } = window.utils;
+  const packages = window.zizPackages || {};
+  const corePkg = packages.core || {};
+  const uiPkg = packages.ui || {};
+  const modalPkg = packages.modal || {};
+  const bridgeApi = corePkg.bridge || null;
+  const dialogApi = corePkg.dialog || null;
+  const { el, getFormSchema } = (corePkg.utils || {});
   const {
     addNodeAfter,
     addParallelAfter,
+    duplicateNodeAfter,
     insertNodeAt,
     moveNodeToInsert,
     moveNodeToParallel,
+    addMergeParent,
+    clearPendingMergeSource,
     removeNode,
+    removeMergeParent,
+    setPendingMergeSource,
     setSelectedNode
-  } = window.stateOps;
-  const { renderField, getFieldReferenceWarnings } = window.uiFields;
+  } = (corePkg.stateOps || {});
+  function getUiFieldsApi() {
+    return (window.zizPackages && window.zizPackages.ui && window.zizPackages.ui.fields)
+      || window.uiFields
+      || {};
+  }
+
+  function renderFieldSafe(args) {
+    const api = getUiFieldsApi();
+    if (typeof api.renderField === "function") return api.renderField(args);
+    return el("div", { class: "row" }, [
+      el("label", {}, [document.createTextNode(args?.field?.label || args?.field?.key || "field")]),
+      el("div", { class: "small" }, [document.createTextNode("フィールド描画を読み込めませんでした。")])
+    ]);
+  }
+
+  function getFieldReferenceWarningsSafe(args) {
+    const api = getUiFieldsApi();
+    if (typeof api.getFieldReferenceWarnings === "function") return api.getFieldReferenceWarnings(args);
+    return [];
+  }
 
   const NODE_W = 60;
   const NODE_H = 60;
@@ -24,9 +54,44 @@
   const BTN_HIT_BIAS_Y = 32;
   const EDGE_CURVE = 42;
   const ICON_CACHE = new Map();
+  let copiedNodeSnapshot = null;
 
   function jpLabel(x) {
     return (x && (x.label_jp || x.label)) || (x && x.id) || "";
+  }
+
+  function cloneUiValue(value) {
+    if (typeof window.structuredClone === "function") {
+      try {
+        return window.structuredClone(value);
+      } catch (error) {
+        // fallback below
+      }
+    }
+    return JSON.parse(JSON.stringify(value ?? null));
+  }
+
+  function buildNodeClipboardSnapshot(node) {
+    if (!node || isLoopRootNode(node) || node.loopOwnerId) return null;
+    return {
+      connector: String(node.connector || ""),
+      action: String(node.action || ""),
+      description: typeof node.description === "string" ? node.description : "",
+      descriptionAuto: !!node.descriptionAuto,
+      form: cloneUiValue(node.form || {})
+    };
+  }
+
+  function isEditingShortcutTarget(target) {
+    if (!target || !(target instanceof Element)) return false;
+    return !!target.closest("input, textarea, select, [contenteditable='true'], .CodeMirror, .combo-field, .connector-flyout");
+  }
+
+  function getMergeParentIds(node) {
+    if (!Array.isArray(node?.mergeParentIds)) return [];
+    return node.mergeParentIds
+      .map((id) => String(id || "").trim())
+      .filter(Boolean);
   }
 
   function normalizeSteps(state) {
@@ -54,18 +119,21 @@
     if (!target) return [];
 
     const out = [];
-    let parentId = target.parentId || null;
-    while (parentId) {
-      const parent = byId.get(parentId);
-      if (!parent) break;
-      out.unshift(parent.stepName);
-      parentId = parent.parentId || null;
+    const seen = new Set();
+    const queue = [];
+    if (target.parentId) queue.push(target.parentId);
+    getMergeParentIds(target).forEach((parentId) => queue.push(parentId));
+    while (queue.length) {
+      const currentId = queue.shift();
+      if (!currentId || seen.has(currentId)) continue;
+      seen.add(currentId);
+      const parent = byId.get(currentId);
+      if (!parent) continue;
+      out.push(parent.stepName);
+      if (parent.parentId) queue.push(parent.parentId);
+      getMergeParentIds(parent).forEach((parentId) => queue.push(parentId));
     }
-    return out;
-  }
-
-  function getFormSchema(config, connector, action) {
-    return (config.forms && config.forms[`${connector}.${action}`]) || [];
+    return Array.from(new Set(out)).reverse();
   }
 
   function getActionConfig(config, connector, action) {
@@ -85,15 +153,24 @@
     });
   }
 
-  function openConfiguredDetailModal({ node, detailModal, onStateChanged }) {
+  function openConfiguredDetailModal({ node, detailModal, hiddenBindings, onStateChanged }) {
     if (!detailModal || !detailModal.type) return;
+    const fieldMap = (detailModal && detailModal.resultFieldMap) || {};
+    const pathFieldKey = fieldMap.fileName || "file_path";
+    const currentPathValue = node?.form?.[pathFieldKey] || "";
 
     if (detailModal.type === "excel") {
-      if (!window.ExcelModal || typeof window.ExcelModal.open !== "function") {
-        alert("Excelアシスタントを読み込めませんでした。");
+      const excelModal = modalPkg.excel || null;
+      if (!excelModal || typeof excelModal.open !== "function") {
+        if (dialogApi?.show) dialogApi.show("Excelアシスタントを読み込めませんでした。", { kind: "error", title: "モーダルエラー" });
+        else alert("Excelアシスタントを読み込めませんでした。");
         return;
       }
-      window.ExcelModal.open({
+      excelModal.open({
+        stepName: String(node.stepName || "global"),
+        fieldKey: String(pathFieldKey || "file_path"),
+        currentValue: String(currentPathValue || ""),
+        hiddenBindings: hiddenBindings || {},
         onOk: (result) => {
           applyModalResultToNodeForm(node, detailModal, result);
           if (onStateChanged) onStateChanged();
@@ -102,7 +179,28 @@
       return;
     }
 
-    alert(`未対応のモーダル種別です: ${detailModal.type}`);
+    if (detailModal.type === "csv") {
+      const csvModal = modalPkg.csv || null;
+      if (!csvModal || typeof csvModal.open !== "function") {
+        if (dialogApi?.show) dialogApi.show("CSVアシスタントを読み込めませんでした。", { kind: "error", title: "モーダルエラー" });
+        else alert("CSVアシスタントを読み込めませんでした。");
+        return;
+      }
+      csvModal.open({
+        stepName: String(node.stepName || "global"),
+        fieldKey: String(pathFieldKey || "file_path"),
+        currentValue: String(currentPathValue || ""),
+        hiddenBindings: hiddenBindings || {},
+        onOk: (result) => {
+          applyModalResultToNodeForm(node, detailModal, result);
+          if (onStateChanged) onStateChanged();
+        }
+      });
+      return;
+    }
+
+    if (dialogApi?.show) dialogApi.show(`未対応のモーダル種別です: ${detailModal.type}`, { kind: "warning", title: "モーダル" });
+    else alert(`未対応のモーダル種別です: ${detailModal.type}`);
   }
 
   function requestNodeRun(node, mode, onStateChanged) {
@@ -110,9 +208,9 @@
     if (!Array.isArray(node.runtimeLogs)) node.runtimeLogs = [];
     const timestamp = new Date().toISOString();
     const modeLabel = mode === "through" ? "フロー実行" : "ステップ実行";
-    node.runtimeLogs.push(`[${timestamp}] ${modeLabel} をリクエストしました（未実装）`);
+    node.runtimeLogs.push(`[${timestamp}] ${modeLabel} をリクエストしました`);
     window.dispatchEvent(
-      new CustomEvent("fleetly:node-run-request", {
+      new CustomEvent("zizai:node-run-request", {
         detail: { mode, nodeId: node.id, stepName: node.stepName, connector: node.connector, action: node.action }
       })
     );
@@ -184,6 +282,18 @@
     };
   }
 
+  function isMergeableNode(node) {
+    return !!node && !isLoopRootNode(node) && !node.loopOwnerId;
+  }
+
+  function getMergeErrorMessage(result) {
+    return result?.reason === "connected" ? "祖先・子孫関係を含む、既存の接続関係があるノード同士には合流できません。" :
+      result?.reason === "already_primary" ? "すでに主系統で接続されています。" :
+      result?.reason === "already_merge" ? "すでに合流設定されています。" :
+      result?.reason === "loop_root" || result?.reason === "loop_internal" ? "ループ関連ノードには合流できません。" :
+      "合流の作成に失敗しました。";
+  }
+
   function hasMissingRequiredField(config, node) {
     const schema = getFormSchema(config, node.connector, node.action);
     for (const field of schema) {
@@ -217,8 +327,14 @@
       const currentId = queue.shift();
       if (!currentId || seen.has(currentId)) continue;
       seen.add(currentId);
-      getChildrenByParent(state, currentId).forEach((child) => {
-        if (!seen.has(child.id)) queue.push(child.id);
+      state.nodes.forEach((child) => {
+        if ((child.parentId ?? null) === currentId && !seen.has(child.id)) {
+          queue.push(child.id);
+          return;
+        }
+        if (getMergeParentIds(child).includes(currentId) && !seen.has(child.id)) {
+          queue.push(child.id);
+        }
       });
     }
     return seen;
@@ -274,7 +390,7 @@
     const availableVariables = getAvailableVariables(state, node);
     const schema = getFormSchema(config, node.connector, node.action);
     return schema.flatMap((field) =>
-      getFieldReferenceWarnings({
+      getFieldReferenceWarningsSafe({
         node,
         field,
         upstreamSteps,
@@ -450,6 +566,7 @@
       out.description = node.description;
     }
     if (node.parentId) out.parent_id = node.parentId;
+    if (getMergeParentIds(node).length) out.merge_parent_ids = getMergeParentIds(node);
     if (node.parallelOf) out.parallel_of = node.parallelOf;
     if (node.parallelOrder !== undefined && node.parallelOrder !== null) {
       const num = Number(node.parallelOrder);
@@ -468,8 +585,9 @@
         console.warn("yaml dump failed, fallback to internal yaml serializer", err);
       }
     }
-    if (window.utils && typeof window.utils.toYaml === "function") {
-      return window.utils.toYaml(value);
+    const utilsApi = corePkg.utils || {};
+    if (utilsApi && typeof utilsApi.toYaml === "function") {
+      return utilsApi.toYaml(value);
     }
     return JSON.stringify(value, null, 2);
   }
@@ -514,7 +632,13 @@
     const connectors = config?.connectors || [];
     const connector = connectors.find((item) => item.id === connectorId);
     if (!connector) return false;
-    return connector.category === "data";
+    if (connector.category) {
+      return connector.category === "data";
+    }
+    const dataflowConnectorIds = Array.isArray(config?.modes?.dataflow?.connectorIds)
+      ? config.modes.dataflow.connectorIds
+      : [];
+    return dataflowConnectorIds.includes(connectorId);
   }
 
   function connectorDisplayLabel(connector) {
@@ -821,7 +945,8 @@
       let parentId = node.parentId || null;
       if (parentId && !rawById.has(parentId)) parentId = null;
       const parallelOrder = Number(node.parallelOrder) || idx + 1;
-      return { ...node, parentId, parallelOrder };
+      const mergeParentIds = getMergeParentIds(node).filter((id) => rawById.has(id) && id !== parentId);
+      return { ...node, parentId, mergeParentIds, parallelOrder };
     });
 
     const parentKey = (parentId) => parentId || start.id;
@@ -972,8 +1097,15 @@
       });
     });
 
+    normalizedNodes.forEach((node) => {
+      (node.mergeParentIds || []).forEach((mergeParentId) => {
+        pushEdge(mergeParentId, node.id, "merge");
+      });
+    });
+
+    const outgoingIds = new Set(edges.map((edge) => edge.from));
     const leaves = [...taskViews, ...loopEndViews]
-      .filter((view) => (displayChildren.get(view.id) || []).length === 0);
+      .filter((view) => !outgoingIds.has(view.id));
     leaves.forEach((leaf) => {
       const edgeKind = leaf.kind === "loop-end" ? "to-end-main" : "to-end";
       pushEdge(leaf.id, end.id, edgeKind);
@@ -1260,11 +1392,76 @@
     return (cur - min) / denom;
   }
 
+  function buildMergeOrthogonalPoints(from, to, style) {
+    const sx = from.x + NODE_W;
+    const sy = from.y + NODE_H / 2;
+    const tx = to.x;
+    const ty = to.y + NODE_H / 2;
+    const sourceStub = Math.max(18, Math.min(Number(style.turnOffset) || 32, 32));
+    const targetInset = Number(style.targetInset) || 18;
+    const routeX = sx + sourceStub;
+    const entryX = Math.min(tx - targetInset, tx - 12);
+    const points = [
+      { x: sx, y: sy },
+      { x: routeX, y: sy }
+    ];
+
+    if (ty < sy) {
+      points.push({ x: routeX, y: ty });
+      points.push({ x: entryX, y: ty });
+    } else {
+      const detourDepth = Number(style.detourDepth) || 32;
+      const detourY = sy + detourDepth;
+      points.push({ x: routeX, y: detourY });
+      points.push({ x: entryX, y: detourY });
+      points.push({ x: entryX, y: ty });
+    }
+
+    points.push({ x: tx, y: ty });
+    return points;
+  }
+
+  function getNodeMergeMenuState(state, nodeId) {
+    const node = state.nodes.find((item) => item.id === nodeId);
+    const incomingSources = node ? getMergeParentIds(node) : [];
+    const outgoingTargets = state.nodes
+      .filter((item) => getMergeParentIds(item).includes(nodeId))
+      .map((item) => item.id);
+    return {
+      incomingSources,
+      outgoingTargets
+    };
+  }
+
   function drawEdge(ctx, from, to, style) {
     const sx = from.x + NODE_W;
     const sy = from.y + NODE_H / 2;
     const tx = to.x;
     const ty = to.y + NODE_H / 2;
+
+    if (style.mode === "merge_orthogonal") {
+      const points = buildMergeOrthogonalPoints(from, to, style);
+      const prev = points[points.length - 2];
+
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) {
+        ctx.lineTo(points[i].x, points[i].y);
+      }
+
+      ctx.strokeStyle = style.color;
+      ctx.lineWidth = style.width;
+      ctx.setLineDash(style.dash || []);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (style.arrow) {
+        const angle = Math.atan2(ty - prev.y, tx - prev.x);
+        drawArrowHead(ctx, tx, ty, angle, style.arrowSize || 6, style.color);
+      }
+      return;
+    }
+
     const k = style.sigmoidK || 12;
     const center = style.sigmoidBias || 0.82; // right-biased bend
     const steps = Math.max(18, Math.min(64, Math.floor(Math.abs(tx - sx) / 8)));
@@ -1364,8 +1561,12 @@
     const flowEdgeMain = rootStyles.getPropertyValue("--flow-edge-main").trim() || "#5c6f88";
     const flowEdgeSecondary = rootStyles.getPropertyValue("--flow-edge-secondary").trim() || "#74859d";
     const flowEdgeParallel = rootStyles.getPropertyValue("--flow-edge-parallel").trim() || "#6e829c";
+    const flowEdgeMerge = rootStyles.getPropertyValue("--flow-edge-merge").trim() || "#129d7a";
     const flowNodeBorder = rootStyles.getPropertyValue("--flow-node-border").trim() || "#9aa5b6";
     const flowNodeBorderSelected = rootStyles.getPropertyValue("--flow-node-border-selected").trim() || "#4b4e63";
+    const flowNodeStatusRunning = rootStyles.getPropertyValue("--flow-node-status-running").trim() || "#3b82f6";
+    const flowNodeStatusSuccess = rootStyles.getPropertyValue("--flow-node-status-success").trim() || "#16a34a";
+    const flowNodeStatusError = rootStyles.getPropertyValue("--flow-node-status-error").trim() || "#dc2626";
     const flowNodeSubtext = rootStyles.getPropertyValue("--flow-node-subtext").trim() || "#626b7b";
     const flowNodeShadow = rootStyles.getPropertyValue("--alpha-shadow-10").trim() || "rgba(79, 67, 67, 0.68)";
     const flowLoopFrameFill = rootStyles.getPropertyValue("--flow-loop-frame-fill").trim() || "#eef8ee";
@@ -1403,22 +1604,51 @@
         color:
           edge.kind === "to-end-main" ? flowEdgeMain :
           edge.kind === "to-end" ? flowEdgeSecondary :
+          edge.kind === "merge" ? flowEdgeMerge :
           edge.kind === "parallel" ? flowEdgeParallel : flowEdgeMain,
         width:
           edge.kind === "to-end-main" ? 2.2 :
           edge.kind === "to-end" ? 1.3 :
+          edge.kind === "merge" ? 1.8 :
           edge.kind === "parallel" ? 1.3 : 2.2,
         dash:
           edge.kind === "to-end-main" ? [] :
           edge.kind === "to-end" ? [4, 3] :
+          edge.kind === "merge" ? [8, 4] :
           edge.kind === "parallel" ? [3, 3] : [],
-        mode: edge.kind === "parallel" ? "parallel_branch" : "horizontal",
-        sigmoidBias: edge.kind === "parallel" ? 0.88 : 0.92,
-        sigmoidK: edge.kind === "parallel" ? 10 : 12,
+        mode: edge.kind === "merge" ? "merge_orthogonal" : edge.kind === "parallel" ? "parallel_branch" : "horizontal",
+        sigmoidBias: edge.kind === "parallel" ? 0.88 : edge.kind === "merge" ? 0.84 : 0.92,
+        sigmoidK: edge.kind === "parallel" ? 10 : edge.kind === "merge" ? 9 : 12,
         arrow: true,
-        arrowSize: edge.kind === "parallel" ? 5 : edge.kind === "to-end" ? 5 : 6
+        arrowSize: edge.kind === "parallel" || edge.kind === "merge" ? 5 : edge.kind === "to-end" ? 5 : 6,
+        turnOffset: edge.kind === "merge" ? 28 : 56,
+        targetInset: edge.kind === "merge" ? 18 : 0,
+        detourDepth: edge.kind === "merge" ? 64 : 0
       });
     });
+
+    if (view.mergeDragState && view.mergeDragState.sourceId) {
+      const sourceNode = model.nodeMap.get(view.mergeDragState.sourceId);
+      if (sourceNode) {
+        const targetNode = view.mergeDragState.targetNodeId
+          ? model.nodeMap.get(view.mergeDragState.targetNodeId)
+          : null;
+        const previewTo = targetNode || {
+          x: Math.max(sourceNode.x + NODE_W + 18, view.mergeDragState.canvasX || sourceNode.x + NODE_W + 18),
+          y: (view.mergeDragState.canvasY || (sourceNode.y + NODE_H / 2)) - NODE_H / 2
+        };
+        drawEdge(ctx, sourceNode, previewTo, {
+          color: flowEdgeMerge,
+          width: 1.4,
+          dash: [6, 4],
+          mode: "merge_orthogonal",
+          arrow: false,
+          turnOffset: 28,
+          targetInset: 18,
+          detourDepth: 64
+        });
+      }
+    }
 
     const alertNodeIds = new Set(
       model.taskViews
@@ -1440,6 +1670,14 @@
       const isDraggingNode = !!(view.dragState && view.dragState.started && view.dragState.nodeId === node.id);
       const hasAlert = isTask && alertNodeIds.has(node.id);
       const hasInvalidReference = isTask && hasInvalidUpstreamReference(config, state, node.nodeRef);
+      const stepStatus = isTask ? String((state.stepStatuses && state.stepStatuses[node.nodeRef.stepName]) || "") : "";
+      const statusStrokeColor =
+        stepStatus === "running" ? flowNodeStatusRunning :
+        stepStatus === "success" ? flowNodeStatusSuccess :
+        stepStatus === "error" ? flowNodeStatusError : "";
+      const statusStrokeWidth =
+        stepStatus === "running" || stepStatus === "error" ? 3 :
+        stepStatus === "success" ? 2 : 0;
       const pseudoNodeInset = isStart || isEnd ? 9 : 0;
       const drawX = node.x + pseudoNodeInset;
       const drawY = node.y + pseudoNodeInset;
@@ -1461,8 +1699,8 @@
       ctx.shadowOffsetY = isStart || isEnd ? 1 : 2;
       ctx.strokeStyle = isStart || isEnd
         ? (isSelected ? flowNodeBorderSelected : pseudoNodeBorder)
-        : isSelected ? flowNodeBorderSelected : flowNodeBorder;
-      ctx.lineWidth = isSelected ? 2 : 1;
+        : statusStrokeColor || (isSelected ? flowNodeBorderSelected : flowNodeBorder);
+      ctx.lineWidth = isStart || isEnd ? (isSelected ? 2 : 1) : Math.max(statusStrokeWidth, isSelected ? 2 : 1);
       if (isStart) {
         drawOneSideRoundedRect(ctx, drawX, drawY, drawW, drawH, "left");
       } else if (isEnd) {
@@ -1688,8 +1926,24 @@
     return tip;
   }
 
+  function destroyFlowCanvas(root) {
+    const view = root?.__flowView;
+    if (!view) return;
+    try { view.menuEl?.remove?.(); } catch (_) {}
+    try { view.tooltipEl?.remove?.(); } catch (_) {}
+    try { view.canvas?.remove?.(); } catch (_) {}
+    delete root.__flowView;
+    delete root.__flowRuntime;
+  }
+
   function ensureFlowCanvas(root) {
-    if (root.__flowView) return root.__flowView;
+    if (root.__flowView) {
+      const existingView = root.__flowView;
+      if (existingView.canvas?.parentElement === root) {
+        return existingView;
+      }
+      destroyFlowCanvas(root);
+    }
 
     root.innerHTML = "";
     root.style.overflowX = "auto";
@@ -1702,10 +1956,6 @@
     menuEl.className = "flow-context-menu";
     menuEl.setAttribute("role", "menu");
     menuEl.setAttribute("aria-hidden", "true");
-    menuEl.innerHTML = [
-      '<button class="flow-context-menu__item" type="button" data-action="run" role="menuitem">実行</button>',
-      '<button class="flow-context-menu__item is-danger" type="button" data-action="delete" role="menuitem">削除</button>'
-    ].join("");
     document.body.appendChild(menuEl);
     const ctx = canvas.getContext("2d");
     const tooltipEl = createImmediateTooltip();
@@ -1716,6 +1966,9 @@
       hoverControl: null,
       dropControl: null,
       dragState: null,
+      pendingMergeDrag: null,
+      mergeDragState: null,
+      suppressContextMenuOnce: false,
       tooltipEl,
       menuEl,
       menuNodeId: null
@@ -1749,8 +2002,22 @@
       menuEl.setAttribute("aria-hidden", "true");
     }
 
-    function showContextMenu(nodeId, clientX, clientY) {
-      view.menuNodeId = nodeId;
+    function showContextMenu(target, clientX, clientY) {
+      view.menuNodeId = target?.nodeId || null;
+      const runtime = root.__flowRuntime;
+      const items = [];
+      if (runtime && view.menuNodeId) {
+        const mergeMenuState = getNodeMergeMenuState(runtime.state, view.menuNodeId);
+        if (mergeMenuState.incomingSources.length) {
+          items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="remove-merge-incoming" role="menuitem">合流を解除</button>');
+        }
+        if (mergeMenuState.outgoingTargets.length) {
+          items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="remove-merge-outgoing" role="menuitem">合流を解除</button>');
+        }
+      }
+      items.push('<button class="flow-context-menu__item" type="button" data-action="run" role="menuitem">実行</button>');
+      items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="delete" role="menuitem">削除</button>');
+      menuEl.innerHTML = items.join("");
       menuEl.style.left = `${clientX}px`;
       menuEl.style.top = `${clientY}px`;
       menuEl.classList.add("is-open");
@@ -1797,6 +2064,12 @@
     canvas.addEventListener("contextmenu", (e) => {
       const runtime = root.__flowRuntime;
       if (!runtime) return;
+      if (view.suppressContextMenuOnce) {
+        view.suppressContextMenuOnce = false;
+        e.preventDefault();
+        hideContextMenu();
+        return;
+      }
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
@@ -1809,7 +2082,7 @@
       hideTooltip();
       setSelectedNode(runtime.state, task.id);
       runtime.onStateChanged();
-      showContextMenu(task.id, e.clientX, e.clientY);
+      showContextMenu({ nodeId: task.id }, e.clientX, e.clientY);
     });
 
     let isPanning = false;
@@ -1821,13 +2094,25 @@
     let lastPanAt = 0;
     canvas.addEventListener("mousedown", (e) => {
       hideContextMenu();
-      if (e.button !== 0) return;
       const runtime = root.__flowRuntime;
       if (!runtime) return;
       const rect = canvas.getBoundingClientRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const task = hitTask(runtime.model, x, y);
+      if (e.button === 2) {
+        if (!task || !isMergeableNode(task.nodeRef)) return;
+        view.pendingMergeDrag = {
+          sourceId: task.id,
+          startClientX: e.clientX,
+          startClientY: e.clientY,
+          canvasX: x,
+          canvasY: y,
+          started: false
+        };
+        return;
+      }
+      if (e.button !== 0) return;
       if (task && isDraggableNode(task.nodeRef)) {
         pendingDrag = {
           nodeId: task.id,
@@ -1853,6 +2138,43 @@
       e.preventDefault();
     });
     window.addEventListener("mousemove", (e) => {
+      if (view.pendingMergeDrag && !view.mergeDragState) {
+        const moveDx = e.clientX - view.pendingMergeDrag.startClientX;
+        const moveDy = e.clientY - view.pendingMergeDrag.startClientY;
+        if (Math.hypot(moveDx, moveDy) >= 5) {
+          const runtime = root.__flowRuntime;
+          if (!runtime) return;
+          setSelectedNode(runtime.state, view.pendingMergeDrag.sourceId);
+          setPendingMergeSource(runtime.state, view.pendingMergeDrag.sourceId);
+          view.mergeDragState = {
+            sourceId: view.pendingMergeDrag.sourceId,
+            targetNodeId: null,
+            canvasX: view.pendingMergeDrag.canvasX,
+            canvasY: view.pendingMergeDrag.canvasY
+          };
+          view.pendingMergeDrag = null;
+          view.suppressContextMenuOnce = true;
+          canvas.style.cursor = "crosshair";
+          document.body.style.userSelect = "none";
+          runtime.onStateChanged();
+        }
+      }
+      if (view.mergeDragState) {
+        const runtime = root.__flowRuntime;
+        if (!runtime) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const hoveredTask = hitTask(runtime.model, x, y);
+        view.mergeDragState.canvasX = x;
+        view.mergeDragState.canvasY = y;
+        view.mergeDragState.targetNodeId = hoveredTask && isMergeableNode(hoveredTask.nodeRef) && hoveredTask.id !== view.mergeDragState.sourceId
+          ? hoveredTask.id
+          : null;
+        canvas.style.cursor = view.mergeDragState.targetNodeId ? "copy" : "crosshair";
+        drawFlowCanvas(view);
+        return;
+      }
       if (pendingDrag) {
         const moveDx = e.clientX - pendingDrag.startClientX;
         const moveDy = e.clientY - pendingDrag.startClientY;
@@ -1890,6 +2212,32 @@
       root.scrollTop = panStartScrollTop - dy;
     });
     window.addEventListener("mouseup", () => {
+      if (view.pendingMergeDrag) {
+        view.pendingMergeDrag = null;
+        return;
+      }
+      if (view.mergeDragState) {
+        const runtime = root.__flowRuntime;
+        const sourceId = view.mergeDragState.sourceId;
+        const targetNodeId = view.mergeDragState.targetNodeId;
+        view.mergeDragState = null;
+        canvas.style.cursor = "default";
+        document.body.style.userSelect = "";
+        if (runtime) {
+          if (sourceId && targetNodeId) {
+            const result = addMergeParent(runtime.state, sourceId, targetNodeId);
+            if (!result?.ok) {
+              if (dialogApi?.show) dialogApi.show(getMergeErrorMessage(result), { kind: "warning", title: "合流" });
+              else alert(getMergeErrorMessage(result));
+            }
+          }
+          clearPendingMergeSource(runtime.state);
+          runtime.onStateChanged();
+        } else {
+          drawFlowCanvas(view);
+        }
+        return;
+      }
       if (pendingDrag) {
         const runtime = root.__flowRuntime;
         const draggingNodeId = pendingDrag.nodeId;
@@ -1929,7 +2277,22 @@
       const runtime = root.__flowRuntime;
       const nodeId = view.menuNodeId;
       hideContextMenu();
-      if (!runtime || !nodeId) return;
+      if (!runtime) return;
+      if (!nodeId) return;
+      if (btn.dataset.action === "remove-merge-incoming") {
+        const node = runtime.state.nodes.find((item) => item.id === nodeId);
+        const incomingSources = node ? getMergeParentIds(node) : [];
+        const changed = incomingSources.some((sourceId) => removeMergeParent(runtime.state, sourceId, nodeId));
+        if (changed) runtime.onStateChanged();
+        return;
+      }
+      if (btn.dataset.action === "remove-merge-outgoing") {
+        const changed = runtime.state.nodes.some((item) =>
+          getMergeParentIds(item).includes(nodeId) && removeMergeParent(runtime.state, nodeId, item.id)
+        );
+        if (changed) runtime.onStateChanged();
+        return;
+      }
       if (btn.dataset.action === "run") {
         requestNodeRunById(runtime.state, nodeId, "single", runtime.onStateChanged);
         return;
@@ -2025,7 +2388,64 @@
     });
 
     window.addEventListener("keydown", (e) => {
+      console.debug("[flow-shortcut] keydown", {
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        altKey: e.altKey,
+        targetTag: e.target?.tagName || null
+      });
       if (e.key === "Escape") hideContextMenu();
+      const runtime = root.__flowRuntime;
+      if (!runtime) {
+        console.debug("[flow-shortcut] runtime missing");
+        return;
+      }
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      if (isEditingShortcutTarget(e.target)) {
+        console.debug("[flow-shortcut] ignored because editing target");
+        return;
+      }
+
+      const key = String(e.key || "").toLowerCase();
+      if (key === "c") {
+        const selectedNode = runtime.state.nodes.find((node) => node.id === runtime.state.selectedNodeId);
+        console.debug("[flow-shortcut] copy requested", {
+          selectedNodeId: runtime.state.selectedNodeId,
+          selectedStepName: selectedNode?.stepName || null
+        });
+        copiedNodeSnapshot = buildNodeClipboardSnapshot(selectedNode);
+        if (copiedNodeSnapshot) {
+          console.debug("[flow-shortcut] copied", copiedNodeSnapshot);
+          e.preventDefault();
+        } else {
+          console.debug("[flow-shortcut] copy skipped");
+        }
+        return;
+      }
+      if (key === "v") {
+        if (!copiedNodeSnapshot) {
+          console.debug("[flow-shortcut] paste skipped because clipboard empty");
+          return;
+        }
+        const selectedNode = runtime.state.nodes.find((node) => node.id === runtime.state.selectedNodeId);
+        console.debug("[flow-shortcut] paste requested", {
+          selectedNodeId: runtime.state.selectedNodeId,
+          selectedStepName: selectedNode?.stepName || null
+        });
+        if (!selectedNode || isLoopRootNode(selectedNode) || selectedNode.loopOwnerId) {
+          console.debug("[flow-shortcut] paste skipped because selected node is invalid");
+          return;
+        }
+        const duplicated = duplicateNodeAfter?.(runtime.state, selectedNode.id, copiedNodeSnapshot);
+        if (duplicated) {
+          console.debug("[flow-shortcut] paste succeeded");
+          e.preventDefault();
+          runtime.onStateChanged();
+        } else {
+          console.debug("[flow-shortcut] paste failed");
+        }
+      }
     });
 
     window.addEventListener("resize", () => {
@@ -2158,7 +2578,7 @@
     const missingRequiredLabels = getMissingRequiredFieldLabels(config, node);
     const referenceWarnings = Array.from(new Set(
       schema.flatMap((field) =>
-        getFieldReferenceWarnings({
+        getFieldReferenceWarningsSafe({
           node,
           field,
           upstreamSteps,
@@ -2169,16 +2589,19 @@
 
     const headActionItems = [];
 
-    if (detailModal && detailModal.label) {
+    const inlineDetailModal = detailModal && (detailModal.type === "excel" || detailModal.type === "csv") ? detailModal : null;
+    const headDetailModal = detailModal && detailModal.type !== "excel" && detailModal.type !== "csv" ? detailModal : null;
+
+    if (headDetailModal && headDetailModal.label) {
       headActionItems.push(
         el(
           "button",
           {
             class: "support-btn node-head-icon-btn",
             type: "button",
-            title: detailModal.label,
-            "aria-label": detailModal.label,
-            onclick: () => openConfiguredDetailModal({ node, detailModal, onStateChanged })
+            title: headDetailModal.label,
+            "aria-label": headDetailModal.label,
+            onclick: () => openConfiguredDetailModal({ node, detailModal: headDetailModal, onStateChanged })
           },
           [
             el("img", {
@@ -2197,9 +2620,9 @@
         {
           class: "run-btn node-head-icon-btn",
           type: "button",
-          title: "フロー実行",
-          "aria-label": "フロー実行",
-          onclick: () => requestNodeRun(node, "through", onStateChanged)
+          title: "ステップ実行",
+          "aria-label": "ステップ実行",
+          onclick: () => requestNodeRun(node, "single", onStateChanged)
         },
         [
           el("img", {
@@ -2274,23 +2697,57 @@
       "aria-label": "ノード設定YAML"
     });
     const yamlPane = el("div", { class: "node-tab-pane", "data-tab-key": "yaml" }, [yamlText]);
-    const dataTableBody = el("tbody", {}, []);
-    const dataTable = el("table", { class: "node-data-table" }, [
+    const dataStatusNote = el("div", { class: "node-data-note" }, []);
+    const dataViewToggle = el("div", { class: "schema-editor-mode node-data-mode", role: "tablist", "aria-label": "データ表示切替" }, []);
+    const dataSchemaBtn = el(
+      "button",
+      { type: "button", class: "schema-mode-btn", role: "tab", "data-data-view": "schema" },
+      [document.createTextNode("スキーマ")]
+    );
+    const dataPreviewBtn = el(
+      "button",
+      { type: "button", class: "schema-mode-btn", role: "tab", "data-data-view": "preview" },
+      [document.createTextNode("データ")]
+    );
+    const dataSummaryBtn = el(
+      "button",
+      { type: "button", class: "schema-mode-btn", role: "tab", "data-data-view": "summary" },
+      [document.createTextNode("サマリ")]
+    );
+    dataViewToggle.appendChild(dataSchemaBtn);
+    dataViewToggle.appendChild(dataPreviewBtn);
+    dataViewToggle.appendChild(dataSummaryBtn);
+    const dataSchemaBody = el("tbody", {}, []);
+    const dataSchemaTable = el("table", { class: "node-data-table" }, [
       el("thead", {}, [
         el("tr", {}, [
           el("th", {}, [document.createTextNode("項目")]),
-          el("th", {}, [document.createTextNode("値")])
+          el("th", {}, [document.createTextNode("説明")]),
+          el("th", {}, [document.createTextNode("型")])
         ])
       ]),
-      dataTableBody
+      dataSchemaBody
     ]);
-    const dataTableWrap = el("div", { class: "node-data-wrap" }, [dataTable]);
+    const dataSchemaWrap = el("div", { class: "node-data-wrap" }, [dataSchemaTable]);
+    const dataPreviewHead = el("thead", {}, []);
+    const dataPreviewBody = el("tbody", {}, []);
+    const dataPreviewTable = el("table", { class: "node-data-table" }, [
+      dataPreviewHead,
+      dataPreviewBody
+    ]);
+    const dataPreviewWrap = el("div", { class: "node-data-wrap is-preview" }, [dataPreviewTable]);
+    const dataVolumeList = el("div", { class: "node-data-volume-list" }, []);
+    const dataVolumeWrap = el("div", { class: "node-data-wrap" }, [dataVolumeList]);
     const dataUnsupportedNote = el("div", { class: "node-data-note" }, [
       document.createTextNode("データコネクタではないため対応していません。")
     ]);
     const dataPane = el("div", { class: "node-tab-pane", "data-tab-key": "data" }, [
       dataUnsupportedNote,
-      dataTableWrap
+      dataStatusNote,
+      dataViewToggle,
+      dataSchemaWrap,
+      dataPreviewWrap,
+      dataVolumeWrap
     ]);
     const variablesPaneBody = el("div", { class: "variable-pane-body" }, []);
     const variablesPane = el("div", { class: "node-tab-pane", "data-tab-key": "variables" }, [variablesPaneBody]);
@@ -2359,6 +2816,27 @@
       );
     }
 
+    if (inlineDetailModal) {
+      body.appendChild(
+        el("div", { class: "row row-inline-action" }, [
+          el("label", {}, [document.createTextNode(inlineDetailModal.label || "Excelアシスタント")]),
+          el("div", { class: "row-inline-action-body" }, [
+            el(
+              "button",
+              {
+                class: "node-inline-preview-btn",
+                type: "button",
+                title: "プレビュー表示",
+                "aria-label": "プレビュー表示",
+                onclick: () => openConfiguredDetailModal({ node, detailModal: inlineDetailModal, hiddenBindings: state.hiddenBindings, onStateChanged })
+              },
+              [document.createTextNode("プレビュー表示")]
+            )
+          ])
+        ])
+      );
+    }
+
     if (!schema.length) {
       body.appendChild(
         el("div", { class: "small" }, [
@@ -2367,11 +2845,14 @@
       );
     } else {
       for (const field of schema) {
-        body.appendChild(renderField({
+        body.appendChild(renderFieldSafe({
           node,
           field,
           upstreamSteps,
           availableVariableNames: availableVariables.suggestNames,
+          hiddenBindings: state.hiddenBindings,
+          state,
+          config,
           onStateChanged
         }));
       }
@@ -2381,18 +2862,195 @@
       yamlText.value = dumpYamlSafe(buildNodeYamlSettings(node)).trimEnd();
     }
 
-    function syncDataView() {
+    let dataRequestSeq = 0;
+
+    function isNumericZizDatatype(zizDatatype) {
+      const normalized = String(zizDatatype || "").trim().toUpperCase();
+      return normalized === "INT64" || normalized === "FLOAT64" || normalized === "NUMERIC";
+    }
+
+    function setDataStatus(message = "") {
+      dataStatusNote.textContent = String(message || "");
+      dataStatusNote.hidden = !String(message || "").trim();
+    }
+
+    function setActiveDataView(viewKey) {
+      const activeView = ["schema", "preview", "summary"].includes(viewKey) ? viewKey : "preview";
+      root.__nodeDetailDataView = activeView;
+
+      const showSchema = activeView === "schema";
+      const showPreview = activeView === "preview";
+      const showSummary = activeView === "summary";
+
+      dataSchemaBtn.classList.toggle("is-active", showSchema);
+      dataSchemaBtn.setAttribute("aria-selected", showSchema ? "true" : "false");
+      dataPreviewBtn.classList.toggle("is-active", showPreview);
+      dataPreviewBtn.setAttribute("aria-selected", showPreview ? "true" : "false");
+      dataSummaryBtn.classList.toggle("is-active", showSummary);
+      dataSummaryBtn.setAttribute("aria-selected", showSummary ? "true" : "false");
+
+      dataSchemaWrap.hidden = !showSchema || !dataSchemaBody.children.length;
+      dataPreviewWrap.hidden = !showPreview || (!dataPreviewHead.children.length && !dataPreviewBody.children.length);
+      dataVolumeWrap.hidden = !showSummary || !dataVolumeList.children.length;
+    }
+
+    function renderSchemaRows(schemaDto) {
+      const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
+      dataSchemaBody.innerHTML = "";
+      if (!columns.length) {
+        dataSchemaWrap.hidden = true;
+        return {};
+      }
+      const schemaByName = {};
+      columns.forEach((column) => {
+        const newName = String(column?.new_name || column?.origin_name || "");
+        const description = String(column?.description || "");
+        const zizDatatype = String(column?.ziz_datatype || "");
+        if (newName) schemaByName[newName] = column;
+        dataSchemaBody.appendChild(
+          el("tr", {}, [
+            el("td", {}, [document.createTextNode(newName || "-")]),
+            el("td", { class: "node-data-value" }, [document.createTextNode(description || "-")]),
+            el("td", {}, [document.createTextNode(zizDatatype || "-")])
+          ])
+        );
+      });
+      dataSchemaWrap.hidden = false;
+      return schemaByName;
+    }
+
+    function renderPreviewRows(previewDto, schemaByName) {
+      const columns = Array.isArray(previewDto?.columns) ? previewDto.columns : [];
+      const rows = Array.isArray(previewDto?.rows) ? previewDto.rows : [];
+      dataPreviewHead.innerHTML = "";
+      dataPreviewBody.innerHTML = "";
+      if (!columns.length) {
+        dataPreviewWrap.hidden = true;
+        return;
+      }
+      dataPreviewHead.appendChild(
+        el("tr", {}, columns.map((column) => el("th", {}, [document.createTextNode(String(column || ""))])))
+      );
+      if (!rows.length) {
+        dataPreviewBody.appendChild(
+          el("tr", {}, [
+            el(
+              "td",
+              { class: "node-data-value", colspan: String(Math.max(columns.length, 1)) },
+              [document.createTextNode("データがないです。")]
+            )
+          ])
+        );
+      } else {
+        rows.forEach((row) => {
+          const values = Array.isArray(row) ? row : [];
+          dataPreviewBody.appendChild(
+            el("tr", {}, columns.map((column, index) => {
+              const schemaItem = schemaByName[String(column || "")] || null;
+              const value = index < values.length ? values[index] : "";
+              return el(
+                "td",
+                { class: `node-data-value${isNumericZizDatatype(schemaItem?.ziz_datatype) ? " is-numeric" : ""}` },
+                [document.createTextNode(String(value ?? ""))]
+              );
+            }))
+          );
+        });
+      }
+      dataPreviewWrap.hidden = false;
+    }
+
+    function renderDatavolume(datavolumeDto) {
+      const columns = Array.isArray(datavolumeDto?.columns) ? datavolumeDto.columns : [];
+      dataVolumeList.innerHTML = "";
+      if (!columns.length) {
+        dataVolumeWrap.hidden = true;
+        return;
+      }
+      columns.forEach((column) => {
+        const name = String(column?.name || "");
+        const items = Array.isArray(column?.items) ? column.items : [];
+        const itemList = el("ul", { class: "node-data-volume-items" }, []);
+        if (!items.length) {
+          itemList.appendChild(
+            el("li", { class: "node-data-volume-item is-empty" }, [document.createTextNode("値がないです。")])
+          );
+        } else {
+          items.forEach((item) => {
+            const value = String(item?.value ?? "");
+            const count = Number(item?.count || 0);
+            const ratio = Number(item?.ratio || 0);
+            const barWidth = Math.max(4, Math.min(100, ratio));
+            const barLabel = `${value || "NULL"} / ${count}件`;
+            itemList.appendChild(
+              el("li", { class: "node-data-volume-item" }, [
+                el("div", { class: "node-data-volume-item-head" }, [
+                  el("span", { class: "node-data-volume-item-meta" }, [document.createTextNode(`${count}件 ${ratio.toFixed(1)}%`)])
+                ]),
+                el("div", { class: "node-data-volume-bar-track" }, [
+                  el("div", { class: "node-data-volume-bar-fill", style: `width:${barWidth}%` }, [
+                    el("span", { class: "node-data-volume-bar-label", title: barLabel }, [document.createTextNode(barLabel)])
+                  ])
+                ])
+              ])
+            );
+          });
+        }
+        dataVolumeList.appendChild(
+          el("section", { class: "node-data-volume-block" }, [
+            el("div", { class: "node-data-volume-title" }, [
+              document.createTextNode(name || "-")
+            ]),
+            itemList
+          ])
+        );
+      });
+      dataVolumeWrap.hidden = false;
+    }
+
+    async function syncDataView() {
       const dataConnector = isDataConnector(node.connector, config);
       dataUnsupportedNote.hidden = dataConnector;
-      dataTableWrap.hidden = !dataConnector;
-      dataTableBody.innerHTML = "";
+      dataSchemaWrap.hidden = true;
+      dataPreviewWrap.hidden = true;
+      dataVolumeWrap.hidden = true;
+      dataViewToggle.hidden = true;
+      dataSchemaBody.innerHTML = "";
+      dataPreviewHead.innerHTML = "";
+      dataPreviewBody.innerHTML = "";
+      dataVolumeList.innerHTML = "";
       if (!dataConnector) return;
-      dataTableBody.appendChild(
-        el("tr", {}, [
-          el("td", {}, [document.createTextNode("状態")]),
-          el("td", { class: "node-data-value" }, [document.createTextNode("データがないです。")])
-        ])
-      );
+      if (!bridgeApi?.available?.()) {
+        setDataStatus("WebView モードでのみ利用できます。");
+        return;
+      }
+      const runId = String(window.__zizCurrentRunId || "");
+      if (!runId) {
+        setDataStatus("まだ実行結果がありません。");
+        return;
+      }
+      const requestSeq = ++dataRequestSeq;
+      setDataStatus("データを取得しています...");
+      try {
+        const [schemaDto, previewDto, datavolumeDto] = await Promise.all([
+          bridgeApi.call("result.getSchema", { run_id: runId, step_id: node.stepName }),
+          bridgeApi.call("result.getPreview", { run_id: runId, step_id: node.stepName }),
+          bridgeApi.call("result.getDatavolume", { run_id: runId, step_id: node.stepName, top_n: 5 })
+        ]);
+        if (requestSeq !== dataRequestSeq) return;
+        const schemaByName = renderSchemaRows(schemaDto);
+        renderPreviewRows(previewDto, schemaByName);
+        renderDatavolume(datavolumeDto);
+        dataViewToggle.hidden = false;
+        const previewRowCount = Number(previewDto?.row_count || 0);
+        const truncated = !!previewDto?.truncated;
+        const previewLabel = truncated ? `プレビュー ${previewRowCount} 行（先頭のみ）` : `プレビュー ${previewRowCount} 行`;
+        setDataStatus(previewLabel);
+        setActiveDataView(root.__nodeDetailDataView || "preview");
+      } catch (error) {
+        if (requestSeq !== dataRequestSeq) return;
+        setDataStatus(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`);
+      }
     }
 
     function buildVariableGroup(title, items, toneClass = "", options = {}) {
@@ -2502,7 +3160,11 @@
       logPane.hidden = !showLog;
 
       if (showYaml) syncYamlView();
-      if (showData) syncDataView();
+      if (showData) {
+        syncDataView().catch((error) => {
+          console.error("data view sync failed", error);
+        });
+      }
       if (showVariables) syncVariablesView();
       if (showLog) syncLogView();
     }
@@ -2510,19 +3172,22 @@
     detailTabBtn.addEventListener("click", () => setActiveTab("detail"));
     yamlTabBtn.addEventListener("click", () => setActiveTab("yaml"));
     dataTabBtn.addEventListener("click", () => setActiveTab("data"));
+    dataSchemaBtn.addEventListener("click", () => setActiveDataView("schema"));
+    dataPreviewBtn.addEventListener("click", () => setActiveDataView("preview"));
+    dataSummaryBtn.addEventListener("click", () => setActiveDataView("summary"));
     variablesTabBtn.addEventListener("click", () => setActiveTab("variables"));
     logTabBtn.addEventListener("click", () => setActiveTab("log"));
 
     body.addEventListener("input", syncYamlView);
     body.addEventListener("change", syncYamlView);
-    body.addEventListener("input", syncDataView);
-    body.addEventListener("change", syncDataView);
     body.addEventListener("input", syncVariablesView);
     body.addEventListener("change", syncVariablesView);
     body.addEventListener("input", syncLogView);
     body.addEventListener("change", syncLogView);
     syncYamlView();
-    syncDataView();
+    syncDataView().catch((error) => {
+      console.error("initial data view sync failed", error);
+    });
     syncVariablesView();
     syncLogView();
     setActiveTab(activeTabByRoot);
@@ -2530,5 +3195,9 @@
     root.appendChild(el("section", { class: "node detail-node" }, [tabsHead, detailPane, yamlPane, dataPane, variablesPane, logPane]));
   }
 
-  window.uiNode = { normalizeSteps, renderFlowChart, renderNodeDetail };
+  const uiNode = { normalizeSteps, renderFlowChart, renderNodeDetail, destroyFlowCanvas };
+  window.uiNode = uiNode;
+  const packagesOut = window.zizPackages = window.zizPackages || {};
+  const uiOut = packagesOut.ui = packagesOut.ui || {};
+  uiOut.node = uiNode;
 })();

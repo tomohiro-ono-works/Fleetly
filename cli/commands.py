@@ -1,14 +1,14 @@
-import os
-import shutil
 import subprocess
-from pathlib import Path
+import os
 
 from rich.padding import Padding
 
 from cli.ui import ERROR_COLOR, SUCCESS_COLOR, console, render_dataframe_schema, render_execution_summary, render_schema_json, render_step_data, run_flow_selector, sort_flow_key
 from cli.ui import render_selected_flow, run_result_selector, show_flow_selector_intro
+from core.flow_locator import list_flows_local
 from core.type_registry import build_dataframe_schema
-from main import list_flows_local, logger as app_logger, run_cli
+from app.gui.host import run_webview_app
+from app.main import logger as app_logger, run_cli
 
 
 class IndentedConsoleStream:
@@ -88,7 +88,11 @@ def split_command(text, in_flow_mode=False):
         return "unknown", stripped
 
     if command == "gui":
-        return "gui", None
+        if len(parts) == 1:
+            return "gui", {"debug": False}
+        if len(parts) == 2 and parts[1].lower() in {"--debug", "debug"}:
+            return "gui", {"debug": True}
+        return "unknown", stripped
 
     if command == "exit":
         return command, None
@@ -129,37 +133,9 @@ def run_flow(file_path, state):
         state.select_flow(flow_path)
     render_execution_summary(report, indent=10)
 
-
-def find_chrome_executable():
-    executable = shutil.which("chrome") or shutil.which("chrome.exe")
-    if executable:
-        return executable
-
-    candidates = [
-        Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-        Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-        Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-    ]
-    for candidate in candidates:
-        if str(candidate) and candidate.exists():
-            return str(candidate)
-    return None
-
-
-def open_gui(form_html_path):
-    if not form_html_path.exists():
-        console.print(f"[{ERROR_COLOR}]GUI ファイルが見つかりません: {form_html_path}[/{ERROR_COLOR}]")
-        return
-
-    chrome_path = find_chrome_executable()
-    if not chrome_path:
-        console.print(f"[{ERROR_COLOR}]Chrome が見つかりませんでした。[/{ERROR_COLOR}]")
-        return
-
-    form_uri = form_html_path.resolve().as_uri()
+def open_gui(form_html_path, *, debug=False):
     try:
-        subprocess.Popen([chrome_path, form_uri])
-        console.print(f"[{SUCCESS_COLOR}]opened:[/{SUCCESS_COLOR}] {form_html_path}")
+        run_webview_app(form_html_path, debug=debug)
     except Exception as error:
         console.print(f"[{ERROR_COLOR}]GUI の起動に失敗しました: {error}[/{ERROR_COLOR}]")
 

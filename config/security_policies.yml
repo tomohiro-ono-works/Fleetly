@@ -1,0 +1,24 @@
+version: 1
+
+# APIの許可
+apis:
+  profiles:
+    sales_orders_api:
+      base_url: "https://api.example.com/orders"
+      timeout_sec: 30
+      certificate:
+        provider: windows_certificate_store
+        store_location: CurrentUser
+        store_name: My
+        subject_contains: "CN=sales-api-client"
+
+# WEB閲覧の許可
+web:
+  allowlist:
+    - domain: api.example.com
+      path_prefixes:
+        - /orders
+    - domain: example.com
+      path_prefixes:
+        - /app
+        - /login

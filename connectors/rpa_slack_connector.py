@@ -1,35 +1,72 @@
 import subprocess
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import pandas as pd
 import pyautogui
 import pygetwindow as gw
 import pyperclip
 import win32gui
 
 from connectors.base_connector import BaseConnector
+from core.security_policies import is_web_target_allowed
 
 
 class RpaSlackConnector(BaseConnector):
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
-        if action == "move_channel":
-            base_url = self._required_text(params, "base_url")
-            channel_name = self._required_text(params, "channel_name")
-            speed = self._parse_speed(params.get("speed", 1.0))
-            return self.move_channel(base_url=base_url, channel_name=channel_name, speed=speed)
+        try:
+            if action == "move_channel":
+                base_url = self._required_text(params, "base_url")
+                channel_name = self._required_text(params, "channel_name")
+                speed = self._parse_speed(params.get("speed", 1.0))
+                message = self.move_channel(base_url=base_url, channel_name=channel_name, speed=speed)
+                return self._build_result_dataframe(
+                    action=action,
+                    target=channel_name,
+                    status="success",
+                    message=message,
+                )
 
-        if action == "delete_draft":
-            speed = self._parse_speed(params.get("speed", 1.0))
-            return self.delete_draft(speed=speed)
+            if action == "delete_draft":
+                speed = self._parse_speed(params.get("speed", 1.0))
+                message = self.delete_draft(speed=speed)
+                return self._build_result_dataframe(
+                    action=action,
+                    target="draft",
+                    status="success",
+                    message=message,
+                )
 
-        if action == "write_draft":
-            message = self._required_text(params, "message")
-            speed = self._parse_speed(params.get("speed", 1.0))
-            return self.write_draft(message=message, speed=speed)
+            if action == "write_draft":
+                message_text = self._required_text(params, "message")
+                speed = self._parse_speed(params.get("speed", 1.0))
+                message = self.write_draft(message=message_text, speed=speed)
+                return self._build_result_dataframe(
+                    action=action,
+                    target="draft",
+                    status="success",
+                    message=message,
+                )
 
-        if action == "get_chrome_info":
-            return self.get_chrome_info()
+            if action == "get_chrome_info":
+                info = self.get_chrome_info()
+                return self._build_result_dataframe(
+                    action=action,
+                    target="chrome",
+                    status="success",
+                    message="Chrome情報を取得しました。",
+                    extra_columns=info,
+                )
+        except Exception as error:
+            target = self._infer_error_target(action, params)
+            return self._build_result_dataframe(
+                action=action,
+                target=target,
+                status="error",
+                message=str(error),
+            )
 
         raise ValueError(f"Unknown action: {action}")
 
@@ -72,10 +109,43 @@ class RpaSlackConnector(BaseConnector):
                 return str(candidate)
         return None
 
+    @staticmethod
+    def _infer_error_target(action: str, params: dict[str, Any]) -> str:
+        if action == "move_channel":
+            return str(params.get("channel_name") or "")
+        if action in {"delete_draft", "write_draft"}:
+            return "draft"
+        if action == "get_chrome_info":
+            return "chrome"
+        return ""
+
+    def _build_result_dataframe(
+        self,
+        *,
+        action: str,
+        target: str,
+        status: str,
+        message: str,
+        extra_columns: dict[str, Any] | None = None,
+    ) -> pd.DataFrame:
+        row = {
+            "status": str(status),
+            "executed_at": datetime.now(timezone.utc).isoformat(),
+            "connector": "RpaSlackConnector",
+            "action": str(action),
+            "target": str(target or ""),
+            "message": str(message or ""),
+        }
+        if isinstance(extra_columns, dict):
+            row.update(extra_columns)
+        return pd.DataFrame([row])
+
     def _open_in_chrome(self, url: str) -> None:
         chrome_path = self._find_chrome_executable()
         if not chrome_path:
             raise FileNotFoundError("Chrome が見つかりませんでした。")
+        if not is_web_target_allowed(url):
+            raise ValueError(f"Web allowlist に未登録のため開けません: {url}")
         subprocess.Popen([chrome_path, url])
 
     @staticmethod

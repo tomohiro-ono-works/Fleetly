@@ -15,11 +15,14 @@ from connectors.base_connector import BaseConnector
 warnings.filterwarnings("ignore")
 
 class WorkflowEngine:
-    def __init__(self, logger):
+    def __init__(self, logger, step_status_callback=None):
         self.logger = logger
+        self.step_status_callback = step_status_callback
         self.context = {}  # データを一時保持するメモリ空間
         self.connector_classes = {}  # 必要になった時点で遅延ロード
         self._connector_lock = threading.Lock()
+        self._cancel_event = None
+        self._context_ref_param_keys = {"input_data", "input_data_rename"}
 
     def _to_snake_case(self, name: str) -> str:
         text = str(name or "")
@@ -107,8 +110,106 @@ class WorkflowEngine:
         text = str(value or "").strip()
         if not text:
             return ""
+        double_brace_match = re.match(r"^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$", text)
+        if double_brace_match:
+            return double_brace_match.group(1).strip()
         match = re.match(r"^\$?\{([^}]+)\}$", text)
         return match.group(1).strip() if match else text
+
+    def _load_start_variables(self, config):
+        variables = config.get("variables", {}) or {}
+        start_variables = variables.get("start")
+        if isinstance(start_variables, list):
+            for item in start_variables:
+                if not isinstance(item, dict):
+                    continue
+                name = str(item.get("name") or "").strip()
+                if not name:
+                    continue
+                self.context[name] = item.get("value")
+            return
+        if isinstance(start_variables, dict):
+            for name, value in start_variables.items():
+                normalized_name = str(name or "").strip()
+                if not normalized_name:
+                    continue
+                self.context[normalized_name] = value
+
+    def _resolve_scalar_reference(self, name: str):
+        normalized_name = str(name or "").strip()
+        if not normalized_name:
+            raise ValueError("変数名が空です。")
+        if normalized_name in self.context:
+            return self.context[normalized_name]
+
+        parts = normalized_name.split(".")
+        root_name = parts[0].strip()
+        if root_name not in self.context:
+            raise ValueError(f"変数 '{normalized_name}' が定義されていません。")
+
+        value = self.context[root_name]
+        for part in parts[1:]:
+            key = str(part or "").strip()
+            if not key:
+                raise ValueError(f"変数参照が不正です: {normalized_name}")
+            value = self._resolve_nested_value(value, key, normalized_name)
+        return value
+
+    def _resolve_nested_value(self, value, key: str, original_name: str):
+        if value is None:
+            raise ValueError(f"変数 '{original_name}' の値が存在しません。")
+        if hasattr(value, "iloc") and hasattr(value, "columns"):
+            if len(value.index) == 0:
+                raise ValueError(f"変数 '{original_name}' の参照元 DataFrame が空です。")
+            if key not in value.columns:
+                raise ValueError(f"変数 '{original_name}' の列 '{key}' が見つかりません。")
+            return value.iloc[0][key]
+        if isinstance(value, list):
+            if not value:
+                raise ValueError(f"変数 '{original_name}' の参照元配列が空です。")
+            return self._resolve_nested_value(value[0], key, original_name)
+        if isinstance(value, dict):
+            if key not in value:
+                raise ValueError(f"変数 '{original_name}' のキー '{key}' が見つかりません。")
+            return value[key]
+        raise ValueError(f"変数 '{original_name}' の値から '{key}' を参照できません。")
+
+    def _stringify_template_value(self, key: str, value):
+        if value is None:
+            return ""
+        if isinstance(value, (str, int, float, bool)):
+            return str(value)
+        raise ValueError(f"{key} に埋め込む変数は文字列化できる値である必要があります。")
+
+    def _resolve_template_string(self, value: str, key: str | None = None):
+        text = str(value)
+        ref_name = self._normalize_context_ref(text)
+        if key in self._context_ref_param_keys:
+            return ref_name
+
+        exact_match = re.fullmatch(r"\{\{\s*([a-zA-Z0-9_\.]+)\s*\}\}", text.strip())
+        if exact_match:
+            return self._resolve_scalar_reference(exact_match.group(1).strip())
+
+        pattern = re.compile(r"\{\{\s*([a-zA-Z0-9_\.]+)\s*\}\}")
+        if not pattern.search(text):
+            return value
+
+        def replace(match):
+            name = match.group(1).strip()
+            resolved = self._resolve_scalar_reference(name)
+            return self._stringify_template_value(key or "text", resolved)
+
+        return pattern.sub(replace, text)
+
+    def _resolve_step_params(self, value, key: str | None = None):
+        if isinstance(value, dict):
+            return {sub_key: self._resolve_step_params(sub_value, key=str(sub_key)) for sub_key, sub_value in value.items()}
+        if isinstance(value, list):
+            return [self._resolve_step_params(item, key=key) for item in value]
+        if isinstance(value, str):
+            return self._resolve_template_string(value, key=key)
+        return value
 
     def _build_execution_runtime(self, config):
         steps = config.get("steps", []) or []
@@ -220,18 +321,35 @@ class WorkflowEngine:
             "error": error,
         }
 
+    def _emit_step_status(self, step_id, status, message=None):
+        if not self.step_status_callback or not step_id:
+            return
+        try:
+            self.step_status_callback({
+                "step_id": str(step_id),
+                "status": str(status),
+                "message": str(message or ""),
+            })
+        except Exception:
+            return
+
     def _execute_step(self, step, context):
+        if self._is_cancel_requested():
+            raise RuntimeError("__FLOW_CANCELLED__")
         step_id = step.get("step_id")
         conn_name = step.get("connector")
         action = step.get("action")
-        params = step.get("params", {}) or {}
+        params = self._resolve_step_params(step.get("params", {}) or {})
 
         if action == "loop_tasks":
             ref_key = self._normalize_context_ref(params.get("input_data"))
             passthrough = context.get(ref_key) if ref_key else None
+            self._emit_step_status(step_id, "running", f"{conn_name} -> {action}")
             self.logger.info(f"[{step_id}] loop_tasks は未実装のためスキップします。")
+            self._emit_step_status(step_id, "success", f"{conn_name} -> {action}")
             return passthrough
 
+        self._emit_step_status(step_id, "running", f"{conn_name} -> {action}")
         self.logger.info(f"[{step_id}] 実行中: {conn_name} -> {action}")
         connector = self._create_connector(conn_name)
         if hasattr(connector, "set_execution_logger"):
@@ -245,17 +363,25 @@ class WorkflowEngine:
 
     def _run_step_sequential(self, step, report):
         sid = step.get("step_id")
+        if self._is_cancel_requested():
+            self._mark_cancelled(report)
+            return report["error"]
         try:
             result = self._execute_step(step, copy.copy(self.context))
             output_var = step.get("output_variable")
             if output_var:
                 self.context[output_var] = result
             report["steps"].append(self._build_step_report(step, "success", result=result))
+            self._emit_step_status(sid, "success", f"{step.get('connector')} -> {step.get('action')}")
             return None
         except Exception as e:
+            if str(e) == "__FLOW_CANCELLED__":
+                self._mark_cancelled(report)
+                return report["error"]
             message = str(e)
             report["steps"].append(self._build_step_report(step, "error", error=message))
             report["error"] = message
+            self._emit_step_status(sid, "error", message)
             self.logger.error(f"[{sid}] エラー発生: {message}")
             return message
 
@@ -277,7 +403,13 @@ class WorkflowEngine:
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         try:
             while pending or ready or len(started) < len(reachable):
+                if self._is_cancel_requested() and not pending:
+                    self._mark_cancelled(report)
+                    break
+
                 while ready and not report["error"]:
+                    if self._is_cancel_requested():
+                        break
                     _, step_id = heapq.heappop(ready)
                     if step_id in started:
                         continue
@@ -290,6 +422,7 @@ class WorkflowEngine:
                         )
                         report["steps"].append(self._build_step_report(step, "error", error=message))
                         report["error"] = message
+                        self._emit_step_status(step_id, "error", message)
                         self.logger.error(f"[{step_id}] エラー発生: {message}")
                         break
 
@@ -301,6 +434,9 @@ class WorkflowEngine:
 
                 if not pending:
                     if report["error"]:
+                        break
+                    if self._is_cancel_requested():
+                        self._mark_cancelled(report)
                         break
 
                     remaining_ids = [
@@ -333,10 +469,13 @@ class WorkflowEngine:
 
                     try:
                         result = future.result()
+                        if self._is_cancel_requested():
+                            self._mark_cancelled(report)
                         if output_var:
                             self.context[output_var] = result
                         report["steps"].append(self._build_step_report(step, "success", result=result))
-                        if not report["error"]:
+                        self._emit_step_status(sid, "success", f"{step.get('connector')} -> {step.get('action')}")
+                        if not report["error"] and not report.get("cancelled"):
                             for _, next_id in adjacency.get(sid, []):
                                 if next_id == "END" or next_id not in indegree:
                                     continue
@@ -344,43 +483,46 @@ class WorkflowEngine:
                                 if indegree[next_id] == 0 and next_id not in started:
                                     heapq.heappush(ready, (visit_rank.get(next_id, len(visit_rank)), next_id))
                     except Exception as e:
+                        if str(e) == "__FLOW_CANCELLED__":
+                            self._mark_cancelled(report)
+                            continue
                         message = str(e)
                         report["steps"].append(self._build_step_report(step, "error", error=message))
                         if not report["error"]:
                             report["error"] = message
+                        self._emit_step_status(sid, "error", message)
                         self.logger.error(f"[{sid}] エラー発生: {message}")
 
             return report["error"]
         finally:
             executor.shutdown(wait=True, cancel_futures=bool(report["error"]))
 
-    def run_flow(self, yaml_path):
+    def _is_cancel_requested(self):
+        return bool(self._cancel_event and self._cancel_event.is_set())
+
+    def _mark_cancelled(self, report, message="実行がキャンセルされました。"):
+        if report.get("cancelled"):
+            return
+        report["cancelled"] = True
+        report["status"] = "cancelled"
+        report["error"] = message
+        self.logger.warning(message)
+
+    def _run_config(self, config, flow_path, cancel_event=None, initial_context=None, only_step_id=None):
         report = {
-            "flow_path": os.path.abspath(str(yaml_path)),
+            "flow_path": os.path.abspath(str(flow_path)),
             "flow_name": "Untitled",
-            "workflow_path": os.path.abspath(str(yaml_path)),
+            "workflow_path": os.path.abspath(str(flow_path)),
             "workflow_name": "Untitled",
             "status": "error",
             "steps": [],
             "error": None,
+            "cancelled": False,
         }
-
-        if not os.path.exists(yaml_path):
-            message = f"YAMLファイルが見つかりません: {yaml_path}"
-            self.logger.error(message)
-            report["error"] = message
-            return report
-
         self.context = {}
-
-        try:
-            with open(yaml_path, 'r', encoding='utf-8') as f:
-                config = yaml.safe_load(f) or {}
-        except Exception as e:
-            message = f"フロー読込中にエラーが発生しました: {e}"
-            self.logger.error(message)
-            report["error"] = message
-            return report
+        if isinstance(initial_context, dict) and initial_context:
+            self.context.update(copy.copy(initial_context))
+        self._cancel_event = cancel_event
 
         if not isinstance(config, dict):
             message = "フロー定義は辞書形式である必要があります。"
@@ -388,9 +530,29 @@ class WorkflowEngine:
             report["error"] = message
             return report
 
+        if only_step_id:
+            steps = config.get("steps") if isinstance(config.get("steps"), list) else []
+            target_step = None
+            for step in steps:
+                if str(step.get("step_id") or "") == str(only_step_id):
+                    target_step = copy.deepcopy(step)
+                    break
+            if not target_step:
+                message = f"対象ステップが見つかりません: {only_step_id}"
+                self.logger.error(message)
+                report["error"] = message
+                return report
+            config = {
+                "metadata": copy.deepcopy(config.get("metadata") or {}),
+                "variables": copy.deepcopy(config.get("variables") or {}),
+                "steps": [target_step],
+                "flows": {},
+            }
+
         meta = config.get("metadata", {}) or {}
         report["flow_name"] = meta.get("name", "Untitled")
         report["workflow_name"] = report["flow_name"]
+        self._load_start_variables(config)
         self.logger.info(f"--- フロー開始: {report['flow_name']} ---")
 
         runtime = self._build_execution_runtime(config)
@@ -398,15 +560,69 @@ class WorkflowEngine:
             for step in runtime["steps"]:
                 error = self._run_step_sequential(step, report)
                 if error:
+                    if report.get("cancelled"):
+                        return report
                     return report
         else:
             error = self._run_ready_queue(runtime, report)
             if error:
                 return report
 
+        if report.get("cancelled"):
+            return report
+
         self.logger.info("--- フロー完了 ---")
         report["status"] = "success"
         return report
+
+    def run_flow(self, yaml_path, cancel_event=None):
+        if not os.path.exists(yaml_path):
+            message = f"YAMLファイルが見つかりません: {yaml_path}"
+            self.logger.error(message)
+            return {
+                "flow_path": os.path.abspath(str(yaml_path)),
+                "flow_name": "Untitled",
+                "workflow_path": os.path.abspath(str(yaml_path)),
+                "workflow_name": "Untitled",
+                "status": "error",
+                "steps": [],
+                "error": message,
+                "cancelled": False,
+            }
+
+        try:
+            with open(yaml_path, 'r', encoding='utf-8') as f:
+                config = yaml.safe_load(f) or {}
+        except Exception as e:
+            message = f"フロー読込中にエラーが発生しました: {e}"
+            self.logger.error(message)
+            return {
+                "flow_path": os.path.abspath(str(yaml_path)),
+                "flow_name": "Untitled",
+                "workflow_path": os.path.abspath(str(yaml_path)),
+                "workflow_name": "Untitled",
+                "status": "error",
+                "steps": [],
+                "error": message,
+                "cancelled": False,
+            }
+
+        try:
+            return self._run_config(config, yaml_path, cancel_event=cancel_event)
+        finally:
+            self._cancel_event = None
+
+    def run_flow_from_config(self, config, flow_path="<gui>", cancel_event=None, initial_context=None, only_step_id=None):
+        try:
+            return self._run_config(
+                config,
+                flow_path,
+                cancel_event=cancel_event,
+                initial_context=initial_context,
+                only_step_id=only_step_id,
+            )
+        finally:
+            self._cancel_event = None
 
     def run_workflow(self, yaml_path):
         return self.run_flow(yaml_path)
