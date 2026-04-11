@@ -32,6 +32,7 @@ static/old/
 # Local-only personal files
 memo.md
 slack_client.py
+requirements-dev.txt
 
 # Local docs / Codex assets
 docs/

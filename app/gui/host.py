@@ -104,6 +104,16 @@ def run_webview_app(form_html_path, debug=False):
             local_file = Path(url.toLocalFile() or "").resolve()
             return local_file == self._html_file or _is_within_path(local_file, self._base_dir)
 
+        def javaScriptConsoleMessage(self, level, message, line_number, source_id):
+            logger.info(
+                "[js-console] level=%s source=%s line=%s message=%s",
+                level,
+                source_id or "",
+                line_number,
+                message,
+            )
+            super().javaScriptConsoleMessage(level, message, line_number, source_id)
+
     app = QApplication.instance() or QApplication([])
     logger.info("[gui-startup] phase=app_ready elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     icon_path = html_path.parent / "icons" / "icon.png"

@@ -1,0 +1,388 @@
+﻿name,version,summary,license,home_page,author,classifier_license
+annotated-doc,0.0.4,"Document parameters, class attributes, return types, and variables inline, with Annotated.",,,,
+annotated-types,0.7.0,Reusable constraint types to use with typing.Annotated,,,,License :: OSI Approved :: MIT License
+anyio,4.12.1,High-level concurrency and networking framework on top of asyncio or Trio,,,,
+asttokens,3.0.1,Annotate AST trees with source code positions,Apache 2.0,https://github.com/gristlabs/asttokens,"Dmitry Sagalovskiy, Grist Labs",
+certifi,2026.1.4,Python package for providing Mozilla's CA Bundle.,MPL-2.0,https://github.com/certifi/python-certifi,Kenneth Reitz,License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)
+charset-normalizer,3.4.4,"The Real First Universal Charset Detector. Open, modern and actively maintained alternative to Chardet.",MIT,,,
+choreographer,1.2.1,Devtools Protocol implementation for chrome.,"# MIT License
+
+Copyright (c) Plotly, Inc.
+
+Permission is hereby granted, free of charge, to any person
+obtaining a copy of this software and associated documentation
+files (the ""Software""), to deal in the Software without
+restriction, including without limitation the rights to use,
+copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following
+conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+",,,
+click,8.3.1,Composable command line interface toolkit,,,,
+colorama,0.4.6,Cross-platform colored terminal text.,,,,License :: OSI Approved :: BSD License
+comm,0.2.3,"Jupyter Python Comm implementation, for usage in ipykernel, xeus-python etc.","BSD 3-Clause License
+
+Copyright (c) 2022, Jupyter
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.",,Jupyter contributors,License :: OSI Approved :: BSD License
+comtypes,1.4.16,Pure Python COM package,,,,
+debugpy,1.8.20,An implementation of the Debug Adapter Protocol for Python,MIT,https://aka.ms/debugpy,Microsoft Corporation,License :: OSI Approved :: MIT License
+decorator,5.2.1,Decorators for Humans,BSD-2-Clause,,,License :: OSI Approved :: BSD License
+et_xmlfile,2.0.0,An implementation of lxml.xmlfile for the standard library,MIT,https://foss.heptapod.net/openpyxl/et_xmlfile,See AUTHORS.txt,License :: OSI Approved :: MIT License
+executing,2.2.1,"Get the currently executing AST node of a frame, and other information",MIT,https://github.com/alexmojaki/executing,Alex Hall,License :: OSI Approved :: MIT License
+fastapi,0.128.0,"FastAPI framework, high performance, easy to learn, fast to code, ready for production",,,,
+google-api-core,2.29.0,Google API client core library,Apache 2.0,,,License :: OSI Approved :: Apache Software License
+google-api-python-client,2.188.0,Google API Client Library for Python,Apache 2.0,https://github.com/googleapis/google-api-python-client/,Google LLC,License :: OSI Approved :: Apache Software License
+google-auth,2.47.0,Google Authentication Library,Apache 2.0,https://github.com/googleapis/google-auth-library-python,Google Cloud Platform,License :: OSI Approved :: Apache Software License
+google-auth-httplib2,0.3.0,Google Authentication Library: httplib2 transport,Apache 2.0,https://github.com/GoogleCloudPlatform/google-auth-library-python-httplib2,Google Cloud Platform,License :: OSI Approved :: Apache Software License
+google-auth-oauthlib,1.2.4,Google Authentication Library,Apache 2.0,https://github.com/GoogleCloudPlatform/google-auth-library-python-oauthlib,Google Cloud Platform,License :: OSI Approved :: Apache Software License
+google-cloud-bigquery,3.40.0,Google BigQuery API client library,,,,
+google-cloud-core,2.5.0,Google Cloud API client core library,Apache 2.0,https://github.com/googleapis/python-cloud-core,Google LLC,License :: OSI Approved :: Apache Software License
+google-crc32c,1.8.0,A python wrapper of the C library 'Google CRC32C',,https://github.com/googleapis/python-crc32c,Google LLC,
+google-resumable-media,2.8.0,Utilities for Google Media Downloads and Resumable Uploads,Apache 2.0,https://github.com/googleapis/google-resumable-media-python,Google Cloud Platform,License :: OSI Approved :: Apache Software License
+googleapis-common-protos,1.72.0,Common protobufs used in Google APIs,Apache 2.0,,,License :: OSI Approved :: Apache Software License
+greenlet,3.3.2,Lightweight in-process concurrent programming,,,,
+grpcio,1.76.0,HTTP/2-based RPC framework,Apache License 2.0,https://grpc.io,The gRPC Authors,License :: OSI Approved :: Apache Software License
+grpcio-status,1.76.0,Status proto mapping for gRPC,Apache License 2.0,https://grpc.io,The gRPC Authors,License :: OSI Approved :: Apache Software License
+h11,0.16.0,"A pure-Python, bring-your-own-I/O implementation of HTTP/1.1",MIT,https://github.com/python-hyper/h11,Nathaniel J. Smith,License :: OSI Approved :: MIT License
+httplib2,0.31.2,A comprehensive HTTP client library.,MIT,https://github.com/httplib2/httplib2,Joe Gregorio,License :: OSI Approved :: MIT License
+idna,3.11,Internationalized Domain Names in Applications (IDNA),,,,
+iniconfig,2.3.0,brain-dead simple config-ini parsing,,,,
+ipykernel,7.1.0,IPython Kernel for Jupyter,,,,
+ipython,9.9.0,IPython: Productive Interactive Computing,,,The IPython Development Team,
+ipython_pygments_lexers,1.1.1,Defines a variety of Pygments lexers for highlighting IPython code.,,,,License :: OSI Approved :: BSD License
+jedi,0.19.2,An autocompletion tool for Python that can be used for text editors.,MIT,https://github.com/davidhalter/jedi,David Halter,License :: OSI Approved :: MIT License
+jupyter_client,8.8.0,Jupyter protocol implementation and client libraries,"BSD 3-Clause License
+
+- Copyright (c) 2001-2015, IPython Development Team
+- Copyright (c) 2015-, Jupyter Development Team
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.",,,License :: OSI Approved :: BSD License
+jupyter_core,5.9.1,Jupyter core package. A base package on which Jupyter projects rely.,,,,
+kaleido,1.2.0,Plotly graph export library,"The MIT License (MIT)
+
+Copyright (c) Plotly, Inc
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the ""Software""), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+",,,
+logistro,2.0.1,Simple wrapper over logging for a couple basic features,"MIT License
+
+Copyright (c) 2025 GeoPozo
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the ""Software""), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+",,,
+markdown-it-py,4.0.0,"Python port of markdown-it. Markdown parsing, done right!",,,,License :: OSI Approved :: MIT License
+matplotlib-inline,0.2.1,Inline Matplotlib backend for Jupyter,,,,
+mdurl,0.1.2,Markdown URL utilities,,,,License :: OSI Approved :: MIT License
+MouseInfo,0.1.3,An application to display XY position and RGB color information for the pixel currently under the mouse. Works on Python 2 and 3.,GPLv3+,https://github.com/asweigart/mouseinfo,Al Sweigart,License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)
+narwhals,2.17.0,Extremely lightweight compatibility layer between dataframe libraries,"MIT License
+
+Copyright (c) 2024, Marco Gorelli
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the ""Software""), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.",,,License :: OSI Approved :: MIT License
+nest-asyncio,1.6.0,Patch asyncio to allow nested event loops,BSD,https://github.com/erdewit/nest_asyncio,Ewald R. de Wit,License :: OSI Approved :: BSD License
+numpy,2.4.2,Fundamental package for array computing in Python,,,Travis E. Oliphant et al.,
+oauthlib,3.3.1,"A generic, spec-compliant, thorough implementation of the OAuth request-signing logic",BSD-3-Clause,https://github.com/oauthlib/oauthlib,The OAuthlib Community,
+openpyxl,3.1.5,A Python library to read/write Excel 2010 xlsx/xlsm files,MIT,https://openpyxl.readthedocs.io,See AUTHORS,License :: OSI Approved :: MIT License
+orjson,3.11.7,"Fast, correct Python JSON library supporting dataclasses, datetimes, and numpy",,,,License :: OSI Approved :: Apache Software License | License :: OSI Approved :: MIT License | License :: OSI Approved :: Mozilla Public License 2.0 (MPL 2.0)
+packaging,26.0,Core utilities for Python packages,,,,
+pandas,3.0.1,"Powerful data structures for data analysis, time series, and statistics","BSD 3-Clause License
+
+ Copyright (c) 2008-2011, AQR Capital Management, LLC, Lambda Foundry, Inc. and PyData Development Team
+ All rights reserved.
+
+ Copyright (c) 2011-2026, Open source contributors.
+
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+
+ * Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+ * Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+ * Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+",,,License :: OSI Approved :: BSD License
+parso,0.8.5,A Python Parser,MIT,https://github.com/davidhalter/parso,David Halter,License :: OSI Approved :: MIT License
+pillow,12.1.1,Python Imaging Library (fork),,,,
+platformdirs,4.5.1,"A small Python package for determining appropriate platform-specific dirs, e.g. a `user data dir`.",,,,License :: OSI Approved :: MIT License
+playwright,1.58.0,A high-level API to automate web browsers,,,Microsoft Corporation,
+plotly,6.5.2,An open-source interactive data visualization library for Python,"MIT License
+
+Copyright (c) 2016-2024 Plotly Technologies Inc.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the ""Software""), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED ""AS IS"", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+",,,License :: OSI Approved :: MIT License
+pluggy,1.6.0,plugin and hook calling mechanisms for python,MIT,,,License :: OSI Approved :: MIT License
+prompt_toolkit,3.0.52,Library for building powerful interactive command lines in Python,,,Jonathan Slenders,License :: OSI Approved :: BSD License
+proto-plus,1.27.0,"Beautiful, Pythonic protocol buffers",Apache 2.0,,,License :: OSI Approved :: Apache Software License
+protobuf,6.33.4,,3-Clause BSD License,https://developers.google.com/protocol-buffers/,protobuf@googlegroups.com,
+psutil,7.2.2,Cross-platform lib for process and system monitoring.,BSD-3-Clause,https://github.com/giampaolo/psutil,Giampaolo Rodola,
+pure_eval,0.2.3,Safely evaluate AST nodes without side effects,MIT,http://github.com/alexmojaki/pure_eval,Alex Hall,License :: OSI Approved :: MIT License
+pyasn1,0.6.2,Pure-Python implementation of ASN.1 types and DER/BER/CER codecs (X.208),BSD-2-Clause,,,
+pyasn1_modules,0.4.2,A collection of ASN.1-based protocols modules,BSD,https://github.com/pyasn1/pyasn1-modules,Ilya Etingof,License :: OSI Approved :: BSD License
+PyAutoGUI,0.9.54,"PyAutoGUI lets Python control the mouse and keyboard, and other GUI automation tasks. For Windows, macOS, and Linux, on Python 3 and 2.",BSD,https://github.com/asweigart/pyautogui,Al Sweigart,License :: OSI Approved :: BSD License
+pydantic,2.12.5,Data validation using Python type hints,,,,
+pydantic_core,2.41.5,Core functionality for Pydantic validation and serialization,,https://github.com/pydantic/pydantic-core,,
+pyee,13.0.1,A rough port of Node.js's EventEmitter to Python with a few tricks of its own,MIT,,,License :: OSI Approved :: MIT License
+PyGetWindow,0.0.9,"A simple, cross-platform module for obtaining GUI information on application's windows.",BSD,https://github.com/asweigart/pygetwindow,Al Sweigart,License :: OSI Approved :: BSD License
+Pygments,2.19.2,Pygments is a syntax highlighting package written in Python.,BSD-2-Clause,,,License :: OSI Approved :: BSD License
+PyMsgBox,2.0.1,"A simple, cross-platform, pure Python module for JavaScript-like message boxes.","Copyright (c) 2014, Al Sweigart
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+* Redistributions of source code must retain the above copyright notice, this
+  list of conditions and the following disclaimer.
+
+* Redistributions in binary form must reproduce the above copyright notice,
+  this list of conditions and the following disclaimer in the documentation
+  and/or other materials provided with the distribution.
+
+* Neither the name of the {organization} nor the names of its
+  contributors may be used to endorse or promote products derived from
+  this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+",,,License :: OSI Approved :: GNU General Public License v3 or later (GPLv3+)
+pyparsing,3.3.2,pyparsing - Classes and methods to define and execute parsing grammars,,,,
+pyperclip,1.11.0,A cross-platform clipboard module for Python. (Only handles plain text for now.),BSD,,,License :: OSI Approved :: BSD License
+PyRect,0.2.0,PyRect is a simple module with a Rect class for Pygame-like rectangular areas.,BSD,https://github.com/asweigart/pyrect,Al Sweigart,License :: OSI Approved :: BSD License
+PyScreeze,1.0.1,"A simple, cross-platform screenshot module for Python 2 and 3.",MIT,https://github.com/asweigart/pyscreeze,Al Sweigart,License :: OSI Approved :: MIT License
+pytest,9.0.2,pytest: simple powerful testing with Python,,,"Holger Krekel, Bruno Oliveira, Ronny Pfannschmidt, Floris Bruynooghe, Brianna Laugher, Florian Bruhin, Others (See AUTHORS)",
+pytest-timeout,2.4.0,pytest plugin to abort hanging tests,MIT,https://github.com/pytest-dev/pytest-timeout,Floris Bruynooghe,License :: DFSG approved | License :: OSI Approved :: MIT License
+python-dateutil,2.9.0.post0,Extensions to the standard Python datetime module,Dual License,https://github.com/dateutil/dateutil,Gustavo Niemeyer,License :: OSI Approved :: BSD License | License :: OSI Approved :: Apache Software License
+pytweening,1.2.0,A collection of tweening (aka easing) functions.,MIT,https://github.com/asweigart/pytweening,Al Sweigart,License :: OSI Approved :: MIT License
+pywin32,311,Python for Window Extensions,PSF,,Mark Hammond (et al),License :: OSI Approved :: Python Software Foundation License
+pywinauto,0.6.9,A set of Python modules to automate the Microsoft Windows GUI,BSD 3-clause,https://github.com/pywinauto/pywinauto,Mark Mc Mahon and Contributors,License :: OSI Approved :: BSD License
+PySide6,6.11.0,Python bindings for the Qt cross-platform application and UI framework,LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only,,,
+PyYAML,6.0.3,YAML parser and emitter for Python,MIT,https://pyyaml.org/,Kirill Simonov,License :: OSI Approved :: MIT License
+pyzmq,27.1.0,Python bindings for 0MQ,"BSD 3-Clause License
+
+ Copyright (c) 2009-2012, Brian Granger, Min Ragan-Kelley
+
+ All rights reserved.
+
+ Redistribution and use in source and binary forms, with or without
+ modification, are permitted provided that the following conditions are met:
+
+ 1. Redistributions of source code must retain the above copyright notice, this
+    list of conditions and the following disclaimer.
+
+ 2. Redistributions in binary form must reproduce the above copyright notice,
+    this list of conditions and the following disclaimer in the documentation
+    and/or other materials provided with the distribution.
+
+ 3. Neither the name of the copyright holder nor the names of its
+    contributors may be used to endorse or promote products derived from
+    this software without specific prior written permission.
+
+ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+ AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+ DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+ FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+",,"Brian E. Granger, Min Ragan-Kelley",License :: OSI Approved :: BSD License
+requests,2.32.5,Python HTTP for Humans.,Apache-2.0,https://requests.readthedocs.io,Kenneth Reitz,License :: OSI Approved :: Apache Software License
+requests-oauthlib,2.0.0,OAuthlib authentication support for Requests.,ISC,https://github.com/requests/requests-oauthlib,Kenneth Reitz,License :: OSI Approved :: BSD License
+rich,14.3.3,"Render rich text, tables, progress bars, syntax highlighting, markdown and more to the terminal",MIT,,Will McGugan,License :: OSI Approved :: MIT License
+rsa,4.9.1,Pure-Python RSA implementation,Apache-2.0,,Sybren A. Stüvel,License :: OSI Approved :: Apache Software License
+simplejson,3.20.2,"Simple, fast, extensible JSON encoder/decoder for Python",MIT License,https://github.com/simplejson/simplejson,Bob Ippolito,License :: OSI Approved :: MIT License | License :: OSI Approved :: Academic Free License (AFL)
+six,1.17.0,Python 2 and 3 compatibility utilities,MIT,https://github.com/benjaminp/six,Benjamin Peterson,License :: OSI Approved :: MIT License
+slack_sdk,3.40.1,The Slack API Platform SDK for Python,MIT,https://github.com/slackapi/python-slack-sdk,"Slack Technologies, LLC",License :: OSI Approved :: MIT License
+sqlglot,30.2.1,An easily customizable SQL parser and transpiler,,,,
+stack-data,0.6.3,Extract data from python stack frames and tracebacks for informative displays,MIT,http://github.com/alexmojaki/stack_data,Alex Hall,License :: OSI Approved :: MIT License
+starlette,0.50.0,The little ASGI library that shines.,,,,
+tornado,6.5.4,"Tornado is a Python web framework and asynchronous networking library, originally developed at FriendFeed.",Apache-2.0,http://www.tornadoweb.org/,Facebook,License :: OSI Approved :: Apache Software License
+traitlets,5.14.3,Traitlets Python configuration system,"BSD 3-Clause License
+
+- Copyright (c) 2001-, IPython Development Team
+
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions are met:
+
+1. Redistributions of source code must retain the above copyright notice, this
+   list of conditions and the following disclaimer.
+
+2. Redistributions in binary form must reproduce the above copyright notice,
+   this list of conditions and the following disclaimer in the documentation
+   and/or other materials provided with the distribution.
+
+3. Neither the name of the copyright holder nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS ""AS IS""
+AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.",,,License :: OSI Approved :: BSD License
+typing-inspection,0.4.2,Runtime typing introspection tools,,,,
+typing_extensions,4.15.0,Backported and Experimental Type Hints for Python 3.9+,,,,
+tzdata,2025.3,Provider of IANA time zone data,Apache-2.0,https://github.com/python/tzdata,Python Software Foundation,
+uritemplate,4.2.0,Implementation of RFC 6570 URI Templates,BSD 3-Clause OR Apache-2.0,https://uritemplate.readthedocs.org,Ian Stapleton Cordasco,
+urllib3,2.6.3,"HTTP library with thread-safe connection pooling, file post, and more.",,,,
+uvicorn,0.40.0,The lightning-fast ASGI server.,,,,
+wcwidth,0.5.3,Measures the displayed width of unicode strings in a terminal,,,,
