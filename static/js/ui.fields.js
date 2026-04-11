@@ -714,6 +714,13 @@
       class: "code-editor-fallback",
       placeholder: field.placeholder || "",
       spellcheck: "false",
+      autocomplete: "off",
+      autocorrect: "off",
+      autocapitalize: "off",
+      "aria-autocomplete": "none",
+      "data-gramm": "false",
+      "data-gramm_editor": "false",
+      "data-enable-grammarly": "false",
       oninput: (e) => {
         node.form[field.key] = e.target.value;
         if (onInputChanged) onInputChanged();
@@ -724,16 +731,16 @@
       }
     });
     textarea.value = current || "";
-    const host = el("div", { class: "code-editor-host", "data-language": language }, []);
-    const wrapper = el("div", { class: "code-editor" }, [host, textarea]);
+    const wrapper = el("div", { class: "code-editor" }, [textarea]);
 
     if (codeEditors && typeof codeEditors.mountCodeEditor === "function" && language) {
       codeEditors
         .mountCodeEditor({
-          host,
+          input: textarea,
           value: textarea.value,
           language,
           variableNames: availableVariableNames || [],
+          suggestionHost: wrapper,
           onInputChanged: (value) => {
             node.form[field.key] = value;
             textarea.value = value;
@@ -746,10 +753,10 @@
           }
         })
         .then(() => {
-          wrapper.classList.add("is-codemirror-ready");
+          wrapper.classList.add("is-code-editor-ready");
         })
         .catch((err) => {
-          console.warn("CodeMirror mount failed, fallback to textarea", err);
+          console.warn("Code editor mount failed, fallback to textarea", err);
         });
     }
 

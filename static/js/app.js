@@ -59,6 +59,8 @@
   const detailPanel = document.querySelector(".detail-panel");
   const mainRoot = document.querySelector("main");
   const bodyRoot = document.body;
+  const bodyDataset = bodyRoot?.dataset || {};
+  const urlParams = new URLSearchParams(window.location.search);
   let importInput = null;
   const sidebarToggle = document.getElementById("sidebarToggle");
   const sidebarModeItems = Array.from(document.querySelectorAll("[data-app-mode]"));
@@ -66,7 +68,12 @@
   const SIDEBAR_EXPANDED_CLASS = "sidebar-expanded";
   const APP_MODES = CONFIG.modes || {};
   const DEFAULT_APP_MODE = APP_MODES.workflow ? "workflow" : (Object.keys(APP_MODES)[0] || "workflow");
+  const STORAGE_KEYS = {
+    modeStates: "ziz.modeStates.v1",
+    pendingFlow: "ziz.pendingFlow.v1",
+  };
   const modeStates = {};
+  let persistTimer = 0;
   function showDialog(message, options = {}) {
     if (dialogApi?.show) {
       dialogApi.show(message, options);
@@ -114,7 +121,7 @@
   let currentRunId = "";
   let lastRunSummary = null;
   const homeViewModel = {
-    visible: true,
+    visible: String(bodyDataset.homeVisible || "false").toLowerCase() === "true",
     recentFiles: [],
     templates: [],
     refreshToken: 0,
@@ -122,6 +129,62 @@
 
   function normalizeAppMode(mode) {
     return APP_MODES[mode] ? mode : DEFAULT_APP_MODE;
+  }
+
+  function parseSupportedModes(value) {
+    const seen = new Set();
+    const items = String(value || "")
+      .split(",")
+      .map((item) => normalizeAppMode(String(item || "").trim()))
+      .filter((item) => APP_MODES[item]);
+    return items.filter((item) => {
+      if (seen.has(item)) return false;
+      seen.add(item);
+      return true;
+    });
+  }
+
+  const PAGE_SUPPORTED_MODES = (() => {
+    const fromBody = parseSupportedModes(bodyDataset.supportedModes);
+    return fromBody.length ? fromBody : [DEFAULT_APP_MODE];
+  })();
+
+  function pageSupportsMode(mode) {
+    return PAGE_SUPPORTED_MODES.includes(normalizeAppMode(mode));
+  }
+
+  function getInitialMode() {
+    const requested = String(urlParams.get("mode") || bodyDataset.initialMode || DEFAULT_APP_MODE).trim();
+    const normalized = normalizeAppMode(requested);
+    return pageSupportsMode(normalized) ? normalized : (PAGE_SUPPORTED_MODES[0] || DEFAULT_APP_MODE);
+  }
+
+  activeMode = getInitialMode();
+
+  function readSessionJson(key) {
+    try {
+      const raw = window.sessionStorage?.getItem?.(key);
+      return raw ? JSON.parse(raw) : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  function writeSessionJson(key, value) {
+    try {
+      if (value === undefined) return;
+      window.sessionStorage?.setItem?.(key, JSON.stringify(value));
+    } catch (_) {
+      // ignore storage failures
+    }
+  }
+
+  function removeSessionValue(key) {
+    try {
+      window.sessionStorage?.removeItem?.(key);
+    } catch (_) {
+      // ignore storage failures
+    }
   }
 
   function getModeMeta(mode) {
@@ -178,8 +241,131 @@
     return nextState;
   }
 
+  function normalizePersistedState(mode, savedState) {
+    if (!savedState || typeof savedState !== "object" || Array.isArray(savedState)) {
+      return null;
+    }
+
+    const normalized = normalizeAppMode(mode);
+    const baseState = createStateForMode(normalized);
+    const restoredNodes = Array.isArray(savedState.nodes) && savedState.nodes.length
+      ? savedState.nodes
+      : baseState.nodes;
+    const selectedNodeId = String(savedState.selectedNodeId || "").trim();
+    const hasSelectedNode = restoredNodes.some((node) => String(node?.id || "") === selectedNodeId);
+    const pendingMergeSourceId = String(savedState.pendingMergeSourceId || "").trim();
+    const hasPendingMergeNode = restoredNodes.some((node) => String(node?.id || "") === pendingMergeSourceId);
+
+    return {
+      ...baseState,
+      ...savedState,
+      version: Number(savedState.version) || baseState.version,
+      appMode: normalized,
+      flowName: String(savedState.flowName || "").trim() || baseState.flowName,
+      nodes: restoredNodes,
+      startParameters: Array.isArray(savedState.startParameters) ? savedState.startParameters : baseState.startParameters,
+      selectedNodeId: hasSelectedNode ? selectedNodeId : (restoredNodes[0]?.id || baseState.selectedNodeId || null),
+      pendingMergeSourceId: hasPendingMergeNode ? pendingMergeSourceId : null,
+      nextStepSeq: Number.isFinite(Number(savedState.nextStepSeq)) && Number(savedState.nextStepSeq) > 0
+        ? Number(savedState.nextStepSeq)
+        : baseState.nextStepSeq,
+      hiddenBindings: (savedState.hiddenBindings && typeof savedState.hiddenBindings === "object" && !Array.isArray(savedState.hiddenBindings))
+        ? savedState.hiddenBindings
+        : {},
+      fileName: String(savedState.fileName || ""),
+      stepStatuses: (savedState.stepStatuses && typeof savedState.stepStatuses === "object" && !Array.isArray(savedState.stepStatuses))
+        ? savedState.stepStatuses
+        : {}
+    };
+  }
+
+  function restoreModeStates() {
+    const saved = readSessionJson(STORAGE_KEYS.modeStates);
+    if (!saved || typeof saved !== "object") return;
+    Object.entries(saved).forEach(([mode, savedState]) => {
+      const normalized = normalizeAppMode(mode);
+      if (!APP_MODES[normalized] || !savedState || typeof savedState !== "object") return;
+      const restored = normalizePersistedState(normalized, savedState);
+      if (restored) {
+        modeStates[normalized] = restored;
+      }
+    });
+  }
+
+  function persistModeStates() {
+    if (state) {
+      state.flowName = getFlowName();
+      modeStates[state.appMode] = state;
+    }
+    writeSessionJson(STORAGE_KEYS.modeStates, modeStates);
+  }
+
+  function schedulePersistModeStates() {
+    window.clearTimeout(persistTimer);
+    persistTimer = window.setTimeout(() => {
+      persistTimer = 0;
+      persistModeStates();
+    }, 180);
+  }
+
+  function storePendingImportedFlow(payload) {
+    writeSessionJson(STORAGE_KEYS.pendingFlow, payload);
+  }
+
+  function consumePendingImportedFlow() {
+    const payload = readSessionJson(STORAGE_KEYS.pendingFlow);
+    removeSessionValue(STORAGE_KEYS.pendingFlow);
+    return payload;
+  }
+
+  function toAbsolutePageUrl(relativeUrl) {
+    try {
+      return new URL(String(relativeUrl || ""), window.location.href).toString();
+    } catch (_) {
+      return String(relativeUrl || "");
+    }
+  }
+
+  function buildPageUrlForMode(mode) {
+    const normalized = normalizeAppMode(mode);
+    if (normalized === "workflow" || normalized === "dataflow") {
+      const workflowUrl = bodyDataset.workflowUrl || "./workflow.html";
+      const target = new URL(workflowUrl, window.location.href);
+      if (normalized === "dataflow") {
+        target.searchParams.set("mode", "dataflow");
+      } else {
+        target.searchParams.delete("mode");
+      }
+      return target.toString();
+    }
+    if (normalized === "query-builder") {
+      return toAbsolutePageUrl(bodyDataset.queryBuilderUrl || "./query-builder.html");
+    }
+    return "";
+  }
+
+  function navigateToUrl(url) {
+    const target = String(url || "").trim();
+    if (!target) return false;
+    persistModeStates();
+    window.location.href = target;
+    return true;
+  }
+
+  function navigateToMode(mode, options = {}) {
+    const targetUrl = buildPageUrlForMode(mode);
+    if (!targetUrl) return false;
+    if (options.pendingFlow) {
+      storePendingImportedFlow(options.pendingFlow);
+    }
+    return navigateToUrl(targetUrl);
+  }
+
   try {
+    restoreModeStates();
     state = createStateForMode(activeMode);
+    state = modeStates[activeMode] || state;
+    state.appMode = activeMode;
     modeStates[activeMode] = state;
   } catch (err) {
     showFatal("??????????????", err);
@@ -570,6 +756,7 @@
         onHomeAction: handleHomeAction
       });
       applyFlowViewportHeight();
+      schedulePersistModeStates();
     } catch (err) {
       showFatal("???????????", err);
     }
@@ -742,9 +929,48 @@
       onStateChanged();
     }
 
+  function applyLoadedFlowPayload(payload) {
+    if (!payload || payload.selected === false) return false;
+    const imported = buildStateFromYaml(payload.flow, CONFIG);
+    const importedMode = normalizeAppMode(payload.mode || imported.state?.appMode);
+    const pendingPayload = {
+      mode: importedMode,
+      file_name: String(payload.file_name || ""),
+      flow: payload.flow,
+      hidden_bindings: payload.hidden_bindings || {}
+    };
+
+    if (!pageSupportsMode(importedMode)) {
+      navigateToMode(importedMode, { pendingFlow: pendingPayload });
+      return false;
+    }
+
+    applyImportedFlowState(imported.state, {
+      mode: importedMode,
+      fileName: payload.file_name,
+      hiddenBindings: payload.hidden_bindings || {}
+    });
+    return true;
+  }
+
+  function restorePendingImportedFlow() {
+    const pending = consumePendingImportedFlow();
+    if (!pending || typeof pending !== "object") return;
+    const pendingMode = normalizeAppMode(pending.mode);
+    if (!pageSupportsMode(pendingMode)) {
+      storePendingImportedFlow(pending);
+      navigateToMode(pendingMode);
+      return;
+    }
+    applyLoadedFlowPayload({
+      ...pending,
+      selected: true
+    });
+  }
+
   async function refreshHomeLists() {
     const startedAt = getPerfNow();
-    if (!bridgeApi?.available?.()) {
+    if (!bridgeApi?.available?.() || !homeViewModel.visible) {
       homeViewModel.recentFiles = [];
       homeViewModel.templates = [];
       await logUiEvent("home.refresh.skipped", {}, { source: "startup", elapsedMs: getPerfNow() - startedAt });
@@ -775,8 +1001,10 @@
   async function handleHomeAction(action) {
     const type = String(action?.type || "");
     if (type === "dismiss-home") {
-      hideHomeScreen();
-      onStateChanged();
+      if (!setActiveMode("workflow")) {
+        hideHomeScreen();
+        onStateChanged();
+      }
       return;
     }
     if (type === "open-flow") {
@@ -784,14 +1012,10 @@
       if (!token || !bridgeApi?.available?.()) return;
       try {
         const payload = await bridgeApi.call("flow.load", { ref: token });
-        if (!payload || payload.selected === false) return;
-        const imported = buildStateFromYaml(payload.flow, CONFIG);
-        applyImportedFlowState(imported.state, {
-          mode: payload.mode,
-          fileName: payload.file_name,
-          hiddenBindings: payload.hidden_bindings || {}
-        });
-        await refreshHomeLists();
+        const applied = applyLoadedFlowPayload(payload);
+        if (applied) {
+          await refreshHomeLists();
+        }
       } catch (err) {
         showDialog(`読み込みに失敗しました。\n${err?.message || err}`, { kind: "error", title: "読込エラー" });
       }
@@ -799,6 +1023,10 @@
   }
 
   async function showHomeScreen() {
+    if (!homeViewModel.visible && bodyDataset.homeUrl) {
+      navigateToUrl(toAbsolutePageUrl(bodyDataset.homeUrl));
+      return;
+    }
     const startedAt = getPerfNow();
     showHomeFlag();
     const token = ++homeViewModel.refreshToken;
@@ -812,13 +1040,8 @@
   async function handleBridgeLoad() {
     const startedAt = getPerfNow();
     const payload = await bridgeApi.call("flow.load", { ref: null });
-    if (!payload || payload.selected === false) return;
-    const imported = buildStateFromYaml(payload.flow, CONFIG);
-    applyImportedFlowState(imported.state, {
-      mode: payload.mode,
-      fileName: payload.file_name,
-      hiddenBindings: payload.hidden_bindings || {}
-    });
+    const applied = applyLoadedFlowPayload(payload);
+    if (!applied) return;
     await refreshHomeLists();
     await logUiEvent("flow.load", {
       file_name: payload.file_name || "",
@@ -1059,6 +1282,9 @@
 
   function setActiveMode(nextMode) {
     const normalized = normalizeAppMode(nextMode);
+    if (!pageSupportsMode(normalized)) {
+      return navigateToMode(normalized);
+    }
     hideHomeScreen();
     if (state) {
       state.flowName = getFlowName();
@@ -1070,6 +1296,7 @@
     modeStates[normalized] = state;
     activateSidebarItem(normalized);
     onStateChanged();
+    return true;
   }
 
   function setupSidebar() {
@@ -1085,8 +1312,11 @@
 
     sidebarModeItems.forEach((item) => {
       item.addEventListener("click", () => {
+        const navUrl = String(item.dataset.navUrl || "").trim();
         const itemMode = String(item.dataset.appMode || "");
-        if (APP_MODES[itemMode]) {
+        if (navUrl) {
+          navigateToUrl(toAbsolutePageUrl(navUrl));
+        } else if (APP_MODES[itemMode]) {
           setActiveMode(itemMode);
         }
         if (!isSidebarExpanded()) {
@@ -1097,6 +1327,11 @@
 
     sidebarActionItems.forEach((item) => {
       item.addEventListener("click", () => {
+        const navUrl = String(item.dataset.navUrl || "").trim();
+        if (navUrl) {
+          navigateToUrl(toAbsolutePageUrl(navUrl));
+          return;
+        }
         item.classList.remove("is-current");
         item.removeAttribute("aria-current");
         item.blur?.();
@@ -1156,7 +1391,7 @@
     detailPanel.addEventListener("dblclick", (e) => {
       const hitNodeHead = e.target.closest(".node-detail-meta");
       if (!hitNodeHead) return;
-      if (e.target.closest("button, input, select, textarea, a, label, .connector-flyout, .combo-field, .CodeMirror")) {
+      if (e.target.closest("button, input, select, textarea, a, label, .connector-flyout, .combo-field")) {
         return;
       }
       e.preventDefault();
@@ -1166,9 +1401,11 @@
   }
 
   setupSidebar();
+  restorePendingImportedFlow();
   activateSidebarItem(activeMode);
   setupDetailPanelResizer();
   applyFlowViewportHeight();
+  window.addEventListener("beforeunload", persistModeStates);
 
   if (flowNameInput) {
     flowNameInput.addEventListener("input", (e) => {

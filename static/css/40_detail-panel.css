@@ -125,15 +125,13 @@ body[data-home-visible="true"] .detail-panel {
 .detail-panel .row.required-empty textarea,
 .detail-panel .row.required-empty select,
 .detail-panel .row.required-empty .code-editor,
-.detail-panel .row.required-empty .code-editor .CodeMirror,
-.detail-panel .row.required-empty .code-editor .CodeMirror-gutters {
+.detail-panel .row.required-empty .code-editor .code-editor-fallback {
   background: var(--semantic-warning-bg);
   border-color: var(--brand-500);
 }
 
 .detail-panel .row.reference-invalid .code-editor,
-.detail-panel .row.reference-invalid .code-editor .CodeMirror,
-.detail-panel .row.reference-invalid .code-editor .CodeMirror-gutters {
+.detail-panel .row.reference-invalid .code-editor .code-editor-fallback {
   background: var(--semantic-warning-bg);
   border-color: var(--semantic-error-fg);
 }

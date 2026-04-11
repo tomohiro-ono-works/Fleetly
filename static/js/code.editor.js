@@ -2,6 +2,7 @@
   const CODE_EDITOR_VISIBLE_LINES = 15;
   const CODE_EDITOR_LINE_HEIGHT = 20;
   const CODE_EDITOR_VERTICAL_PADDING = 20;
+  const INDENT_TEXT = "  ";
   const PYTHON_FALLBACK_HINTS = [
     "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except",
     "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None",
@@ -12,52 +13,105 @@
     "SELECT\nFROM\nWHERE\nGROUP BY ALL\nHAVING\nORDER BY 1,2", "HAVING", "LIMIT", "WITH RD AS (\n\n),", "INSERT",
     "UPDATE", "DELETE FROM WHERE", "JOIN", "LEFT JOIN ON t1. = t2.", "RIGHT JOIN ON t1. = t2.", "INNER JOIN ON t1. = t2.", "AS", "AND",
     "OR", "NOT", "IN", "LIKE", "IS NULL", "CASE\nWHEN THEN\nELSE\nEND AS ", "COUNT() AS ",
-    "SUM() AS ", "AVG() AS ", "MIN() AS ", "MAX() AS ","CREATE OR REPALACE TABLE ","CREATE TEMP TABLE ","CREATE TEMP FUNCTION "
+    "SUM() AS ", "AVG() AS ", "MIN() AS ", "MAX() AS ", "CREATE OR REPALACE TABLE ", "CREATE TEMP TABLE ", "CREATE TEMP FUNCTION "
   ];
 
-  function getMode(language) {
-    if (language === "sql") return "text/x-sql";
-    if (language === "python") return "python";
-    return "text/plain";
+  function getCodeHighlightApi() {
+    return (window.zizPackages && window.zizPackages.core && window.zizPackages.core.codeHighlight)
+      || window.codeHighlight
+      || {};
   }
 
-  function applyEditorHeight(editor) {
+  function applyEditorHeight(input, surface, highlight) {
     const height = CODE_EDITOR_LINE_HEIGHT * CODE_EDITOR_VISIBLE_LINES + CODE_EDITOR_VERTICAL_PADDING;
-    editor.setSize(null, `${height}px`);
+    [input, surface, highlight].forEach((node) => {
+      if (!node) return;
+      node.style.height = `${height}px`;
+      node.style.minHeight = `${height}px`;
+      node.style.maxHeight = `${height}px`;
+    });
   }
 
   function getLanguageHintWords(language) {
-    const helperWords = window.CodeMirror?.helpers?.hintWords?.[language];
-    if (Array.isArray(helperWords) && helperWords.length) return helperWords;
     if (language === "python") return PYTHON_FALLBACK_HINTS;
     if (language === "sql") return SQL_FALLBACK_HINTS;
     return [];
   }
 
-  function createCompletionController({ editor, language, variableNames }) {
+  function replaceRange(input, start, end, nextText) {
+    const text = String(input.value || "");
+    input.value = `${text.slice(0, start)}${nextText}${text.slice(end)}`;
+    const cursor = start + nextText.length;
+    input.selectionStart = cursor;
+    input.selectionEnd = cursor;
+    input.focus();
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+  function getCompletionContext(input, language, variableNames) {
+    const text = String(input.value || "");
+    const caret = input.selectionStart || 0;
+    const left = text.slice(0, caret);
+
+    const variableMatch = left.match(/\{\{\s*([a-zA-Z0-9_]*)$/);
+    if (variableMatch) {
+      const prefix = variableMatch[1] || "";
+      const items = Array.from(new Set((variableNames || []).filter(Boolean)))
+        .filter((name) => name.startsWith(prefix))
+        .map((name) => ({ label: `{{${name}}}`, insertText: `{{${name}}}` }));
+      return {
+        from: variableMatch.index,
+        to: caret,
+        items
+      };
+    }
+
+    const wordMatch = left.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
+    if (!wordMatch) return null;
+
+    const prefix = wordMatch[1] || "";
+    const loweredPrefix = prefix.toLowerCase();
+    const items = getLanguageHintWords(language)
+      .filter((word) => String(word).toLowerCase().startsWith(loweredPrefix))
+      .map((word) => ({ label: String(word), insertText: String(word) }));
+    if (!items.length) return null;
+    return {
+      from: caret - prefix.length,
+      to: caret,
+      items
+    };
+  }
+
+  function createCompletionController({ input, host, language, variableNames }) {
     const list = document.createElement("div");
     list.className = "suggest-list is-code-editor is-floating";
     document.body.appendChild(list);
 
-    const languageHints = Array.from(new Set(getLanguageHintWords(language).filter(Boolean)));
-    const variableHints = Array.from(new Set((variableNames || []).filter(Boolean)));
+    let currentContext = null;
     let currentItems = [];
     let activeIndex = 0;
-    let currentContext = null;
 
     function hide() {
+      currentContext = null;
       currentItems = [];
       activeIndex = 0;
-      currentContext = null;
       list.style.display = "none";
       list.innerHTML = "";
     }
 
     function positionList() {
       if (list.style.display !== "block") return;
-      const cursor = editor.cursorCoords(null, "window");
-      list.style.left = `${Math.max(12, cursor.left)}px`;
-      list.style.top = `${cursor.bottom + 6}px`;
+      const rect = host.getBoundingClientRect();
+      list.style.left = `${Math.max(12, rect.left + 8)}px`;
+      list.style.top = `${Math.max(12, rect.bottom - 8)}px`;
+    }
+
+    function applyItem(index = activeIndex) {
+      const item = currentItems[index];
+      if (!item || !currentContext) return false;
+      replaceRange(input, currentContext.from, currentContext.to, item.insertText);
+      hide();
+      return true;
     }
 
     function renderItems() {
@@ -74,69 +128,16 @@
       positionList();
     }
 
-    function setItems(items, context) {
-      currentItems = items;
-      activeIndex = 0;
-      currentContext = context;
-      renderItems();
-    }
-
-    function collectContext() {
-      const cursor = editor.getCursor();
-      const line = editor.getLine(cursor.line) || "";
-      const left = line.slice(0, cursor.ch);
-
-      const varMatch = left.match(/\{\{\s*([a-zA-Z0-9_]*)$/);
-      if (varMatch) {
-        const prefix = varMatch[1] || "";
-        const items = variableHints
-          .filter((name) => name.startsWith(prefix))
-          .map((name) => ({ label: `{{${name}}}`, insertText: `{{${name}}}` }));
-        return {
-          type: "variable",
-          items,
-          from: { line: cursor.line, ch: varMatch.index },
-          to: cursor,
-          prefix
-        };
-      }
-
-      const wordMatch = left.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
-      if (wordMatch) {
-        const prefix = wordMatch[1] || "";
-        const loweredPrefix = prefix.toLowerCase();
-        const items = languageHints
-          .filter((word) => String(word).toLowerCase().startsWith(loweredPrefix))
-          .map((word) => ({ label: String(word), insertText: String(word) }));
-        return {
-          type: "keyword",
-          items,
-          from: { line: cursor.line, ch: cursor.ch - prefix.length },
-          to: cursor,
-          prefix
-        };
-      }
-
-      return null;
-    }
-
     function refresh() {
-      const context = collectContext();
-      if (!context || !context.items.length) {
+      const nextContext = getCompletionContext(input, language, variableNames);
+      if (!nextContext || !Array.isArray(nextContext.items) || !nextContext.items.length) {
         hide();
         return false;
       }
-      setItems(context.items, context);
-      return true;
-    }
-
-    function applyItem(index = activeIndex) {
-      if (!currentContext || !currentItems.length) return false;
-      const item = currentItems[index];
-      if (!item) return false;
-      editor.replaceRange(item.insertText, currentContext.from, currentContext.to);
-      editor.focus();
-      hide();
+      currentContext = nextContext;
+      currentItems = nextContext.items;
+      activeIndex = 0;
+      renderItems();
       return true;
     }
 
@@ -146,22 +147,25 @@
       renderItems();
     }
 
-    function handleTab() {
-      if (currentItems.length) return applyItem();
+    function scheduleRefresh() {
+      if (!currentItems.length) return;
+      window.requestAnimationFrame(() => {
+        refresh();
+      });
+    }
+
+    function handleTabCompletion() {
+      if (currentItems.length) {
+        return applyItem();
+      }
       return refresh();
     }
 
-    editor.on("changes", () => {
-      const cursor = editor.getCursor();
-      const line = editor.getLine(cursor.line) || "";
-      const left = line.slice(0, cursor.ch);
-      if (/\{\{\s*[a-zA-Z0-9_]*$/.test(left)) refresh();
-      else hide();
-    });
-    editor.on("cursorActivity", positionList);
-    editor.on("scroll", hide);
-    editor.on("blur", () => setTimeout(hide, 150));
-    editor.on("keydown", (_, event) => {
+    input.addEventListener("input", scheduleRefresh);
+    input.addEventListener("scroll", positionList);
+    window.addEventListener("resize", positionList);
+    input.addEventListener("blur", () => setTimeout(hide, 150));
+    input.addEventListener("keydown", (event) => {
       if (event.key === "ArrowDown" && currentItems.length) {
         event.preventDefault();
         moveActive(1);
@@ -177,54 +181,98 @@
         applyItem();
         return;
       }
-      if (event.key === "Tab") {
-        const opened = handleTab();
-        if (opened) event.preventDefault();
-        return;
-      }
       if (event.key === "Escape" && currentItems.length) {
         event.preventDefault();
         hide();
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        if (!handleTabCompletion()) {
+          const start = input.selectionStart || 0;
+          const end = input.selectionEnd || 0;
+          replaceRange(input, start, end, INDENT_TEXT);
+        }
       }
     });
 
     return { hide };
   }
 
-  function mountCodeEditor({ host, value, language, variableNames, onInputChanged, onCommitChanged }) {
-    if (!window.CodeMirror) {
-      return Promise.reject(new Error("CodeMirror is not loaded"));
+  function createHighlightController({ input, wrapper, language }) {
+    const surface = document.createElement("div");
+    surface.className = "code-editor-surface";
+    const highlight = document.createElement("pre");
+    highlight.className = "code-editor-highlight";
+    surface.appendChild(highlight);
+    wrapper.insertBefore(surface, input);
+
+    function render() {
+      const api = getCodeHighlightApi();
+      if (typeof api.renderHighlightedHtml === "function") {
+        surface.hidden = false;
+        highlight.innerHTML = api.renderHighlightedHtml(input.value, language);
+        wrapper.classList.add("is-code-editor-ready");
+        return;
+      }
+      surface.hidden = true;
+      wrapper.classList.remove("is-code-editor-ready");
     }
 
-    host.innerHTML = "";
-    const editor = window.CodeMirror(host, {
-      value: value || "",
-      mode: getMode(language),
-      lineNumbers: true,
-      lineWrapping: true,
-      indentUnit: 2,
-      tabSize: 2
-      });
+    function syncScroll() {
+      surface.scrollTop = input.scrollTop;
+      surface.scrollLeft = input.scrollLeft;
+    }
 
-    editor.on("change", (instance) => {
-      if (onInputChanged) onInputChanged(instance.getValue());
-    });
+    input.addEventListener("input", render);
+    input.addEventListener("scroll", syncScroll);
+    render();
+    syncScroll();
 
-    editor.on("blur", (instance) => {
-      if (onCommitChanged) onCommitChanged(instance.getValue());
+    return { surface, highlight, render, syncScroll };
+  }
+
+  function mountCodeEditor({ input, value, language, variableNames, suggestionHost, onCommitChanged }) {
+    if (!input || !suggestionHost) {
+      return Promise.reject(new Error("Textarea host is not available"));
+    }
+
+    input.value = value || "";
+    input.dataset.language = String(language || "");
+    input.spellcheck = false;
+    input.setAttribute("spellcheck", "false");
+    input.setAttribute("autocomplete", "off");
+    input.setAttribute("autocorrect", "off");
+    input.setAttribute("autocapitalize", "off");
+    input.setAttribute("aria-autocomplete", "none");
+    input.setAttribute("data-gramm", "false");
+    input.setAttribute("data-gramm_editor", "false");
+    input.setAttribute("data-enable-grammarly", "false");
+    input.autocapitalize = "off";
+    input.autocomplete = "off";
+    input.classList.add("is-enhanced-code-editor");
+
+    const { surface, highlight } = createHighlightController({
+      input,
+      wrapper: suggestionHost,
+      language
     });
+    applyEditorHeight(input, surface, highlight);
 
     createCompletionController({
-      editor,
+      input,
+      host: suggestionHost,
       language,
       variableNames
     });
 
-    setTimeout(() => {
-      applyEditorHeight(editor);
-      editor.refresh();
-    }, 0);
-    return Promise.resolve(editor);
+    if (typeof onCommitChanged === "function") {
+      input.addEventListener("blur", () => {
+        onCommitChanged(String(input.value || ""));
+      });
+    }
+
+    return Promise.resolve({ input, surface, highlight });
   }
 
   const codeEditors = { mountCodeEditor };

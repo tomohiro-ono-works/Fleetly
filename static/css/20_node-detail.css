@@ -480,8 +480,7 @@ select {
 .row.required-empty textarea,
 .row.required-empty select,
 .row.required-empty .code-editor,
-.row.required-empty .code-editor .CodeMirror,
-.row.required-empty .code-editor .CodeMirror-gutters {
+.row.required-empty .code-editor .code-editor-fallback {
   background: var(--alpha-accent-24);
   border-color: var(--brand-200);
 }
@@ -490,8 +489,7 @@ select {
 .row.reference-invalid textarea,
 .row.reference-invalid select,
 .row.reference-invalid .code-editor,
-.row.reference-invalid .code-editor .CodeMirror,
-.row.reference-invalid .code-editor .CodeMirror-gutters {
+.row.reference-invalid .code-editor .code-editor-fallback {
   border-color: var(--semantic-error-fg);
   background: var(--semantic-warning-bg);
 }
@@ -509,93 +507,6 @@ textarea {
   min-height: 90px;
   resize: vertical;
   font-family: var(--mono);
-}
-
-.code-editor {
-  position: relative;
-  min-height: 320px;
-  max-height: 320px;
-  border: 1px solid var(--border-default);
-  border-radius: 8px;
-  background: var(--surface-subtle);
-  overflow: hidden;
-}
-
-.code-editor-host {
-  min-height: 320px;
-  max-height: 320px;
-}
-
-.code-editor-fallback {
-  display: block;
-}
-
-.code-editor.is-codemirror-ready .code-editor-fallback {
-  display: none;
-}
-
-.code-editor .CodeMirror {
-  height: 320px;
-  min-height: 320px;
-  max-height: 320px;
-  background: var(--surface-subtle);
-  color: var(--text-primary);
-  font-family: var(--mono);
-  line-height: 20px;
-}
-
-.code-editor .CodeMirror-focused {
-  outline: none;
-}
-
-.code-editor .CodeMirror-scroll {
-  font-family: var(--mono);
-  max-height: 320px;
-}
-
-.code-editor .CodeMirror-gutters {
-  background: var(--surface-base);
-  border-right: 1px solid var(--border-default);
-  color: var(--text-muted);
-}
-
-.code-editor .CodeMirror pre,
-.code-editor .CodeMirror-linenumber {
-  line-height: 20px;
-}
-
-.code-editor .CodeMirror-activeline-background {
-  background: var(--border-grid-flow);
-}
-
-.code-editor .CodeMirror-selected {
-  background: var(--brand-100);
-}
-
-.code-editor .CodeMirror-linenumber {
-  padding: 0 8px 0 6px;
-}
-
-.code-editor .cm-keyword {
-  color: #355c9a;
-}
-
-.code-editor .cm-string {
-  color: #2f7d4a;
-}
-
-.code-editor .cm-number {
-  color: #b46a1f;
-}
-
-.code-editor .cm-comment {
-  color: #6f7c8f;
-}
-
-.code-editor .cm-def,
-.code-editor .cm-variable,
-.code-editor .cm-variable-2 {
-  color: #7a4cb4;
 }
 
 .node-yaml-editor {

@@ -1,11 +1,22 @@
 (function () {
-  const packages = window.zizPackages || {};
-  const uiNode = (packages.ui && packages.ui.node) || {};
-  const sqlbilder = packages.sqlbilder || {};
-  const normalizeSteps = uiNode.normalizeSteps;
-  const renderFlowChart = uiNode.renderFlowChart;
-  const renderNodeDetail = uiNode.renderNodeDetail;
-  const destroyFlowCanvas = uiNode.destroyFlowCanvas;
+  function getPackages() {
+    return window.zizPackages || {};
+  }
+
+  function getUiNodeApi() {
+    const packages = getPackages();
+    return (packages.ui && packages.ui.node) || {};
+  }
+
+  function getUiNodeLoader() {
+    const packages = getPackages();
+    return (packages.ui && packages.ui.nodeLoader) || {};
+  }
+
+  function getSqlbilderApi() {
+    const packages = getPackages();
+    return packages.sqlbilder || {};
+  }
 
   function formatRecentTimestamp(value) {
     const text = String(value || "").trim();
@@ -79,8 +90,10 @@
 
   function renderHomeScreen({ flowRoot, detailRoot, homeViewModel, onHomeAction }) {
     if (detailRoot) detailRoot.innerHTML = "";
-    if (typeof destroyFlowCanvas === "function") {
-      destroyFlowCanvas(flowRoot);
+
+    const uiNode = getUiNodeApi();
+    if (typeof uiNode.destroyFlowCanvas === "function") {
+      uiNode.destroyFlowCanvas(flowRoot);
     }
     flowRoot.innerHTML = "";
 
@@ -133,7 +146,41 @@
     flowRoot.appendChild(shell);
   }
 
-  function renderApp({ flowRoot, detailRoot, state, config, onStateChanged, homeViewModel, onHomeAction }) {
+  function renderNodeShellLoading(flowRoot) {
+    flowRoot.innerHTML = "";
+    const loading = document.createElement("div");
+    loading.className = "home-screen__empty";
+    loading.textContent = "フローエディタを読み込んでいます。";
+    flowRoot.appendChild(loading);
+  }
+
+  function ensureNodeRuntime(args) {
+    const loader = getUiNodeLoader();
+    if (typeof loader.ensureLoaded !== "function") return false;
+
+    if (args.flowRoot.__uiNodeLoadingPromise) {
+      renderNodeShellLoading(args.flowRoot);
+      return true;
+    }
+
+    renderNodeShellLoading(args.flowRoot);
+    if (args.detailRoot) args.detailRoot.innerHTML = "";
+    args.flowRoot.__uiNodeLoadingPromise = loader.ensureLoaded()
+      .then(() => {
+        args.flowRoot.__uiNodeLoadingPromise = null;
+        renderApp(args);
+      })
+      .catch((error) => {
+        args.flowRoot.__uiNodeLoadingPromise = null;
+        console.error("ui.node load failed", error);
+        renderNodeShellLoading(args.flowRoot);
+        args.flowRoot.lastElementChild.textContent = "フローエディタの読み込みに失敗しました。";
+      });
+    return true;
+  }
+
+  function renderApp(args) {
+    const { flowRoot, detailRoot, state, config, onStateChanged, homeViewModel, onHomeAction } = args;
     if (!flowRoot || !detailRoot) return;
 
     if (homeViewModel?.visible) {
@@ -142,27 +189,34 @@
     }
 
     if (String(state?.appMode || "") === "query-builder") {
+      const uiNode = getUiNodeApi();
       if (detailRoot) detailRoot.innerHTML = "";
-      if (typeof destroyFlowCanvas === "function") {
-        destroyFlowCanvas(flowRoot);
+      if (typeof uiNode.destroyFlowCanvas === "function") {
+        uiNode.destroyFlowCanvas(flowRoot);
       }
       flowRoot.innerHTML = "";
+      const sqlbilder = getSqlbilderApi();
       if (sqlbilder.page && typeof sqlbilder.page.mount === "function") {
         sqlbilder.page.mount(flowRoot, state);
       }
       return;
     }
 
-    if (typeof normalizeSteps === "function") {
-      normalizeSteps(state);
+    const uiNode = getUiNodeApi();
+    if (typeof uiNode.renderFlowChart !== "function" || typeof uiNode.renderNodeDetail !== "function") {
+      if (ensureNodeRuntime(args)) return;
     }
 
-    if (typeof renderFlowChart === "function") {
-      renderFlowChart({ root: flowRoot, state, config, onStateChanged });
+    if (typeof uiNode.normalizeSteps === "function") {
+      uiNode.normalizeSteps(state);
     }
 
-    if (typeof renderNodeDetail === "function") {
-      renderNodeDetail({ root: detailRoot, state, config, onStateChanged });
+    if (typeof uiNode.renderFlowChart === "function") {
+      uiNode.renderFlowChart({ root: flowRoot, state, config, onStateChanged });
+    }
+
+    if (typeof uiNode.renderNodeDetail === "function") {
+      uiNode.renderNodeDetail({ root: detailRoot, state, config, onStateChanged });
     }
   }
 

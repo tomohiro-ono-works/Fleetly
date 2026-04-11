@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ziz</title>
+  <link rel="icon" href="./icons/icon.png">
+  <link rel="stylesheet" href="./css/00_tokens.css">
+  <link rel="stylesheet" href="./css/01_base.css">
+  <link rel="stylesheet" href="./css/05_sidebar.css">
+  <link rel="stylesheet" href="./css/10_header.css?v=20260408-2">
+  <link rel="stylesheet" href="./css/15_dialog.css?v=20260406-3">
+  <link rel="stylesheet" href="./css/20_node-detail.css?v=20260407-1">
+  <link rel="stylesheet" href="./css/22_code-editor.css?v=20260411-1">
+  <link rel="stylesheet" href="./css/30_flowchart.css">
+  <link rel="stylesheet" href="./css/40_detail-panel.css?v=20260406-2">
+  <link rel="stylesheet" href="./css/90_responsive.css">
+  <link rel="stylesheet" href="./modal/modal_core.css">
+  <link rel="stylesheet" href="./modal/excel_modal.css">
+</head>
+<body
+  data-home-visible="false"
+  data-initial-mode="workflow"
+  data-supported-modes="workflow,dataflow"
+  data-home-url="./home.html"
+  data-workflow-url="./workflow.html"
+  data-query-builder-url="./query-builder.html"
+>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="主要ナビゲーション">
+      <div class="sidebar-top">
+        <button
+          id="sidebarToggle"
+          class="sidebar-toggle"
+          type="button"
+          aria-label="トップ画面へ戻る"
+          aria-expanded="false"
+          aria-controls="sidebarNav"
+          title="トップ画面へ戻る"
+        >
+          <span class="sidebar-toggle-icon" aria-hidden="true">
+            <img src="./icons/icon.png" alt="" />
+          </span>
+        </button>
+        <div class="sidebar-brand-submark" aria-hidden="true">
+          <img src="./icons/icon2.png" alt="" />
+        </div>
+      </div>
+
+      <nav id="sidebarNav" class="sidebar-nav">
+        <button class="sidebar-item is-current" type="button" data-app-mode="workflow" aria-current="page" title="ワークフロー作成">
+          <span class="sidebar-item-icon"><img src="./icons/workflow.svg" alt="" /></span>
+          <span class="sidebar-item-label">ワークフロー作成</span>
+        </button>
+        <button class="sidebar-item" type="button" data-app-mode="dataflow" title="データフロー作成">
+          <span class="sidebar-item-icon"><img src="./icons/dataflow.svg" alt="" /></span>
+          <span class="sidebar-item-label">データフロー作成</span>
+        </button>
+        <button class="sidebar-item" type="button" data-app-mode="query-builder" data-nav-url="./query-builder.html" title="クエリビルダー">
+          <span class="sidebar-item-icon"><img src="./icons/database.svg" alt="" /></span>
+          <span class="sidebar-item-label">クエリビルダー</span>
+        </button>
+        <button class="sidebar-item" type="button" data-sidebar-action="form" data-nav-url="./form-builder.html" title="入力フォーム作成">
+          <span class="sidebar-item-icon"><img src="./icons/form.svg" alt="" /></span>
+          <span class="sidebar-item-label">入力フォーム作成</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-bottom">
+        <button class="sidebar-item sidebar-item-settings" type="button" data-sidebar-action="settings" data-nav-url="./settings.html" title="設定">
+          <span class="sidebar-item-icon"><img src="./icons/settings.svg" alt="" /></span>
+          <span class="sidebar-item-label">設定</span>
+        </button>
+      </div>
+    </aside>
+
+    <div class="app-main">
+      <header>
+        <div class="header-inner">
+          <div class="header-left">
+            <input id="flowName" class="flow-name-input" type="text" value="ワークフロー１" />
+          </div>
+          <div class="actions">
+            <button id="btnRun" class="primary" type="button" aria-label="実行" title="実行">
+              <img src="./icons/run.svg" alt="" />
+            </button>
+            <button id="btnDiagnostics" class="header-text-btn" type="button" aria-label="診断" title="診断">
+              診断
+            </button>
+            <button id="btnReset" class="danger" type="button" aria-label="インポート" title="インポート">
+              <img src="./icons/import.svg" alt="" />
+            </button>
+            <button id="btnSave" class="primary" type="button" aria-label="保存" title="保存">
+              <img src="./icons/save.svg" alt="" />
+            </button>
+            <div class="window-actions" aria-label="ウィンドウ操作">
+              <button id="btnWindowMinimize" class="window-control-btn" type="button" aria-label="最小化" title="最小化">-</button>
+              <button id="btnWindowMaximize" class="window-control-btn" type="button" aria-label="拡大" title="拡大">□</button>
+              <button id="btnWindowClose" class="window-control-btn is-close" type="button" aria-label="閉じる" title="閉じる">×</button>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <main>
+        <div id="flowchart"></div>
+        <section class="panel detail-panel">
+          <div id="nodeDetail"></div>
+        </section>
+      </main>
+    </div>
+  </div>
+
+  <div id="excelModal" class="mdl" aria-hidden="true">
+    <div class="mdl__backdrop" data-mdl-close></div>
+    <div class="mdl__panel" role="dialog" aria-modal="true" aria-labelledby="excelTitle">
+      <div class="mdl__header">
+        <div class="mdl__title" id="excelTitle">Excelアシスタント</div>
+        <button class="mbtn" type="button" data-mdl-close>閉じる</button>
+      </div>
+      <div class="mdl__bar">
+        <button id="xPick" class="mbtn" type="button">ファイル選択</button>
+        <span id="xFileLabel" class="mdl__hint">未選択</span>
+        <label class="mdl__hint">シート:
+          <select id="xSheet" class="mselect" disabled></select>
+        </label>
+        <span class="mdl__hint" id="xStatus"></span>
+        <span class="mdl__hint">クリック: ヘッダー行 / ダブルクリック: データ開始行（上から30行）</span>
+      </div>
+      <div id="xTableWrap" class="mdl__tablewrap preview-tablewrap"></div>
+      <div class="mdl__footer">
+        <span class="mdl__hint" id="xPicked"></span>
+        <div class="mdl__actions">
+          <button class="mbtn" type="button" data-mdl-close>キャンセル</button>
+          <button class="mbtn mbtn--primary" type="button" id="xOk">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="csvModal" class="mdl" aria-hidden="true">
+    <div class="mdl__backdrop" data-mdl-close></div>
+    <div class="mdl__panel" role="dialog" aria-modal="true" aria-labelledby="csvTitle">
+      <div class="mdl__header">
+        <div class="mdl__title" id="csvTitle">CSVアシスタント</div>
+        <button class="mbtn" type="button" data-mdl-close>閉じる</button>
+      </div>
+      <div class="mdl__bar">
+        <button id="cPick" class="mbtn" type="button">ファイル選択</button>
+        <span id="cFileLabel" class="mdl__hint">未選択</span>
+        <input id="cFile" class="minput" type="file" accept=".csv,.tsv,.txt" style="display:none" />
+        <label class="mdl__hint">文字コード:
+          <select id="cEncoding" class="mselect">
+            <option value="utf8">utf8</option>
+            <option value="shift_jis">shift_jis</option>
+            <option value="cp932">cp932</option>
+          </select>
+        </label>
+        <label class="mdl__hint">区切り文字:
+          <select id="cDelimiter" class="mselect">
+            <option value=",">カンマ (,)</option>
+            <option value="\t">タブ (TAB)</option>
+            <option value=";">セミコロン (;)</option>
+            <option value="|">パイプ (|)</option>
+          </select>
+        </label>
+        <span class="mdl__hint" id="cStatus"></span>
+        <span class="mdl__hint">クリック: ヘッダー行 / ダブルクリック: データ開始行（上から30行）</span>
+      </div>
+      <div id="cTableWrap" class="mdl__tablewrap preview-tablewrap"></div>
+      <div class="mdl__footer">
+        <span class="mdl__hint" id="cPicked"></span>
+        <div class="mdl__actions">
+          <button class="mbtn" type="button" data-mdl-close>キャンセル</button>
+          <button class="mbtn mbtn--primary" type="button" id="cOk">OK</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="appDialog" class="app-dialog" aria-hidden="true">
+    <div class="app-dialog__backdrop" data-app-dialog-close></div>
+    <div class="app-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle">
+      <div class="app-dialog__icon" id="appDialogIcon" aria-hidden="true">i</div>
+      <div class="app-dialog__body">
+        <div class="app-dialog__title" id="appDialogTitle">お知らせ</div>
+        <div class="app-dialog__message" id="appDialogMessage"></div>
+      </div>
+      <div class="app-dialog__actions">
+        <button id="appDialogCancel" class="app-dialog__button app-dialog__button--secondary" type="button" hidden>キャンセル</button>
+        <button id="appDialogOk" class="app-dialog__button" type="button">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="./js/config.js?v=20260407-3"></script>
+  <script src="./js/packages/core.package.js?v=20260406-2"></script>
+  <script src="./js/packages/ui.package.js?v=20260406-1"></script>
+  <script src="./js/packages/modal.package.js?v=20260406-2"></script>
+  <script src="./js/utils.js?v=20260406-1"></script>
+  <script src="./js/dialog.js?v=20260406-5"></script>
+  <script src="./js/state.js?v=20260406-1"></script>
+  <script src="./js/vars.js"></script>
+  <script src="./vendor/js-yaml/js-yaml.min.js"></script>
+  <script src="./js/bridge.js?v=20260406-1"></script>
+  <script src="./modal/modal_core.js?v=20260407-1"></script>
+  <script src="./modal/preview_schema.js?v=20260407-1"></script>
+  <script src="./modal/excel_modal.js?v=20260407-1"></script>
+  <script src="./modal/csv_modal.js?v=20260407-1"></script>
+  <script src="./js/code.highlight.js?v=20260411-1"></script>
+  <script src="./js/code.editor.js?v=20260411-2"></script>
+  <script src="./js/ui.suggest.js?v=20260407-1"></script>
+  <script src="./js/ui.fields.js?v=20260407-3"></script>
+  <script src="./js/ui.node.shared.js?v=20260411-2"></script>
+  <script src="./js/ui.node.canvas.js?v=20260411-2"></script>
+  <script src="./js/ui.node.detail.js?v=20260411-3"></script>
+  <script src="./js/ui.node.runtime.js?v=20260411-3"></script>
+  <script src="./js/ui.renderer.js?v=20260411-1"></script>
+  <script src="./js/app.js?v=20260411-2"></script>
+</body>
+</html>
