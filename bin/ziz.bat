@@ -2,4 +2,4 @@
 setlocal
 cd /d %~dp0..
 call ".env\Scripts\activate"
-python zizai.py
+python zizai.py %*

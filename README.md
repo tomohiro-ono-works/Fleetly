@@ -75,7 +75,6 @@ app/
     host.py
   main.py
 
-cli/
 connectors/
 core/
 config/
@@ -98,7 +97,7 @@ requirements.txt
 - `zizai.py`
   - 起動エントリポイント
 - `app/main.py`
-  - フロー実行エンジン（CLI実行用途）
+  - フロー実行エンジン（ヘッドレス実行用途）
 - `app/gui/host.py`
   - Qt / WebView ホスト
 - `app/gui/bridge.py`
@@ -124,6 +123,12 @@ DevTools を有効にする場合:
 
 ```powershell
 .\.env\Scripts\python.exe zizai.py --debug
+```
+
+ヘッドレス実行（タスクスケジューラ向け）:
+
+```powershell
+.\.env\Scripts\python.exe zizai.py "C:\path\to\flow.zizd"
 ```
 
 ## 設定ファイル
