@@ -57,7 +57,7 @@
 - WebView 自体の外部通信は制限
 - 外部ナビゲーションは制限
 - DevTools は通常起動では無効
-- `gui --debug` 時のみ DevTools 利用可
+- `--debug` 起動時のみ DevTools 利用可
 - API / Web 接続制御は `config/security_policies.yml` で管理
   - `apis.profiles`
   - `web.allowlist`
@@ -98,7 +98,7 @@ requirements.txt
 - `zizai.py`
   - 起動エントリポイント
 - `app/main.py`
-  - アプリ起動と CLI / GUI の振り分け
+  - フロー実行エンジン（CLI実行用途）
 - `app/gui/host.py`
   - Qt / WebView ホスト
 - `app/gui/bridge.py`
@@ -117,19 +117,13 @@ requirements.txt
 仮想環境を有効化したうえで実行します。
 
 ```powershell
-.\.env\Scripts\python.exe zizai.py gui
+.\.env\Scripts\python.exe zizai.py
 ```
 
 DevTools を有効にする場合:
 
 ```powershell
-.\.env\Scripts\python.exe zizai.py gui --debug
-```
-
-CLI を使う場合:
-
-```powershell
-.\.env\Scripts\python.exe zizai.py --help
+.\.env\Scripts\python.exe zizai.py --debug
 ```
 
 ## 設定ファイル

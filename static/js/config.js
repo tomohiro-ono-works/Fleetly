@@ -14,25 +14,22 @@ const CONFIG = {
   version: 3,
 
   modes: {
-    workflow: {
-      id: "workflow",
-      label: "ワークフロー",
-      defaultFlowName: "ワークフロー１",
-      fileExtension: ".zizw",
-        connectorIds: [
-          "DataflowConnector",
-          "DummyConnector",
-          "OperationConnector",
-          "ExcelConnector",
-          "WindowsConnector",
-          "WebConnector",
-          "APIConnector",
-          "RpaSlackConnector",
-          "PlotlyConnector",
-          "PPTConnector",
-          "OutlookConnector"
-        ]
-    },
+    // dataflow: {
+    //   id: "dataflow",
+    //   label: "ワークフロー",
+    //   defaultFlowName: "ワークフロー１",
+    //   fileExtension: ".zizw",
+    //     connectorIds: [
+    //       "DataflowConnector",
+    //       "DummyConnector",
+
+    //       "ExcelConnector",
+    //       "WindowsConnector",
+    //       "WebConnector",
+    //       "APIConnector",
+    //       "RpaSlackConnector",
+    //     ]
+    // },
     dataflow: {
       id: "dataflow",
       label: "データフロー",
@@ -49,7 +46,11 @@ const CONFIG = {
           "VectorConnector",
           "WindowsConnector",
           "WebConnector",
-          "RpaSlackConnector"
+          "RpaSlackConnector",
+          "OperationConnector",
+          "PlotlyConnector",
+          "PPTConnector",
+          "OutlookConnector"
         ]
     },
     "query-builder": {
@@ -64,7 +65,6 @@ const CONFIG = {
   },
 
   connectors: [
-    { id: "DataflowConnector",        label: "データフロー", exportId: "dataflow_connector"},
     { id: "DummyConnector",           label: "ダミー", exportId: "dummy_connector"},
     { id: "BQConnector",              label: "BigQuery", exportId: "bigquery_connector"},
     { id: "ExcelConnector",           label: "Excel", exportId: "excel_connector"},
@@ -79,10 +79,7 @@ const CONFIG = {
     { id: "PPTConnector",             label: "PowerPoint", exportId: "ppt_connector" },
     { id: "OperationConnector",       label: "操作", exportId: "operation_connector"},
     { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector"},
-    // { id: "ShellConnector",           label: "シェル", exportId: "shell_connector"},
     { id: "VectorConnector",          label: "VectorDB", exportId: "vector_connector"},
-    // { id: "LLMConnector",             label: "LLM", exportId: "llm_connector"},
-
     { id: "APIConnector",             label: "API実行", exportId: "api_connector"},
 
   ],
@@ -226,8 +223,8 @@ const CONFIG = {
             { value:"VectorConnector", label:"VectorDB", image:"./icons/vectordb.svg" },
             { value:"WebConnector", label:"Web操作", image:"./icons/web.svg" },
             { value:"APIConnector", label:"API実行", image:"./icons/web.svg" },
-            { value:"ExcelConnector", label:"Excel", image:"./img/ExcelConnector.png" },
-            { value:"BQConnector", label:"BigQuery", image:"./img/BQConnector.png" }
+            { value:"ExcelConnector", label:"Excel", image:"./img/ExcelConnector.jpg" },
+            { value:"BQConnector", label:"BigQuery", image:"./img/BQConnector.jpg" }
           ]
         }
       ],

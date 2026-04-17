@@ -4,13 +4,9 @@
 header {
   position: sticky;
   top: 0;
-  z-index: 90;
-  margin: 0;
   background: var(--surface-hover);
   color: var(--text-primary);
   border-bottom: 1px solid var(--border-default);
-  border-radius: 0;
-  box-shadow: var(--shadow-soft-weak);
   overflow: hidden;
 }
 
@@ -42,8 +38,6 @@ header .actions {
   border: 1px solid var(--border-default);
   background: var(--surface-page);
   color: var(--text-primary);
-  font-size: 13px;
-  font-weight: 500;
   line-height: 1.2;
   padding: 5px 10px;
   border-radius: 9px;
@@ -53,99 +47,4 @@ header .actions {
   outline: none;
   border-color: var(--brand-600);
   box-shadow: 0 0 0 2px var(--alpha-brand-15);
-}
-
-header .actions button {
-  min-width: 36px;
-  min-height: 36px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--surface-base);
-  border: 1px solid var(--border-default);
-  color: var(--text-primary);
-  padding: 0;
-}
-header .actions button:hover { background: var(--surface-hover); }
-
-header .actions button img {
-  display: block;
-  width: 22px;
-  height: 22px;
-  object-fit: contain;
-  filter: none;
-}
-
-header .actions .header-text-btn {
-  min-width: 56px;
-  min-height: 36px;
-  padding: 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  line-height: 1;
-}
-
-.window-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  margin-left: 2px;
-}
-
-body[data-native-frame="false"] header {
-  user-select: none;
-}
-
-body[data-native-frame="false"] .header-inner,
-body[data-native-frame="false"] .header-left,
-body[data-native-frame="false"] .actions {
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-body[data-native-frame="false"] button,
-body[data-native-frame="false"] input,
-body[data-native-frame="false"] .header-text-btn,
-body[data-native-frame="false"] .window-actions,
-body[data-native-frame="false"] .window-actions * {
-  -webkit-user-select: auto;
-  user-select: auto;
-}
-
-header .actions .window-control-btn {
-  min-width: 28px;
-  min-height: 28px;
-  border-radius: 8px;
-  font-size: 13px;
-  font-weight: 700;
-  line-height: 1;
-}
-
-header .actions .window-control-btn.is-close:hover {
-  background: rgba(214, 72, 104, 0.14);
-  border-color: rgba(214, 72, 104, 0.22);
-  color: #c9475c;
-}
-
-header .actions #btnRunFlow {
-  background: var(--brand-650);
-  border: 1px solid var(--brand-650);
-  color: var(--surface-page);
-}
-
-header .actions #btnRunFlow:hover {
-  background: var(--brand-300);
-  border-color: var(--brand-650);
-  color: var(--brand-800);
-}
-
-.title {
-  display: flex;
-  flex-direction: column;
-  line-height: 1.2;
-}
-.title strong { font-size: 15px; }
-.title span {
-  font-size: 12px;
-  color: var(--text-secondary);
 }

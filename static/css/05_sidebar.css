@@ -4,9 +4,9 @@
 .sidebar {
   position: sticky;
   top: 0;
-  width: 72px;
+  width: 52px;
   height: 100vh;
-  padding: 10px 5px;
+  padding: 5px 3px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -62,7 +62,7 @@
   align-items: center;
   justify-content: center;
   gap: 0;
-  padding: 8px 5px;
+  padding: 3px 2px;
   border-radius: 16px;
   border: 1px solid transparent;
   background: transparent;
@@ -137,20 +137,12 @@
 }
 
 .sidebar-toggle-icon img {
-  width: min(100%, 120px);
+  width: min(100%, 100px);
   height: auto;
-  max-height: 52px;
+  max-height: 28px;
   opacity: 1;
 }
 
-body.sidebar-expanded .sidebar-toggle-icon img {
-  width: min(100%, 185px);
-  max-height: 81px;
-}
-
-body.sidebar-expanded .sidebar-brand-submark {
-  display: flex;
-}
 
 .sidebar-item-settings .sidebar-item-icon {
   background: linear-gradient(160deg, var(--brand-100) 0%, var(--surface-page) 100%);
@@ -196,27 +188,4 @@ body.sidebar-expanded .sidebar-brand-submark {
 .sidebar-item.is-current.sidebar-item-settings .sidebar-item-icon {
   background: var(--brand-600);
   border-color: var(--brand-600);
-}
-
-body.sidebar-expanded .sidebar-toggle,
-body.sidebar-expanded .sidebar-item {
-  justify-content: flex-start;
-  gap: 12px;
-  padding-inline: 8px;
-}
-
-body.sidebar-expanded .sidebar {
-  width: 196px;
-}
-
-body.sidebar-expanded .sidebar-toggle {
-  justify-content: center;
-  gap: 0;
-  padding-inline: 0;
-}
-
-body.sidebar-expanded .sidebar-item-label {
-  max-width: 160px;
-  opacity: 1;
-  transform: translateX(0);
 }

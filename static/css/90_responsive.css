@@ -6,11 +6,6 @@
     --sidebar-width: 60px;
     --app-gutter: 8px;
   }
-
-  body.sidebar-expanded {
-    --sidebar-width: 184px;
-  }
-
   .panel { padding: 12px; }
   .flow-column { width: 88px; min-width: 88px; }
   .flow-edge { width: 36px; min-width: 36px; }
@@ -18,10 +13,6 @@
 }
 
 @media (max-width: 640px) {
-  body.sidebar-expanded {
-    --sidebar-width: 172px;
-  }
-
   .head-selects { width: 100%; }
   .head-select,
   .head-description { width: 100%; min-width: 0; flex-basis: 100%; }

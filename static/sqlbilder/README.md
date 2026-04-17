@@ -3,7 +3,7 @@
 このフォルダは `query-builder` モード専用の実装置き場です。
 
 ## 目的
-- 共通 shell である `static/form.html` から分離して、SQLビルダー専用の UI と state をここへ集約する
+- 共通 shell である `static/home.html` から分離して、SQLビルダー専用の UI と state をここへ集約する
 - `header` と `sidebar` は共通のままにし、メインスペースだけを SQLビルダー専用実装に切り替える
 - SQL 本体は `.sql` として保存し、`--@cte:` コメントで CTE 区切りを保持する
 - UI 状態は保存しない

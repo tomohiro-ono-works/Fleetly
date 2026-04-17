@@ -41,6 +41,13 @@ body[data-home-visible="true"] .detail-panel {
   cursor: ns-resize;
 }
 
+.detail-panel .detail-node > .node-detail-meta {
+  margin: 0;
+  border: 1px solid var(--border-default);
+  border-bottom: 1px solid var(--border-divider);
+  border-radius: 14px 14px 0 0;
+}
+
 .detail-panel .detail-node {
   margin: 0;
   border: 0;
@@ -66,7 +73,7 @@ body[data-home-visible="true"] .detail-panel {
   flex: 1 1 auto;
   align-content: start;
   position: relative;
-  border-radius: 14px;
+  border-radius: 0 0 18px 18px;
   background: var(--alpha-white-94);
   overflow: visible;
 }
@@ -91,18 +98,8 @@ body[data-home-visible="true"] .detail-panel {
 .detail-panel .node-tab-pane.is-active:not([data-tab-key="detail"]) {
   position: relative;
   background: var(--alpha-white-94);
-  border-radius: 14px;
+  border-radius: 0 0 18px 18px;
   overflow: hidden;
-}
-
-.detail-panel .node-tab-pane.is-active:not([data-tab-key="detail"])::before {
-  content: "";
-  display: block;
-  height: 52px;
-  background: var(--surface-hover);
-  border-top-left-radius: inherit;
-  border-top-right-radius: inherit;
-  border-bottom: 1px solid var(--border-divider);
 }
 
 .detail-panel .node-tab-pane.is-active:not([data-tab-key="detail"])::after {

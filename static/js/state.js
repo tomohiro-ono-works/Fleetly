@@ -529,7 +529,7 @@ function getConfigObject() {
 function normalizeAppMode(appMode) {
   const cfg = getConfigObject();
   const modes = cfg.modes || {};
-  return modes[appMode] ? appMode : "workflow";
+  return modes[appMode] ? appMode : "dataflow";
 }
 
 function getModeConnectorIds(appMode) {

@@ -26,6 +26,15 @@
     getNodeDescriptionSeed,
     renderConnectorSelect
   } = shared;
+  const VARIABLE_NAME_PATTERN = /^[a-zA-Z0-9_]+$/;
+
+  function getInvalidVariableNameMessage(name) {
+    const text = String(name || "").trim();
+    if (!text) return "";
+    if (VARIABLE_NAME_PATTERN.test(text)) return "";
+    return "変数名には英数字と _ のみ使用できます。日本語や記号は使えません。";
+  }
+
   function renderStartNodeDetail({ state, root, onStateChanged }) {
     root.innerHTML = "";
     const startParameters = ensureStartParameters(state);
@@ -50,12 +59,21 @@
         "aria-label": "変数名",
         oninput: (e) => {
           item.name = e.target.value;
+          updateNameWarning();
         },
         onchange: (e) => {
           item.name = e.target.value;
+          updateNameWarning();
           onStateChanged();
         }
       });
+      const nameWarning = el("div", { class: "field-warning", hidden: "hidden" }, []);
+      const updateNameWarning = () => {
+        const message = getInvalidVariableNameMessage(item.name);
+        nameWarning.textContent = message;
+        nameWarning.hidden = !message;
+      };
+      updateNameWarning();
       const valueInput = el("input", {
         type: "text",
         value: item.value,
@@ -82,7 +100,7 @@
         [document.createTextNode("削除")]
       );
       paramsList.appendChild(
-        el("div", { class: "start-param-fields" }, [nameInput, valueInput, removeBtn])
+        el("div", { class: "start-param-fields" }, [nameInput, valueInput, removeBtn, nameWarning])
       );
     });
 
@@ -140,74 +158,73 @@
       )
     ));
 
-    const headActionItems = [];
-
     const inlineDetailModal = detailModal && (detailModal.type === "excel" || detailModal.type === "csv") ? detailModal : null;
     const headDetailModal = detailModal && detailModal.type !== "excel" && detailModal.type !== "csv" ? detailModal : null;
 
-    if (headDetailModal && headDetailModal.label) {
+    function buildHeadActions() {
+      const headActionItems = [];
+      if (headDetailModal && headDetailModal.label) {
+        headActionItems.push(
+          el(
+            "button",
+            {
+              class: "support-btn node-head-icon-btn",
+              type: "button",
+              title: headDetailModal.label,
+              "aria-label": headDetailModal.label,
+              onclick: () => openConfiguredDetailModal({ node, detailModal: headDetailModal, onStateChanged })
+            },
+            [
+              el("img", {
+                src: "./icons/support_agent.svg",
+                alt: "",
+                class: "node-head-icon-btn__icon"
+              })
+            ]
+          )
+        );
+      }
       headActionItems.push(
         el(
           "button",
           {
-            class: "support-btn node-head-icon-btn",
+            class: "run-btn node-head-icon-btn",
             type: "button",
-            title: headDetailModal.label,
-            "aria-label": headDetailModal.label,
-            onclick: () => openConfiguredDetailModal({ node, detailModal: headDetailModal, onStateChanged })
+            title: "ステップ実行",
+            "aria-label": "ステップ実行",
+            onclick: () => requestNodeRun(node, "single", onStateChanged)
           },
           [
             el("img", {
-              src: "./icons/support_agent.svg",
+              src: "./icons/run.svg",
               alt: "",
               class: "node-head-icon-btn__icon"
             })
           ]
         )
       );
+      headActionItems.push(
+        el(
+          "button",
+          {
+            class: "danger node-head-icon-btn",
+            type: "button",
+            title: "削除",
+            "aria-label": "削除",
+            onclick: () => removeNodeById(state, node.id, onStateChanged)
+          },
+          [
+            el("img", {
+              src: "./icons/delete.svg",
+              alt: "",
+              class: "node-head-icon-btn__icon"
+            })
+          ]
+        )
+      );
+      return el("div", { class: "node-head-actions" }, headActionItems);
     }
 
-    headActionItems.push(
-      el(
-        "button",
-        {
-          class: "run-btn node-head-icon-btn",
-          type: "button",
-          title: "ステップ実行",
-          "aria-label": "ステップ実行",
-          onclick: () => requestNodeRun(node, "single", onStateChanged)
-        },
-        [
-          el("img", {
-            src: "./icons/run.svg",
-            alt: "",
-            class: "node-head-icon-btn__icon"
-          })
-        ]
-      )
-    );
-
-    headActionItems.push(
-      el(
-        "button",
-        {
-          class: "danger node-head-icon-btn",
-          type: "button",
-          title: "削除",
-          "aria-label": "削除",
-          onclick: () => removeNodeById(state, node.id, onStateChanged)
-        },
-        [
-          el("img", {
-            src: "./icons/delete.svg",
-            alt: "",
-            class: "node-head-icon-btn__icon"
-          })
-        ]
-      )
-    );
-
-    const headActions = el("div", { class: "node-head-actions" }, headActionItems);
     const body = el("div", { class: "node-body" }, []);
     const tabBar = el("div", { class: "node-tabs", role: "tablist", "aria-label": "ノード詳細タブ" }, []);
     const detailTabBtn = el(
@@ -310,9 +327,7 @@
       spellcheck: "false",
       "aria-label": "処理ログ"
     });
-    const logPane = el("div", { class: "node-tab-pane", "data-tab-key": "log" }, [
-      el("div", { class: "node-log-wrap" }, [logText])
-    ]);
+    const logPane = el("div", { class: "node-tab-pane", "data-tab-key": "log" }, [el("div", { class: "node-log-wrap" }, [logText])]);
 
     const connectorSelect = renderConnectorSelect({
       config,
@@ -337,14 +352,12 @@
     });
     const detailMeta = el("div", { class: "node-detail-meta" }, [
       el("div", { class: "badge" }, [document.createTextNode(`{${node.stepName}}`)]),
-      headActions,
+      buildHeadActions(),
       el("div", { class: "head-selects" }, [
         el("div", { class: "head-select" }, [connectorSelect])
       ]),
       el("div", { class: "head-description" }, [descriptionInput])
     ]);
-    body.appendChild(detailMeta);
-
     if (loopRootSelected) {
       body.appendChild(
         el("div", { class: "small" }, [
@@ -416,6 +429,57 @@
     }
 
     let dataRequestSeq = 0;
+    const dataCacheState = root.__nodeDetailDataCacheState = root.__nodeDetailDataCacheState || {
+      scopeSignature: "",
+      store: {}
+    };
+    function buildDataCacheScopeSignature() {
+      const nodes = Array.isArray(state?.nodes) ? state.nodes.map((item) => ({
+        stepName: String(item?.stepName || ""),
+        connector: String(item?.connector || ""),
+        action: String(item?.action || ""),
+        form: item?.form || {}
+      })) : [];
+      const startParameters = Array.isArray(state?.startParameters) ? state.startParameters.map((item) => ({
+        name: String(item?.name || ""),
+        value: item?.value ?? ""
+      })) : [];
+      return JSON.stringify({
+        appMode: String(state?.appMode || ""),
+        fileName: String(state?.fileName || ""),
+        flowName: String(state?.flowName || ""),
+        startParameters,
+        nodes
+      });
+    }
+    const dataCacheScopeSignature = buildDataCacheScopeSignature();
+    if (dataCacheState.scopeSignature !== dataCacheScopeSignature) {
+      dataCacheState.scopeSignature = dataCacheScopeSignature;
+      dataCacheState.store = {};
+    }
+    const dataCacheStore = dataCacheState.store;
+    const flowScopeKey = [
+      String(state?.appMode || "").trim(),
+      String(state?.fileName || "").trim(),
+      String(state?.flowName || "").trim()
+    ].join("|");
+
+    function getDataCacheKey() {
+      const stepId = String(node.stepName || "").trim();
+      if (!stepId) return "";
+      return `${flowScopeKey}::${stepId}`;
+    }
+
+    function writeDataCache(cacheKey, payload) {
+      if (!cacheKey || !payload) return;
+      dataCacheStore[cacheKey] = payload;
+      const keys = Object.keys(dataCacheStore);
+      if (keys.length <= 24) return;
+      const dropCount = keys.length - 24;
+      for (let i = 0; i < dropCount; i += 1) {
+        delete dataCacheStore[keys[i]];
+      }
+    }
 
     function isNumericZizDatatype(zizDatatype) {
       const normalized = String(zizDatatype || "").trim().toUpperCase();
@@ -425,6 +489,26 @@
     function setDataStatus(message = "") {
       dataStatusNote.textContent = String(message || "");
       dataStatusNote.hidden = !String(message || "").trim();
+    }
+
+    function buildStepStatusLabel() {
+      const stepId = String(node.stepName || "");
+      const raw = String(state?.stepStatuses?.[stepId] || "").trim().toLowerCase();
+      if (!raw) return "";
+      if (raw === "success") return "実行状態: 成功";
+      if (raw === "error") return "実行状態: エラー";
+      if (raw === "running") return "実行状態: 実行中";
+      if (raw === "cancelled") return "実行状態: キャンセル";
+      return `実行状態: ${raw}`;
+    }
+
+    function buildDataStatusMessage(baseMessage) {
+      const messages = [];
+      const base = String(baseMessage || "").trim();
+      const statusLabel = buildStepStatusLabel();
+      if (base) messages.push(base);
+      if (statusLabel) messages.push(statusLabel);
+      return messages.join(" / ");
     }
 
     function setActiveDataView(viewKey) {
@@ -561,6 +645,18 @@
       dataVolumeWrap.hidden = false;
     }
 
+    function applyDataPayload(schemaDto, previewDto, datavolumeDto) {
+      const schemaByName = renderSchemaRows(schemaDto);
+      renderPreviewRows(previewDto, schemaByName);
+      renderDatavolume(datavolumeDto);
+      dataViewToggle.hidden = false;
+      const previewRowCount = Number(previewDto?.row_count || 0);
+      const truncated = !!previewDto?.truncated;
+      const previewLabel = truncated ? `プレビュー ${previewRowCount} 行（先頭のみ）` : `プレビュー ${previewRowCount} 行`;
+      setDataStatus(buildDataStatusMessage(previewLabel));
+      setActiveDataView(root.__nodeDetailDataView || "preview");
+    }
+
     async function syncDataView() {
       const dataConnector = isDataConnector(node.connector, config);
       dataUnsupportedNote.hidden = dataConnector;
@@ -574,35 +670,34 @@
       dataVolumeList.innerHTML = "";
       if (!dataConnector) return;
       if (!bridgeApi?.available?.()) {
-        setDataStatus("WebView モードでのみ利用できます。");
+        setDataStatus(buildDataStatusMessage("WebView モードでのみ利用できます。"));
         return;
       }
-      const runId = String(window.__zizCurrentRunId || "");
-      if (!runId) {
-        setDataStatus("まだ実行結果がありません。");
+      const cacheKey = getDataCacheKey();
+      const cached = cacheKey ? dataCacheStore[cacheKey] : null;
+      if (cached) {
+        applyDataPayload(cached.schemaDto, cached.previewDto, cached.datavolumeDto);
         return;
       }
       const requestSeq = ++dataRequestSeq;
-      setDataStatus("データを取得しています...");
+      setDataStatus(buildDataStatusMessage("データを取得しています..."));
       try {
         const [schemaDto, previewDto, datavolumeDto] = await Promise.all([
-          bridgeApi.call("result.getSchema", { run_id: runId, step_id: node.stepName }),
-          bridgeApi.call("result.getPreview", { run_id: runId, step_id: node.stepName }),
-          bridgeApi.call("result.getDatavolume", { run_id: runId, step_id: node.stepName, top_n: 5 })
+          bridgeApi.call("result.getSchema", { mode: String(state?.appMode || ""), step_id: node.stepName }),
+          bridgeApi.call("result.getPreview", { mode: String(state?.appMode || ""), step_id: node.stepName }),
+          bridgeApi.call("result.getDatavolume", { mode: String(state?.appMode || ""), step_id: node.stepName, top_n: 5 })
         ]);
         if (requestSeq !== dataRequestSeq) return;
-        const schemaByName = renderSchemaRows(schemaDto);
-        renderPreviewRows(previewDto, schemaByName);
-        renderDatavolume(datavolumeDto);
-        dataViewToggle.hidden = false;
-        const previewRowCount = Number(previewDto?.row_count || 0);
-        const truncated = !!previewDto?.truncated;
-        const previewLabel = truncated ? `プレビュー ${previewRowCount} 行（先頭のみ）` : `プレビュー ${previewRowCount} 行`;
-        setDataStatus(previewLabel);
-        setActiveDataView(root.__nodeDetailDataView || "preview");
+        writeDataCache(cacheKey, { schemaDto, previewDto, datavolumeDto });
+        applyDataPayload(schemaDto, previewDto, datavolumeDto);
       } catch (error) {
         if (requestSeq !== dataRequestSeq) return;
-        setDataStatus(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`);
+        const code = String(error?.code || "").trim();
+        if (code === "E_NOT_FOUND") {
+          setDataStatus(buildDataStatusMessage("まだ実行結果がありません。"));
+          return;
+        }
+        setDataStatus(buildDataStatusMessage(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`));
       }
     }
 
@@ -738,14 +833,11 @@
     body.addEventListener("input", syncLogView);
     body.addEventListener("change", syncLogView);
     syncYamlView();
-    syncDataView().catch((error) => {
-      console.error("initial data view sync failed", error);
-    });
     syncVariablesView();
     syncLogView();
     setActiveTab(activeTabByRoot);
 
-    root.appendChild(el("section", { class: "node detail-node" }, [tabsHead, detailPane, yamlPane, dataPane, variablesPane, logPane]));
+    root.appendChild(el("section", { class: "node detail-node" }, [tabsHead, detailMeta, detailPane, yamlPane, dataPane, variablesPane, logPane]));
   }
   const nodeDetail = { renderNodeDetail };
   window.uiNodeDetail = nodeDetail;

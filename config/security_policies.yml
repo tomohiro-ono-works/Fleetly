@@ -15,10 +15,14 @@ apis:
 # WEB閲覧の許可
 web:
   allowlist:
-    - domain: api.example.com
+    - domain: "fonts.google.com"
       path_prefixes:
-        - /orders
-    - domain: example.com
+        - /icons
+    - domain: "app.slack.com"
       path_prefixes:
-        - /app
-        - /login
+        - /client
+    - domain: "google.com"
+      path_prefixes:
+        - /
+
+        

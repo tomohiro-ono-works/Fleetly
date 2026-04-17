@@ -313,7 +313,7 @@
 
 /* ---------- Node Body ---------- */
 .node-body {
-  padding: 0 var(--pad) var(--pad);
+  padding: var(--pad) var(--pad);
   display: grid;
   gap: 4px;
 }

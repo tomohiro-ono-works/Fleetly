@@ -13,89 +13,19 @@
   <link rel="stylesheet" href="./css/15_dialog.css?v=20260406-3">
   <link rel="stylesheet" href="./css/90_responsive.css">
 </head>
-<body data-workflow-url="./workflow.html" data-query-builder-url="./query-builder.html">
-  <div class="app-shell">
-    <aside class="sidebar" aria-label="主要ナビゲーション">
-      <div class="sidebar-top">
-        <button
-          id="sidebarToggle"
-          class="sidebar-toggle"
-          type="button"
-          aria-label="トップ画面を更新"
-          aria-expanded="false"
-          aria-controls="sidebarNav"
-          title="トップ画面を更新"
-        >
-          <span class="sidebar-toggle-icon" aria-hidden="true">
-            <img src="./icons/icon.png" alt="" />
-          </span>
-        </button>
-        <div class="sidebar-brand-submark" aria-hidden="true">
-          <img src="./icons/icon2.png" alt="" />
-        </div>
-      </div>
-
-      <nav id="sidebarNav" class="sidebar-nav">
-        <button class="sidebar-item" type="button" data-nav-url="./workflow.html" title="ワークフロー作成">
-          <span class="sidebar-item-icon"><img src="./icons/workflow.svg" alt="" /></span>
-          <span class="sidebar-item-label">ワークフロー作成</span>
-        </button>
-        <button class="sidebar-item" type="button" data-nav-url="./workflow.html?mode=dataflow" title="データフロー作成">
-          <span class="sidebar-item-icon"><img src="./icons/dataflow.svg" alt="" /></span>
-          <span class="sidebar-item-label">データフロー作成</span>
-        </button>
-        <button class="sidebar-item" type="button" data-nav-url="./query-builder.html" title="クエリビルダー">
-          <span class="sidebar-item-icon"><img src="./icons/database.svg" alt="" /></span>
-          <span class="sidebar-item-label">クエリビルダー</span>
-        </button>
-        <button class="sidebar-item" type="button" data-nav-url="./form-builder.html" title="入力フォーム作成">
-          <span class="sidebar-item-icon"><img src="./icons/form.svg" alt="" /></span>
-          <span class="sidebar-item-label">入力フォーム作成</span>
-        </button>
-      </nav>
-
-      <div class="sidebar-bottom">
-        <button class="sidebar-item sidebar-item-settings" type="button" data-nav-url="./settings.html" title="設定">
-          <span class="sidebar-item-icon"><img src="./icons/settings.svg" alt="" /></span>
-          <span class="sidebar-item-label">設定</span>
-        </button>
-      </div>
-    </aside>
-
-    <div class="app-main">
-      <header>
-        <div class="header-inner">
-          <div class="header-left">
-            <input id="flowName" class="flow-name-input" type="text" value="トップ画面" />
-          </div>
-          <div class="actions">
-            <button id="btnRun" class="primary" type="button" aria-label="実行" title="実行">
-              <img src="./icons/run.svg" alt="" />
-            </button>
-            <button id="btnDiagnostics" class="header-text-btn" type="button" aria-label="診断" title="診断">
-              診断
-            </button>
-            <button id="btnReset" class="danger" type="button" aria-label="インポート" title="インポート">
-              <img src="./icons/import.svg" alt="" />
-            </button>
-            <button id="btnSave" class="primary" type="button" aria-label="保存" title="保存">
-              <img src="./icons/save.svg" alt="" />
-            </button>
-            <div class="window-actions" aria-label="ウィンドウ操作">
-              <button id="btnWindowMinimize" class="window-control-btn" type="button" aria-label="最小化" title="最小化">-</button>
-              <button id="btnWindowMaximize" class="window-control-btn" type="button" aria-label="拡大" title="拡大">□</button>
-              <button id="btnWindowClose" class="window-control-btn is-close" type="button" aria-label="閉じる" title="閉じる">×</button>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      <main>
-        <div id="flowchart"></div>
-        <div id="nodeDetail" hidden></div>
-      </main>
-    </div>
-  </div>
+<body
+  data-shell-page="home"
+  data-shell-title="トップ画面"
+  data-home-url="./home.html"
+  data-workflow-url="./workflow.html"
+  data-query-builder-url="./query-builder.html"
+  data-form-builder-url="./form-builder.html"
+  data-settings-url="./settings.html"
+>
+  <main data-shell-main>
+    <div id="flowchart"></div>
+    <div id="nodeDetail" hidden></div>
+  </main>
 
   <div id="appDialog" class="app-dialog" aria-hidden="true">
     <div class="app-dialog__backdrop" data-app-dialog-close></div>
@@ -117,6 +47,7 @@
   <script src="./js/dialog.js?v=20260406-5"></script>
   <script src="./js/bridge.js?v=20260406-1"></script>
   <script src="./js/ui.renderer.js?v=20260411-1"></script>
+  <script src="./js/app-shell.js?v=20260412-2"></script>
   <script src="./js/app.home.js?v=20260411-1"></script>
 </body>
 </html>

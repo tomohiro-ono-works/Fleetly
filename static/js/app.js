@@ -8,6 +8,7 @@
   const utils = corePkg.utils || {};
   const bridgeApi = corePkg.bridge || null;
   const dialogApi = corePkg.dialog || null;
+  const shellApi = window.zizShell || {};
   const createDefaultState = stateOps.createDefaultState;
   const renderApp = renderer.renderApp;
   const getFormSchema = utils.getFormSchema || ((config, connector, action) => (config.forms && config.forms[`${connector}.${action}`]) || []);
@@ -51,10 +52,6 @@
   const btnReset = document.getElementById("btnReset");
   const btnRun = document.getElementById("btnRun");
   const btnDiagnostics = document.getElementById("btnDiagnostics");
-  const btnWindowMinimize = document.getElementById("btnWindowMinimize");
-  const btnWindowMaximize = document.getElementById("btnWindowMaximize");
-  const btnWindowClose = document.getElementById("btnWindowClose");
-  const headerInner = document.querySelector(".header-inner");
   const flowNameInput = document.getElementById("flowName");
   const detailPanel = document.querySelector(".detail-panel");
   const mainRoot = document.querySelector("main");
@@ -62,18 +59,254 @@
   const bodyDataset = bodyRoot?.dataset || {};
   const urlParams = new URLSearchParams(window.location.search);
   let importInput = null;
-  const sidebarToggle = document.getElementById("sidebarToggle");
-  const sidebarModeItems = Array.from(document.querySelectorAll("[data-app-mode]"));
-  const sidebarActionItems = Array.from(document.querySelectorAll("[data-sidebar-action]"));
-  const SIDEBAR_EXPANDED_CLASS = "sidebar-expanded";
   const APP_MODES = CONFIG.modes || {};
-  const DEFAULT_APP_MODE = APP_MODES.workflow ? "workflow" : (Object.keys(APP_MODES)[0] || "workflow");
+  const DEFAULT_APP_MODE = APP_MODES.dataflow ? "dataflow" : (Object.keys(APP_MODES)[0] || "dataflow");
   const STORAGE_KEYS = {
     modeStates: "ziz.modeStates.v1",
     pendingFlow: "ziz.pendingFlow.v1",
   };
   const modeStates = {};
   let persistTimer = 0;
+  const HISTORY_MAX_DIFFS_PER_SNAPSHOT = 30;
+  const historyByMode = {};
+  let historyApplying = false;
+
+  function cloneValue(value) {
+    if (typeof window.structuredClone === "function") {
+      try {
+        return window.structuredClone(value);
+      } catch (_) {
+        // fallback below
+      }
+    }
+    return JSON.parse(JSON.stringify(value ?? null));
+  }
+
+  function isPlainObject(value) {
+    return !!value && Object.prototype.toString.call(value) === "[object Object]";
+  }
+
+  function toHistoryComparableState(targetState) {
+    const source = targetState && typeof targetState === "object" ? targetState : {};
+    return {
+      version: Number(source.version) || 3,
+      appMode: String(source.appMode || ""),
+      flowName: String(source.flowName || ""),
+      nodes: cloneValue(Array.isArray(source.nodes) ? source.nodes : []),
+      startParameters: cloneValue(Array.isArray(source.startParameters) ? source.startParameters : []),
+      nextStepSeq: Number(source.nextStepSeq) || 1,
+      hiddenBindings: cloneValue(source.hiddenBindings && typeof source.hiddenBindings === "object" ? source.hiddenBindings : {}),
+      fileName: String(source.fileName || "")
+    };
+  }
+
+  function buildHistoryStore(targetState) {
+    const baseline = toHistoryComparableState(targetState);
+    return {
+      baseSnapshot: cloneValue(baseline),
+      lastState: cloneValue(baseline),
+      undoStack: [],
+      redoStack: []
+    };
+  }
+
+  function getActiveHistoryStore() {
+    const mode = normalizeAppMode(state?.appMode || activeMode);
+    if (!historyByMode[mode]) {
+      historyByMode[mode] = buildHistoryStore(state);
+    }
+    return historyByMode[mode];
+  }
+
+  function resetHistoryStoreForMode(mode, targetState) {
+    const normalized = normalizeAppMode(mode || activeMode);
+    historyByMode[normalized] = buildHistoryStore(targetState);
+  }
+
+  function syncHistoryBaseline(targetState = state) {
+    const store = getActiveHistoryStore();
+    const current = toHistoryComparableState(targetState);
+    store.lastState = cloneValue(current);
+    if (!store.baseSnapshot) {
+      store.baseSnapshot = cloneValue(current);
+    }
+  }
+
+  function buildForwardBackwardDiff(beforeValue, afterValue) {
+    const forward = [];
+    const backward = [];
+
+    function pushSet(path, value) {
+      return { kind: "set", path: [...path], value: cloneValue(value) };
+    }
+
+    function pushDelete(path) {
+      return { kind: "delete", path: [...path] };
+    }
+
+    function walk(beforeItem, afterItem, path) {
+      if (Object.is(beforeItem, afterItem)) return;
+
+      if (Array.isArray(beforeItem) && Array.isArray(afterItem)) {
+        if (beforeItem.length !== afterItem.length) {
+          forward.push(pushSet(path, afterItem));
+          backward.push(pushSet(path, beforeItem));
+          return;
+        }
+        for (let i = 0; i < beforeItem.length; i += 1) {
+          walk(beforeItem[i], afterItem[i], [...path, i]);
+        }
+        return;
+      }
+
+      if (isPlainObject(beforeItem) && isPlainObject(afterItem)) {
+        const keys = new Set([...Object.keys(beforeItem), ...Object.keys(afterItem)]);
+        keys.forEach((key) => {
+          const hasBefore = Object.prototype.hasOwnProperty.call(beforeItem, key);
+          const hasAfter = Object.prototype.hasOwnProperty.call(afterItem, key);
+          const childPath = [...path, key];
+          if (hasBefore && !hasAfter) {
+            forward.push(pushDelete(childPath));
+            backward.push(pushSet(childPath, beforeItem[key]));
+            return;
+          }
+          if (!hasBefore && hasAfter) {
+            forward.push(pushSet(childPath, afterItem[key]));
+            backward.push(pushDelete(childPath));
+            return;
+          }
+          if (hasBefore && hasAfter) {
+            walk(beforeItem[key], afterItem[key], childPath);
+          }
+        });
+        return;
+      }
+
+      forward.push(pushSet(path, afterItem));
+      backward.push(pushSet(path, beforeItem));
+    }
+
+    walk(beforeValue, afterValue, []);
+    if (!forward.length) return null;
+    return { forward, backward };
+  }
+
+  function resolveOpParent(target, path, createMissing) {
+    let node = target;
+    for (let i = 0; i < path.length; i += 1) {
+      const segment = path[i];
+      if (!node || (typeof node !== "object" && !Array.isArray(node))) return null;
+      if (Object.prototype.hasOwnProperty.call(node, segment)) {
+        node = node[segment];
+        continue;
+      }
+      if (!createMissing) return null;
+      const nextSegment = path[i + 1];
+      const placeholder = typeof nextSegment === "number" ? [] : {};
+      node[segment] = placeholder;
+      node = placeholder;
+    }
+    return node;
+  }
+
+  function applyOp(target, op) {
+    const path = Array.isArray(op?.path) ? op.path : [];
+    if (!path.length) {
+      if (op?.kind !== "set") return;
+      const nextRoot = cloneValue(op.value);
+      if (!isPlainObject(nextRoot)) return;
+      Object.keys(target).forEach((key) => {
+        delete target[key];
+      });
+      Object.entries(nextRoot).forEach(([key, value]) => {
+        target[key] = value;
+      });
+      return;
+    }
+
+    const parent = resolveOpParent(target, path.slice(0, -1), op?.kind === "set");
+    if (!parent || (typeof parent !== "object" && !Array.isArray(parent))) return;
+    const key = path[path.length - 1];
+    if (op?.kind === "set") {
+      parent[key] = cloneValue(op.value);
+      return;
+    }
+    if (Array.isArray(parent) && typeof key === "number") {
+      if (key >= 0 && key < parent.length) {
+        parent.splice(key, 1);
+      }
+      return;
+    }
+    delete parent[key];
+  }
+
+  function applyOps(target, operations) {
+    (operations || []).forEach((operation) => applyOp(target, operation));
+  }
+
+  function trimHistoryDiffs(store) {
+    if (!store) return;
+    while (store.undoStack.length > HISTORY_MAX_DIFFS_PER_SNAPSHOT) {
+      const dropped = store.undoStack.shift();
+      applyOps(store.baseSnapshot, dropped?.forward || []);
+    }
+  }
+
+  function recordHistoryDiff(targetState = state) {
+    const store = getActiveHistoryStore();
+    const current = toHistoryComparableState(targetState);
+    const previous = store.lastState || current;
+    const diff = buildForwardBackwardDiff(previous, current);
+    store.lastState = cloneValue(current);
+    if (!diff) return false;
+    store.undoStack.push(diff);
+    store.redoStack = [];
+    trimHistoryDiffs(store);
+    return true;
+  }
+
+  function canUndo() {
+    const store = getActiveHistoryStore();
+    return !!(store && store.undoStack.length);
+  }
+
+  function canRedo() {
+    const store = getActiveHistoryStore();
+    return !!(store && store.redoStack.length);
+  }
+
+  function applyUndo() {
+    const store = getActiveHistoryStore();
+    if (!store || !store.undoStack.length || !state) return false;
+    const diff = store.undoStack.pop();
+    if (!diff) return false;
+    historyApplying = true;
+    try {
+      applyOps(state, diff.backward);
+      store.redoStack.push(diff);
+      syncHistoryBaseline(state);
+    } finally {
+      historyApplying = false;
+    }
+    return true;
+  }
+
+  function applyRedo() {
+    const store = getActiveHistoryStore();
+    if (!store || !store.redoStack.length || !state) return false;
+    const diff = store.redoStack.pop();
+    if (!diff) return false;
+    historyApplying = true;
+    try {
+      applyOps(state, diff.forward);
+      store.undoStack.push(diff);
+      syncHistoryBaseline(state);
+    } finally {
+      historyApplying = false;
+    }
+    return true;
+  }
+
   function showDialog(message, options = {}) {
     if (dialogApi?.show) {
       dialogApi.show(message, options);
@@ -120,12 +353,141 @@
   let state;
   let currentRunId = "";
   let lastRunSummary = null;
+  let stateChangeFrameId = 0;
+  let pendingStateChangeOptions = null;
+  let stepStatusFlushTimer = 0;
+  const pendingStepStatuses = {};
+  let lastStepStatusRenderAt = 0;
+  const renderPerf = {
+    count: 0,
+    totalMs: 0,
+    lastMs: 0,
+    maxMs: 0,
+    lastAt: ""
+  };
+  window.__zizRenderPerf = renderPerf;
   const homeViewModel = {
     visible: String(bodyDataset.homeVisible || "false").toLowerCase() === "true",
     recentFiles: [],
     templates: [],
     refreshToken: 0,
   };
+
+  function mergeStateChangeOptions(base, incoming) {
+    const baseHistory = base ? base.history !== false : false;
+    const incomingHistory = incoming ? incoming.history !== false : true;
+    return {
+      history: baseHistory || incomingHistory
+    };
+  }
+
+  function runOnStateChanged(options = {}) {
+    const startedAt = getPerfNow();
+    try {
+      if (!state) return;
+      state.appMode = normalizeAppMode(state.appMode);
+      ensureBridgeState(state);
+      if (typeof state.flowName !== "string" || !state.flowName.trim()) {
+        state.flowName = getModeMeta(state.appMode).defaultFlowName;
+      }
+      const nodeIds = new Set((Array.isArray(state.nodes) ? state.nodes : []).map((node) => String(node?.id || "")));
+      const selectedNodeId = String(state.selectedNodeId || "");
+      if (!selectedNodeId || !nodeIds.has(selectedNodeId)) {
+        state.selectedNodeId = state.nodes?.[0]?.id || null;
+      }
+      const pendingMergeSourceId = String(state.pendingMergeSourceId || "");
+      if (pendingMergeSourceId && !nodeIds.has(pendingMergeSourceId)) {
+        state.pendingMergeSourceId = null;
+      }
+      const shouldRecordHistory = options.history !== false;
+      if (shouldRecordHistory && !historyApplying) {
+        recordHistoryDiff(state);
+      } else {
+        syncHistoryBaseline(state);
+      }
+      syncHeaderForMode();
+      if (bodyRoot) {
+        bodyRoot.dataset.homeVisible = homeViewModel.visible ? "true" : "false";
+      }
+      if (detailPanel) {
+        detailPanel.hidden = !!homeViewModel.visible;
+      }
+      if (mainRoot) {
+        mainRoot.style.paddingBottom = homeViewModel.visible ? "0px" : (detailPanel ? `${(detailPanel.getBoundingClientRect().height || 300) + 20}px` : "0px");
+      }
+      renderApp({
+        flowRoot,
+        detailRoot,
+        state,
+        config: buildConfigForMode(state.appMode),
+        onStateChanged,
+        homeViewModel,
+        onHomeAction: handleHomeAction
+      });
+      applyFlowViewportHeight();
+      schedulePersistModeStates();
+    } catch (err) {
+      showFatal("???????????", err);
+    } finally {
+      const elapsed = Math.max(0, Number(getPerfNow() - startedAt) || 0);
+      renderPerf.count += 1;
+      renderPerf.totalMs += elapsed;
+      renderPerf.lastMs = elapsed;
+      renderPerf.maxMs = Math.max(renderPerf.maxMs, elapsed);
+      renderPerf.lastAt = new Date().toISOString();
+      renderPerf.avgMs = renderPerf.count > 0 ? (renderPerf.totalMs / renderPerf.count) : 0;
+    }
+  }
+
+  function onStateChanged(options = {}) {
+    pendingStateChangeOptions = mergeStateChangeOptions(pendingStateChangeOptions, options);
+    if (stateChangeFrameId) return;
+    stateChangeFrameId = window.requestAnimationFrame(() => {
+      stateChangeFrameId = 0;
+      const nextOptions = pendingStateChangeOptions || { history: true };
+      pendingStateChangeOptions = null;
+      runOnStateChanged(nextOptions);
+    });
+  }
+
+  function flushStepStatusUpdates(options = {}) {
+    if (stepStatusFlushTimer) {
+      window.clearTimeout(stepStatusFlushTimer);
+      stepStatusFlushTimer = 0;
+    }
+    const entries = Object.entries(pendingStepStatuses);
+    if (!entries.length) return false;
+    if (!state.stepStatuses || typeof state.stepStatuses !== "object") {
+      state.stepStatuses = {};
+    }
+    entries.forEach(([stepId, status]) => {
+      state.stepStatuses[stepId] = status;
+      delete pendingStepStatuses[stepId];
+    });
+    const now = Date.now();
+    const needsFullRender = !!options.forceRender || (now - lastStepStatusRenderAt >= 800);
+    if (needsFullRender) {
+      lastStepStatusRenderAt = now;
+      onStateChanged({ history: false });
+    } else {
+      const uiNode = ((window.zizPackages || {}).ui || {}).node || window.uiNode || {};
+      if (typeof uiNode.refreshFlowStatus === "function") {
+        uiNode.refreshFlowStatus({ root: flowRoot, state });
+      }
+    }
+    return true;
+  }
+
+  function queueStepStatus(stepId, status) {
+    const key = String(stepId || "").trim();
+    if (!key) return;
+    pendingStepStatuses[key] = String(status || "");
+    if (stepStatusFlushTimer) return;
+    stepStatusFlushTimer = window.setTimeout(() => {
+      stepStatusFlushTimer = 0;
+      flushStepStatusUpdates();
+    }, 120);
+  }
 
   function normalizeAppMode(mode) {
     return APP_MODES[mode] ? mode : DEFAULT_APP_MODE;
@@ -328,9 +690,9 @@
 
   function buildPageUrlForMode(mode) {
     const normalized = normalizeAppMode(mode);
-    if (normalized === "workflow" || normalized === "dataflow") {
-      const workflowUrl = bodyDataset.workflowUrl || "./workflow.html";
-      const target = new URL(workflowUrl, window.location.href);
+    if (normalized === "dataflow" || normalized === "dataflow") {
+      const dataflowUrl = bodyDataset.dataflowUrl || "./dataflow.html";
+      const target = new URL(dataflowUrl, window.location.href);
       if (normalized === "dataflow") {
         target.searchParams.set("mode", "dataflow");
       } else {
@@ -367,6 +729,7 @@
     state = modeStates[activeMode] || state;
     state.appMode = activeMode;
     modeStates[activeMode] = state;
+    resetHistoryStoreForMode(activeMode, state);
   } catch (err) {
     showFatal("??????????????", err);
     return;
@@ -663,25 +1026,36 @@
     ensureBridgeState(state);
     bodyRoot.dataset.appMode = meta.id;
     bodyRoot.dataset.nativeFrame = bridgeApi?.available?.() ? "false" : "true";
-    if (flowNameInput && document.activeElement !== flowNameInput) {
-      flowNameInput.value = state.flowName || meta.defaultFlowName;
-    }
-    if (flowNameInput) {
-      flowNameInput.placeholder = meta.defaultFlowName;
-      flowNameInput.setAttribute("aria-label", `${meta.label}名`);
-    }
-    if (btnSave) {
-      btnSave.setAttribute("title", `${meta.label}を保存`);
-      btnSave.setAttribute("aria-label", `${meta.label}を保存`);
-    }
-    if (btnRun) {
-      btnRun.setAttribute("title", `${meta.label}を実行`);
-      btnRun.setAttribute("aria-label", `${meta.label}を実行`);
-    }
-    if (btnReset) {
-      btnReset.setAttribute("title", `${meta.label}をインポート`);
-      btnReset.setAttribute("aria-label", `${meta.label}をインポート`);
-    }
+    const undoEnabled = canUndo();
+    const redoEnabled = canRedo();
+    shellApi.updateHeader?.({
+      value: state.flowName || meta.defaultFlowName,
+      placeholder: meta.defaultFlowName,
+      ariaLabel: `${meta.label}名`,
+      readOnly: false,
+      undo: {
+        title: "戻る",
+        ariaLabel: "戻る",
+        disabled: !undoEnabled,
+      },
+      redo: {
+        title: "進む",
+        ariaLabel: "進む",
+        disabled: !redoEnabled,
+      },
+      save: {
+        title: `${meta.label}を保存`,
+        ariaLabel: `${meta.label}を保存`,
+      },
+      run: {
+        title: `${meta.label}を実行`,
+        ariaLabel: `${meta.label}を実行`,
+      },
+      reset: {
+        title: `${meta.label}をインポート`,
+        ariaLabel: `${meta.label}をインポート`,
+      },
+    });
     if (importInput) {
       importInput.accept = ".zizw,.zizd,.zizq";
     }
@@ -695,13 +1069,13 @@
       extension: meta.fileExtension || ".ziz"
     };
 
-    if (meta.id === "workflow") {
-      return {
-        ...base,
-        execution_model: "json",
-        category: "automation"
-      };
-    }
+    // if (meta.id === "dataflow") {
+    //   return {
+    //     ...base,
+    //     execution_model: "json",
+    //     category: "automation"
+    //   };
+    // }
 
     if (meta.id === "dataflow") {
       return {
@@ -726,40 +1100,6 @@
     return {
       start: serializeStartParameters(startParameters)
     };
-  }
-
-  function onStateChanged() {
-    try {
-      if (!state) return;
-      state.appMode = normalizeAppMode(state.appMode);
-      ensureBridgeState(state);
-      if (typeof state.flowName !== "string" || !state.flowName.trim()) {
-        state.flowName = getModeMeta(state.appMode).defaultFlowName;
-      }
-      syncHeaderForMode();
-      if (bodyRoot) {
-        bodyRoot.dataset.homeVisible = homeViewModel.visible ? "true" : "false";
-      }
-      if (detailPanel) {
-        detailPanel.hidden = !!homeViewModel.visible;
-      }
-      if (mainRoot) {
-        mainRoot.style.paddingBottom = homeViewModel.visible ? "0px" : (detailPanel ? `${(detailPanel.getBoundingClientRect().height || 300) + 20}px` : "0px");
-      }
-      renderApp({
-        flowRoot,
-        detailRoot,
-        state,
-        config: buildConfigForMode(state.appMode),
-        onStateChanged,
-        homeViewModel,
-        onHomeAction: handleHomeAction
-      });
-      applyFlowViewportHeight();
-      schedulePersistModeStates();
-    } catch (err) {
-      showFatal("???????????", err);
-    }
   }
 
   function invalidateHomeRefresh() {
@@ -921,13 +1261,14 @@
     importedState.hiddenBindings = (options.hiddenBindings && typeof options.hiddenBindings === "object") ? options.hiddenBindings : {};
     importedState.fileName = String(options.fileName || "");
     importedState.stepStatuses = {};
-      modeStates[importedMode] = importedState;
-      activeMode = importedMode;
-      state = importedState;
-      hideHomeScreen();
-      activateSidebarItem(importedMode);
-      onStateChanged();
-    }
+    modeStates[importedMode] = importedState;
+    activeMode = importedMode;
+    state = importedState;
+    resetHistoryStoreForMode(importedMode, importedState);
+    hideHomeScreen();
+    shellApi.setActiveSidebar?.(importedMode);
+    onStateChanged({ history: false });
+  }
 
   function applyLoadedFlowPayload(payload) {
     if (!payload || payload.selected === false) return false;
@@ -1001,9 +1342,9 @@
   async function handleHomeAction(action) {
     const type = String(action?.type || "");
     if (type === "dismiss-home") {
-      if (!setActiveMode("workflow")) {
+      if (!setActiveMode("dataflow")) {
         hideHomeScreen();
-        onStateChanged();
+        onStateChanged({ history: false });
       }
       return;
     }
@@ -1032,7 +1373,7 @@
     const token = ++homeViewModel.refreshToken;
     await refreshHomeLists();
     if (homeViewModel.visible && token === homeViewModel.refreshToken) {
-      onStateChanged();
+      onStateChanged({ history: false });
     }
     await logUiEvent("home.show", {}, { source: "navigation", elapsedMs: getPerfNow() - startedAt });
   }
@@ -1129,13 +1470,6 @@
     const targetNode = targetNodeId
       ? state.nodes.find((node) => String(node?.id || "") === targetNodeId) || null
       : null;
-    if (targetNode) {
-      const inputRef = String(targetNode?.form?.input_data || "").trim();
-      if (inputRef && !String(window.__zizCurrentRunId || "").trim()) {
-        showDialog("入力データを使うステップを単体実行するには、先にフロー全体を一度実行してください。", { kind: "info", title: "ステップ実行" });
-        return null;
-      }
-    }
     const requiredErrors = targetNode
       ? validateRequiredFieldsForNode(targetNode, activeConfig)
       : validateRequiredFields(state.nodes, activeConfig);
@@ -1157,11 +1491,9 @@
     };
     if (targetNode) {
       request.step_id = String(targetNode.stepName || "");
-      request.source_run_id = String(window.__zizCurrentRunId || "");
     }
     const payload = await bridgeApi.call("flow.run", request);
     currentRunId = String(payload?.run_id || "");
-    window.__zizCurrentRunId = currentRunId;
     console.info(`[webview-run] accepted source=${source} run_id=${currentRunId}`);
     await logUiEvent("flow.run", {
       source,
@@ -1190,24 +1522,22 @@
     logBridgeEvent(message);
     const payload = message.payload || {};
     if (message.type === "run.stepStatus") {
-      if (!state.stepStatuses || typeof state.stepStatuses !== "object") {
-        state.stepStatuses = {};
-      }
-      state.stepStatuses[String(payload.step_id || "")] = String(payload.status || "");
-      onStateChanged();
+      queueStepStatus(payload.step_id, payload.status);
       return;
     }
     if (message.type === "run.completed") {
+      flushStepStatusUpdates();
       const summary = await fetchRunSummary(payload.run_id);
       if (summary) {
         console.info(`[run:${payload.run_id || "-"}] 完了: ${summary.flow_name || ""}`);
       }
-      onStateChanged();
+      onStateChanged({ history: false });
       return;
     }
     if (message.type === "run.failed") {
+      flushStepStatusUpdates();
       await fetchRunSummary(payload.run_id);
-      onStateChanged();
+      onStateChanged({ history: false });
     }
   }
 
@@ -1245,41 +1575,6 @@
     flowRoot.style.height = `${Math.max(180, available)}px`;
   }
 
-  function isSidebarExpanded() {
-    return bodyRoot.classList.contains(SIDEBAR_EXPANDED_CLASS);
-  }
-
-  function applySidebarState(expanded) {
-    bodyRoot.classList.toggle(SIDEBAR_EXPANDED_CLASS, Boolean(expanded));
-    if (sidebarToggle) {
-      sidebarToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-    }
-
-    window.requestAnimationFrame(() => {
-      const current = detailPanel?.getBoundingClientRect().height || 300;
-      applyDetailPanelHeight(current);
-      applyFlowViewportHeight();
-    });
-  }
-
-  function activateSidebarItem(targetMode = state?.appMode) {
-    sidebarModeItems.forEach((item) => {
-      const itemMode = String(item.dataset.appMode || "");
-      const current = itemMode === targetMode;
-      item.classList.toggle("is-current", current);
-      if (current) {
-        item.setAttribute("aria-current", "page");
-      } else {
-        item.removeAttribute("aria-current");
-      }
-    });
-
-    sidebarActionItems.forEach((item) => {
-      item.classList.remove("is-current");
-      item.removeAttribute("aria-current");
-    });
-  }
-
   function setActiveMode(nextMode) {
     const normalized = normalizeAppMode(nextMode);
     if (!pageSupportsMode(normalized)) {
@@ -1294,51 +1589,67 @@
     state = modeStates[normalized] || createStateForMode(normalized);
     state.appMode = normalized;
     modeStates[normalized] = state;
-    activateSidebarItem(normalized);
-    onStateChanged();
+    if (!historyByMode[normalized]) {
+      resetHistoryStoreForMode(normalized, state);
+    } else {
+      syncHistoryBaseline(state);
+    }
+    shellApi.setActiveSidebar?.(normalized);
+    onStateChanged({ history: false });
+    return true;
+  }
+
+  function handleUndoAction() {
+    if (!applyUndo()) return false;
+    onStateChanged({ history: false });
+    return true;
+  }
+
+  function handleRedoAction() {
+    if (!applyRedo()) return false;
+    onStateChanged({ history: false });
     return true;
   }
 
   function setupSidebar() {
-    if (sidebarToggle) {
-      sidebarToggle.addEventListener("click", () => {
+    shellApi.bindSidebar?.({
+      onToggle: () => {
         showHomeScreen().catch((error) => {
           console.error("failed to show home screen", error);
           showHomeFlag();
-          onStateChanged();
+          onStateChanged({ history: false });
         });
-      });
-    }
-
-    sidebarModeItems.forEach((item) => {
-      item.addEventListener("click", () => {
-        const navUrl = String(item.dataset.navUrl || "").trim();
-        const itemMode = String(item.dataset.appMode || "");
+      },
+      onModeItem: ({ mode: itemMode, navUrl, expanded }) => {
         if (navUrl) {
-          navigateToUrl(toAbsolutePageUrl(navUrl));
+          navigateToUrl(navUrl);
         } else if (APP_MODES[itemMode]) {
           setActiveMode(itemMode);
         }
-        if (!isSidebarExpanded()) {
-          applySidebarState(true);
+        if (!expanded) {
+          shellApi.setSidebarExpanded?.(true, () => {
+            const current = detailPanel?.getBoundingClientRect().height || 300;
+            applyDetailPanelHeight(current);
+            applyFlowViewportHeight();
+          });
         }
-      });
-    });
-
-    sidebarActionItems.forEach((item) => {
-      item.addEventListener("click", () => {
-        const navUrl = String(item.dataset.navUrl || "").trim();
+      },
+      onActionItem: ({ item, navUrl, expanded }) => {
         if (navUrl) {
-          navigateToUrl(toAbsolutePageUrl(navUrl));
+          navigateToUrl(navUrl);
           return;
         }
         item.classList.remove("is-current");
         item.removeAttribute("aria-current");
         item.blur?.();
-        if (!isSidebarExpanded()) {
-          applySidebarState(true);
+        if (!expanded) {
+          shellApi.setSidebarExpanded?.(true, () => {
+            const current = detailPanel?.getBoundingClientRect().height || 300;
+            applyDetailPanelHeight(current);
+            applyFlowViewportHeight();
+          });
         }
-      });
+      },
     });
   }
 
@@ -1402,25 +1713,28 @@
 
   setupSidebar();
   restorePendingImportedFlow();
-  activateSidebarItem(activeMode);
+  shellApi.setActiveSidebar?.(activeMode);
   setupDetailPanelResizer();
   applyFlowViewportHeight();
   window.addEventListener("beforeunload", persistModeStates);
 
-  if (flowNameInput) {
-    flowNameInput.addEventListener("input", (e) => {
+  shellApi.bindHeader?.({
+    onUndo: () => {
+      handleUndoAction();
+    },
+    onRedo: () => {
+      handleRedoAction();
+    },
+    onTitleInput: ({ value }) => {
       if (!state) return;
-      state.flowName = String(e.target.value || "");
-    });
-    flowNameInput.addEventListener("change", (e) => {
+      state.flowName = String(value || "");
+    },
+    onTitleChange: ({ value }) => {
       if (!state) return;
-      state.flowName = String(e.target.value || "").trim() || getModeMeta(state.appMode).defaultFlowName;
+      state.flowName = String(value || "").trim() || getModeMeta(state.appMode).defaultFlowName;
       syncHeaderForMode();
-    });
-  }
-
-  if (btnSave) {
-    btnSave.addEventListener("click", async () => {
+    },
+    onSave: async () => {
       console.info("[save] click", {
         appMode: state?.appMode || "",
         bridge: !!bridgeApi?.available?.(),
@@ -1451,7 +1765,7 @@
         const payload = {
           metadata: buildMetadataForMode(state.appMode, flowName),
           variables,
-          steps: buildExportSteps(state.nodes, activeConfig),
+          steps: buildExportSteps(state.nodes, buildConfigForMode(state.appMode)),
           flows: buildFlows(state.nodes)
         };
 
@@ -1462,17 +1776,8 @@
         console.error("[save] failed", err);
         showDialog(`保存に失敗しました。\n${err?.message || err}`, { kind: "error", title: "保存エラー" });
       }
-    });
-  }
-
-  if (btnReset) {
-    importInput = document.createElement("input");
-    importInput.type = "file";
-    importInput.accept = ".zizw,.zizd,.zizq";
-    importInput.style.display = "none";
-    document.body.appendChild(importInput);
-
-    btnReset.addEventListener("click", async () => {
+    },
+    onReset: async () => {
       if (bridgeApi?.available?.()) {
         try {
           await handleBridgeLoad();
@@ -1481,9 +1786,42 @@
         }
         return;
       }
+      if (!importInput) return;
       importInput.value = "";
       importInput.click();
-    });
+    },
+    onRun: async () => {
+      try {
+        await handleBridgeRun("header");
+      } catch (err) {
+        showDialog(`実行に失敗しました。\n${err?.message || err}`, { kind: "error", title: "実行エラー" });
+      }
+    },
+    onDiagnostics: async () => {
+      try {
+        const status = await fetchBridgeStatus();
+        showDialog(formatBridgeDiagnostics(status), { kind: "info", title: "診断", format: "kv" });
+      } catch (err) {
+        showDialog(`診断情報の取得に失敗しました。\n${err?.message || err}`, { kind: "error", title: "診断エラー" });
+      }
+    },
+    onWindowControl: ({ action }) => {
+      void handleWindowControl(action);
+    },
+    onHeaderDrag: ({ event, isInteractiveTarget }) => {
+      if (event.button !== 0) return;
+      if (!bridgeApi?.available?.()) return;
+      if (isInteractiveTarget) return;
+      void handleWindowControl("drag");
+    },
+  });
+
+  if (btnReset) {
+    importInput = document.createElement("input");
+    importInput.type = "file";
+    importInput.accept = ".zizw,.zizd,.zizq";
+    importInput.style.display = "none";
+    document.body.appendChild(importInput);
 
     importInput.addEventListener("change", async () => {
       const file = importInput.files && importInput.files[0];
@@ -1503,27 +1841,6 @@
     });
   }
 
-  if (btnRun) {
-    btnRun.addEventListener("click", async () => {
-      try {
-        await handleBridgeRun("header");
-      } catch (err) {
-        showDialog(`実行に失敗しました。\n${err?.message || err}`, { kind: "error", title: "実行エラー" });
-      }
-    });
-  }
-
-  if (btnDiagnostics) {
-    btnDiagnostics.addEventListener("click", async () => {
-      try {
-        const status = await fetchBridgeStatus();
-        showDialog(formatBridgeDiagnostics(status), { kind: "info", title: "診断", format: "kv" });
-      } catch (err) {
-        showDialog(`診断情報の取得に失敗しました。\n${err?.message || err}`, { kind: "error", title: "診断エラー" });
-      }
-    });
-  }
-
   async function handleWindowControl(action) {
     if (!bridgeApi?.available?.()) return;
     try {
@@ -1531,33 +1848,6 @@
     } catch (err) {
       console.error("[window-control] failed", action, err);
     }
-  }
-
-  if (btnWindowMinimize) {
-    btnWindowMinimize.addEventListener("click", () => {
-      void handleWindowControl("minimize");
-    });
-  }
-
-  if (btnWindowMaximize) {
-    btnWindowMaximize.addEventListener("click", () => {
-      void handleWindowControl("maximize");
-    });
-  }
-
-  if (btnWindowClose) {
-    btnWindowClose.addEventListener("click", () => {
-      void handleWindowControl("close");
-    });
-  }
-
-  if (headerInner) {
-    headerInner.addEventListener("mousedown", (event) => {
-      if (event.button !== 0) return;
-      if (!bridgeApi?.available?.()) return;
-      if (event.target.closest("button, input, select, textarea, a, label")) return;
-      void handleWindowControl("drag");
-    });
   }
 
   window.addEventListener("ziz:evt", (event) => {
@@ -1576,7 +1866,7 @@
 
   window.addEventListener("ziz:bridge-ready", () => {
     logUiEvent("bridge.ready", {}, { source: "startup" });
-    refreshHomeLists().then(() => onStateChanged()).catch(() => onStateChanged());
+    refreshHomeLists().then(() => onStateChanged({ history: false })).catch(() => onStateChanged({ history: false }));
   });
 
   document.addEventListener("click", (event) => {
@@ -1606,8 +1896,8 @@
   });
 
   if (bridgeApi?.available?.()) {
-    refreshHomeLists().then(() => onStateChanged()).catch(() => onStateChanged());
+    refreshHomeLists().then(() => onStateChanged({ history: false })).catch(() => onStateChanged({ history: false }));
   }
 
-  onStateChanged();
+  onStateChanged({ history: false });
 })();

@@ -619,7 +619,7 @@
     { id: "Load", label: "出力" },
     { id: "Transform", label: "加工" }
   ];
-  const NOIMAGE_SRC = "./img/noimage.png";
+  const NOIMAGE_SRC = "./img/noimage.jpg";
   const CONNECTOR_ICON_SRC = {
     DataflowConnector: "./icons/dataflow.svg",
     DummyConnector: "./icons/chess_pawn.svg",
@@ -666,7 +666,7 @@
 
   function getConnectorImageSrc(connectorId) {
     if (!connectorId) return NOIMAGE_SRC;
-    return CONNECTOR_ICON_SRC[connectorId] || `./img/${connectorId}.png`;
+    return CONNECTOR_ICON_SRC[connectorId] || `./img/${connectorId}.jpg`;
   }
 
   function getActionTypeItems(config, connectorId, actionType) {

@@ -8,7 +8,8 @@
     normalizeSteps: shared.normalizeSteps,
     renderFlowChart: canvas.renderFlowChart,
     renderNodeDetail: detail.renderNodeDetail,
-    destroyFlowCanvas: canvas.destroyFlowCanvas
+    destroyFlowCanvas: canvas.destroyFlowCanvas,
+    refreshFlowStatus: canvas.refreshFlowStatus
   };
   window.uiNode = uiNode;
   const packagesOut = window.zizPackages = window.zizPackages || {};

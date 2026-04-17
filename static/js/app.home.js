@@ -4,6 +4,7 @@
   const uiPkg = packages.ui || {};
   const bridgeApi = corePkg.bridge || null;
   const dialogApi = corePkg.dialog || null;
+  const shellApi = window.zizShell || {};
   const renderer = uiPkg.renderer || {};
   const renderApp = renderer.renderApp;
   const STORAGE_KEY_PENDING_FLOW = "ziz.pendingFlow.v1";
@@ -12,17 +13,9 @@
   const detailRoot = document.getElementById("nodeDetail");
   const bodyRoot = document.body;
   const bodyDataset = bodyRoot?.dataset || {};
-  const sidebarToggle = document.getElementById("sidebarToggle");
-  const navItems = Array.from(document.querySelectorAll("[data-nav-url]"));
   const btnReset = document.getElementById("btnReset");
   const btnRun = document.getElementById("btnRun");
   const btnSave = document.getElementById("btnSave");
-  const btnDiagnostics = document.getElementById("btnDiagnostics");
-  const btnWindowMinimize = document.getElementById("btnWindowMinimize");
-  const btnWindowMaximize = document.getElementById("btnWindowMaximize");
-  const btnWindowClose = document.getElementById("btnWindowClose");
-  const headerInner = document.querySelector(".header-inner");
-  const flowNameInput = document.getElementById("flowName");
 
   const homeViewModel = {
     visible: true,
@@ -32,7 +25,7 @@
   };
 
   const homeState = {
-    appMode: "workflow",
+    appMode: "dataflow",
   };
 
   function showDialog(message, options = {}) {
@@ -74,13 +67,13 @@
     if (normalized === "query-builder") {
       return toAbsolutePageUrl(bodyDataset.queryBuilderUrl || "./query-builder.html");
     }
-    const workflowUrl = new URL(bodyDataset.workflowUrl || "./workflow.html", window.location.href);
+    const dataflowUrl = new URL(bodyDataset.dataflowUrl || "./dataflow.html", window.location.href);
     if (normalized === "dataflow") {
-      workflowUrl.searchParams.set("mode", "dataflow");
+      dataflowUrl.searchParams.set("mode", "dataflow");
     } else {
-      workflowUrl.searchParams.delete("mode");
+      dataflowUrl.searchParams.delete("mode");
     }
-    return workflowUrl.toString();
+    return dataflowUrl.toString();
   }
 
   function navigateToUrl(url) {
@@ -137,7 +130,7 @@
 
   function openLoadedFlow(payload) {
     if (!payload || payload.selected === false) return;
-    const mode = String(payload.mode || "workflow").trim() || "workflow";
+    const mode = String(payload.mode || "dataflow").trim() || "dataflow";
     storePendingImportedFlow({
       mode,
       file_name: String(payload.file_name || ""),
@@ -150,7 +143,7 @@
   async function handleHomeAction(action) {
     const type = String(action?.type || "");
     if (type === "dismiss-home") {
-      navigateToUrl(buildPageUrlForMode("workflow"));
+      navigateToUrl(buildPageUrlForMode("dataflow"));
       return;
     }
     if (type === "open-flow") {
@@ -211,11 +204,15 @@
     return;
   }
 
-  if (flowNameInput) {
-    flowNameInput.value = "トップ画面";
-    flowNameInput.readOnly = true;
-    flowNameInput.setAttribute("aria-label", "トップ画面");
-  }
+  shellApi.updateHeader?.({
+    value: "トップ画面",
+    readOnly: true,
+    ariaLabel: "トップ画面",
+    undo: { disabled: true },
+    redo: { disabled: true },
+    run: { disabled: true },
+    save: { disabled: true },
+  });
 
   [btnRun, btnSave].forEach((button) => {
     if (!button) return;
@@ -224,67 +221,46 @@
     button.classList.add("is-disabled");
   });
 
-  if (sidebarToggle) {
-    sidebarToggle.addEventListener("click", () => {
+  shellApi.bindSidebar?.({
+    onToggle: () => {
       refreshHomeLists().catch((error) => {
         console.error("failed to refresh home", error);
       });
-    });
-  }
-
-  navItems.forEach((item) => {
-    item.addEventListener("click", () => {
-      const navUrl = String(item.dataset.navUrl || "").trim();
+    },
+    onModeItem: ({ navUrl }) => {
       if (!navUrl) return;
-      navigateToUrl(toAbsolutePageUrl(navUrl));
-    });
+      navigateToUrl(navUrl);
+    },
+    onActionItem: ({ navUrl }) => {
+      if (!navUrl) return;
+      navigateToUrl(navUrl);
+    },
   });
 
-  if (btnReset) {
-    btnReset.addEventListener("click", () => {
+  shellApi.bindHeader?.({
+    onReset: () => {
       handleBridgeLoad().catch((error) => {
         showDialog(`インポートに失敗しました。\n${error?.message || error}`, { kind: "error", title: "インポートエラー" });
       });
-    });
-  }
-
-  if (btnDiagnostics) {
-    btnDiagnostics.addEventListener("click", async () => {
+    },
+    onDiagnostics: async () => {
       try {
         const status = await fetchBridgeStatus();
         showDialog(formatBridgeDiagnostics(status), { kind: "info", title: "診断", format: "kv" });
       } catch (error) {
         showDialog(`診断情報の取得に失敗しました。\n${error?.message || error}`, { kind: "error", title: "診断エラー" });
       }
-    });
-  }
-
-  if (btnWindowMinimize) {
-    btnWindowMinimize.addEventListener("click", () => {
-      void handleWindowControl("minimize");
-    });
-  }
-
-  if (btnWindowMaximize) {
-    btnWindowMaximize.addEventListener("click", () => {
-      void handleWindowControl("maximize");
-    });
-  }
-
-  if (btnWindowClose) {
-    btnWindowClose.addEventListener("click", () => {
-      void handleWindowControl("close");
-    });
-  }
-
-  if (headerInner) {
-    headerInner.addEventListener("mousedown", (event) => {
+    },
+    onWindowControl: ({ action }) => {
+      void handleWindowControl(action);
+    },
+    onHeaderDrag: ({ event, isInteractiveTarget }) => {
       if (event.button !== 0) return;
       if (!bridgeApi?.available?.()) return;
-      if (event.target.closest("button, input, select, textarea, a, label")) return;
+      if (isInteractiveTarget) return;
       void handleWindowControl("drag");
-    });
-  }
+    },
+  });
 
   window.addEventListener("ziz:bridge-ready", () => {
     refreshHomeLists().catch((error) => {

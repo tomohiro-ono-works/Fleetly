@@ -3,16 +3,9 @@
   const corePkg = packages.core || {};
   const bridgeApi = corePkg.bridge || null;
   const dialogApi = corePkg.dialog || null;
+  const shellApi = window.zizShell || {};
   const bodyRoot = document.body;
   const bodyDataset = bodyRoot?.dataset || {};
-  const sidebarToggle = document.getElementById("sidebarToggle");
-  const navItems = Array.from(document.querySelectorAll("[data-nav-url]"));
-  const btnDiagnostics = document.getElementById("btnDiagnostics");
-  const btnWindowMinimize = document.getElementById("btnWindowMinimize");
-  const btnWindowMaximize = document.getElementById("btnWindowMaximize");
-  const btnWindowClose = document.getElementById("btnWindowClose");
-  const headerInner = document.querySelector(".header-inner");
-  const flowNameInput = document.getElementById("flowName");
 
   function showDialog(message, options = {}) {
     if (dialogApi?.show) {
@@ -62,62 +55,46 @@
     ].join("\n");
   }
 
-  if (flowNameInput) {
-    flowNameInput.value = String(bodyDataset.pageTitle || flowNameInput.value || "");
-    flowNameInput.readOnly = true;
-  }
+  shellApi.updateHeader?.({
+    value: String(bodyDataset.pageTitle || bodyDataset.shellTitle || ""),
+    readOnly: true,
+    undo: { disabled: true },
+    redo: { disabled: true },
+  });
 
-  if (sidebarToggle) {
-    sidebarToggle.addEventListener("click", () => {
+  shellApi.bindSidebar?.({
+    onToggle: () => {
       const homeUrl = String(bodyDataset.homeUrl || "./home.html").trim();
       if (!homeUrl) return;
       window.location.href = toAbsolutePageUrl(homeUrl);
-    });
-  }
-
-  navItems.forEach((item) => {
-    item.addEventListener("click", () => {
-      const navUrl = String(item.dataset.navUrl || "").trim();
+    },
+    onModeItem: ({ navUrl }) => {
       if (!navUrl) return;
-      window.location.href = toAbsolutePageUrl(navUrl);
-    });
+      window.location.href = navUrl;
+    },
+    onActionItem: ({ navUrl }) => {
+      if (!navUrl) return;
+      window.location.href = navUrl;
+    },
   });
 
-  if (btnDiagnostics) {
-    btnDiagnostics.addEventListener("click", async () => {
+  shellApi.bindHeader?.({
+    onDiagnostics: async () => {
       try {
         const status = await fetchBridgeStatus();
         showDialog(formatBridgeDiagnostics(status), { kind: "info", title: "診断", format: "kv" });
       } catch (error) {
         showDialog(`診断情報の取得に失敗しました。\n${error?.message || error}`, { kind: "error", title: "診断エラー" });
       }
-    });
-  }
-
-  if (btnWindowMinimize) {
-    btnWindowMinimize.addEventListener("click", () => {
-      void handleWindowControl("minimize");
-    });
-  }
-
-  if (btnWindowMaximize) {
-    btnWindowMaximize.addEventListener("click", () => {
-      void handleWindowControl("maximize");
-    });
-  }
-
-  if (btnWindowClose) {
-    btnWindowClose.addEventListener("click", () => {
-      void handleWindowControl("close");
-    });
-  }
-
-  if (headerInner) {
-    headerInner.addEventListener("mousedown", (event) => {
+    },
+    onWindowControl: ({ action }) => {
+      void handleWindowControl(action);
+    },
+    onHeaderDrag: ({ event, isInteractiveTarget }) => {
       if (event.button !== 0) return;
       if (!bridgeApi?.available?.()) return;
-      if (event.target.closest("button, input, select, textarea, a, label")) return;
+      if (isInteractiveTarget) return;
       void handleWindowControl("drag");
-    });
-  }
+    },
+  });
 })();

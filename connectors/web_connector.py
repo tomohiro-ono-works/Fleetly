@@ -19,12 +19,7 @@ class WebConnector(BaseConnector):
 
         target = self._normalize_optional_text(params.get("url"))
         if not target:
-            return self._build_result_dataframe(
-                action=action,
-                target="",
-                status="error",
-                message="url は必須です。",
-            )
+            raise ValueError("url は必須です。")
 
         try:
             result = self.open_chrome_page(target)
@@ -35,12 +30,7 @@ class WebConnector(BaseConnector):
                 message=result["message"],
             )
         except Exception as error:
-            return self._build_result_dataframe(
-                action=action,
-                target=str(target),
-                status="error",
-                message=str(error),
-            )
+            raise RuntimeError(str(error)) from error
 
     @staticmethod
     def _normalize_optional_text(value: Any) -> Optional[str]:

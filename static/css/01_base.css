@@ -21,10 +21,6 @@ body {
   width: 100%;
 }
 
-body.sidebar-expanded {
-  --sidebar-width: 200px;
-}
-
 .app-shell {
   min-height: 100vh;
   display: grid;
@@ -50,8 +46,27 @@ button {
   background: var(--surface-page);
   color: var(--text-primary);
   cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
 }
 button:hover { background: var(--surface-hover); }
+
+[role="button"] {
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.header-action-btn {
+  min-width: 36px;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--surface-base);
+  border: 1px solid var(--border-default);
+  color: var(--text-primary);
+  padding: 0;
+}
 
 button.primary {
   background: var(--surface-strong);

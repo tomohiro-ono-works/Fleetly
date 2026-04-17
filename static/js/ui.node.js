@@ -9,8 +9,23 @@
       isReady: () => typeof ((uiPkg.nodeShared || window.uiNodeShared || {}).normalizeSteps) === "function"
     },
     {
+      key: "canvas-layout",
+      src: "./js/ui.node.canvas.layout.js?v=20260413-1",
+      isReady: () => typeof ((uiPkg.nodeCanvasParts || window.uiNodeCanvasParts || {}).buildFlowModel) === "function"
+    },
+    {
+      key: "canvas-draw",
+      src: "./js/ui.node.canvas.draw.js?v=20260413-1",
+      isReady: () => typeof ((uiPkg.nodeCanvasParts || window.uiNodeCanvasParts || {}).drawFlowCanvas) === "function"
+    },
+    {
+      key: "canvas-hit",
+      src: "./js/ui.node.canvas.hit.js?v=20260413-1",
+      isReady: () => typeof ((uiPkg.nodeCanvasParts || window.uiNodeCanvasParts || {}).hitControl) === "function"
+    },
+    {
       key: "canvas",
-      src: "./js/ui.node.canvas.js?v=20260411-1",
+      src: "./js/ui.node.canvas.js?v=20260413-1",
       isReady: () => typeof ((uiPkg.nodeCanvas || window.uiNodeCanvas || {}).renderFlowChart) === "function"
     },
     {

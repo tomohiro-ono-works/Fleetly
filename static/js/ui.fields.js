@@ -171,6 +171,42 @@
     return { input: select, wrapper: select };
   }
 
+  async function resolveSchemaTextFromInputData({ node, state }) {
+    const stepRef = normalizeInputDataReference(node?.form?.input_data || "");
+    if (!stepRef) return "";
+    const sourceNode = findNodeByStepName(state, stepRef);
+    if (!sourceNode) return "";
+
+    const fromForm = toSchemaText(sourceNode?.form?.schema || "");
+    if (fromForm) return fromForm;
+
+    if (!bridgeApi?.available?.()) return "";
+    try {
+      const schemaDto = await bridgeApi.call("result.getSchema", {
+        mode: String(state?.appMode || ""),
+        step_id: String(sourceNode.stepName || "")
+      });
+      const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
+      if (!columns.length) return "";
+      return JSON.stringify(columns, null, 2);
+    } catch (error) {
+      console.warn("schema resolve from input_data failed", error);
+      return "";
+    }
+  }
+
+  async function applyBqLoadSchemaFromInputData({ node, state }) {
+    if (String(node?.connector || "") !== "BQConnector") return false;
+    if (String(node?.action || "") !== "load_data") return false;
+
+    const schemaText = await resolveSchemaTextFromInputData({ node, state });
+    if (!schemaText) return false;
+    if (String(node?.form?.schema || "") === String(schemaText)) return false;
+
+    node.form.schema = schemaText;
+    return true;
+  }
+
   function getCodeLanguageClass(field) {
     const raw = String(field.codeLanguage || "").trim().toLowerCase();
     if (raw === "sql" || raw === "python") return raw;
@@ -300,11 +336,11 @@
     const fromForm = extractSchemaFieldNames(sourceNode?.form?.schema || "");
     if (fromForm.length) return fromForm;
 
-    if (!bridgeApi?.available?.() || !window.__zizCurrentRunId) return [];
+    if (!bridgeApi?.available?.()) return [];
 
     try {
       const schemaDto = await bridgeApi.call("result.getSchema", {
-        run_id: window.__zizCurrentRunId,
+        mode: String(state?.appMode || ""),
         step_id: String(sourceNode.stepName || "")
       });
       const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
@@ -779,13 +815,34 @@
     const text = String(value || "");
     const refs = new Set();
     const patterns = [
-      /\{\{\s*([a-zA-Z0-9_]+)\s*\}\}/g,
-      /\$\{([a-zA-Z0-9_]+)(?:[^}]*)\}/g
+      /\{\{\s*([a-zA-Z0-9_\.]+)\s*\}\}/g,
+      /\$\{([a-zA-Z0-9_\.]+)(?:[^}]*)\}/g
     ];
     patterns.forEach((re) => {
       let match = re.exec(text);
       while (match) {
         refs.add(match[1]);
+        match = re.exec(text);
+      }
+    });
+    return Array.from(refs);
+  }
+
+  function extractInvalidTemplateReferenceNames(value) {
+    const text = String(value || "");
+    const refs = new Set();
+    const patterns = [
+      /\{\{\s*([^}]+?)\s*\}\}/g,
+      /\$\{([^}]+?)\}/g
+    ];
+    const validNamePattern = /^[a-zA-Z0-9_\.]+$/;
+    patterns.forEach((re) => {
+      let match = re.exec(text);
+      while (match) {
+        const name = String(match[1] || "").trim();
+        if (name && !validNamePattern.test(name)) {
+          refs.add(name);
+        }
         match = re.exec(text);
       }
     });
@@ -861,15 +918,22 @@
 
     if (field.key === "input_data") {
       const ref = normalizeInputDataReference(value);
-      if (!ref || upstreamSet.has(ref)) return [];
+      if (!ref) return [];
+      if (!/^[a-zA-Z0-9_]+$/.test(ref)) {
+        return [`変数名には英数字と _ のみ使用できます。日本語や記号は使えません。`];
+      }
+      if (upstreamSet.has(ref)) return [];
       return [`参照先 ${ref} は上流に存在しません。`];
     }
 
     if (!supportsVars) return [];
 
-    return extractReferencedVariableNames(value)
+    const invalidRefs = extractInvalidTemplateReferenceNames(value)
+      .map((ref) => `変数名 ${ref} は無効です。英数字、_、. のみ使用できます。`);
+    const missingRefs = extractReferencedVariableNames(value)
       .filter((ref) => !variableSet.has(ref))
       .map((ref) => `変数 ${ref} は定義されていません。`);
+    return [...invalidRefs, ...missingRefs];
   }
 
   function renderField({ node, field, upstreamSteps, availableVariableNames, hiddenBindings, state, config, onStateChanged }) {
@@ -1009,7 +1073,8 @@
         field,
         current,
         upstreamSteps,
-        onValueChanged: () => {
+        onValueChanged: async () => {
+          await applyBqLoadSchemaFromInputData({ node, state });
           notifyCommitted();
         }
       });

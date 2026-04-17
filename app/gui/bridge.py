@@ -58,6 +58,13 @@ def _sanitize_hidden_scope(step_name):
     return text or "global"
 
 
+class BridgeApiError(Exception):
+    def __init__(self, code, message):
+        super().__init__(str(message or ""))
+        self.code = str(code or "E_INTERNAL")
+        self.message = str(message or "")
+
+
 class _RunLogHandler(logging.Handler):
     def __init__(self, runtime, run_id):
         super().__init__(level=logging.INFO)
@@ -114,6 +121,11 @@ class BridgeRuntime:
         self.hidden_meta = {}
         self._hidden_counters = {}
         self.runs = {}
+        self.latest_by_flow = {}
+        self.active_run_by_flow = {}
+        self._unsaved_flow_uuid = uuid.uuid4().hex
+        self._execution_log_path = (self.base_dir / "logs" / "execution.log").resolve()
+        self._execution_log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def set_event_sink(self, callback):
         self._event_sink = callback
@@ -184,6 +196,8 @@ class BridgeRuntime:
                 return self._success_response(message_id, message_type, self._handle_sqlbilder_apply_measure(payload))
         except ValueError as error:
             return self._error_response(message_id, message_type, "E_VALIDATION", str(error))
+        except BridgeApiError as error:
+            return self._error_response(message_id, message_type, error.code, error.message)
         except FileNotFoundError as error:
             return self._error_response(message_id, message_type, "E_NOT_FOUND", str(error))
         except PermissionError as error:
@@ -347,6 +361,7 @@ class BridgeRuntime:
         flow = copy.deepcopy((payload or {}).get("flow") or {})
         if not isinstance(flow, dict):
             raise ValueError("flow はオブジェクトで指定してください。")
+        previous_flow_key = self._build_flow_key(mode, self.current_flow_path)
 
         restored_flow = self._restore_hidden_values(flow)
         suggested_name = _safe_text((payload or {}).get("file_name")) or self.current_file_name or self._build_default_flow_file_name(mode)
@@ -379,6 +394,8 @@ class BridgeRuntime:
             self.current_flow_path = str(resolved_path)
             self.current_file_name = resolved_path.name
             self.current_mode = mode
+        saved_flow_key = self._build_flow_key(mode, str(resolved_path))
+        self._migrate_flow_state(previous_flow_key, saved_flow_key)
         register_recent_flow(str(resolved_path), opened_at_iso=_iso_now())
 
         response = {
@@ -397,7 +414,6 @@ class BridgeRuntime:
             raise ValueError("flow はオブジェクトで指定してください。")
 
         requested_step_id = _safe_text((payload or {}).get("step_id"))
-        source_run_id = _safe_text((payload or {}).get("source_run_id"))
         resolved_flow = self._restore_hidden_values(flow)
         run_id = f"run_{uuid.uuid4().hex[:12]}"
         trace_id = f"trace_{uuid.uuid4().hex[:12]}"
@@ -405,7 +421,8 @@ class BridgeRuntime:
         cancel_event = threading.Event()
         flow_name = _safe_text(((resolved_flow.get("metadata") or {}).get("name"))) or "Untitled"
         secret_values = self._collect_secret_values(resolved_flow)
-        seed_context = self._build_seed_context(source_run_id)
+        flow_key = self._build_flow_key(mode, self.current_flow_path)
+        seed_context = self._get_latest_flow_context(flow_key) if requested_step_id else {}
         if self.current_flow_path:
             secret_values.add(self.current_flow_path)
 
@@ -424,11 +441,28 @@ class BridgeRuntime:
             "error": None,
             "secret_values": secret_values,
             "requested_step_id": requested_step_id,
-            "source_run_id": source_run_id,
             "seed_context": seed_context,
+            "flow_key": flow_key,
         }
         with self._lock:
+            active_run_id = _safe_text(self.active_run_by_flow.get(flow_key))
+            active_session = self.runs.get(active_run_id) if active_run_id else None
+            is_conflict = bool(active_session and str(active_session.get("status") or "") == "running")
+            if is_conflict:
+                raise BridgeApiError("E_CONFLICT", "同じフローが実行中です。完了またはキャンセル後に再実行してください。")
+            if active_run_id:
+                self.active_run_by_flow.pop(flow_key, None)
             self.runs[run_id] = session
+            self.active_run_by_flow[flow_key] = run_id
+            self.current_mode = mode
+
+        self._append_execution_log("run.start", {
+            "run_id": run_id,
+            "flow_key": flow_key,
+            "mode": mode,
+            "step_id": requested_step_id or "",
+            "flow_name": flow_name,
+        })
 
         worker = threading.Thread(
             target=self._run_flow_worker,
@@ -485,8 +519,7 @@ class BridgeRuntime:
         }
 
     def _handle_result_get_schema(self, payload):
-        step_report = self._require_step_report(payload)
-        dataframe = step_report.get("result")
+        dataframe = self._require_latest_step_result(payload)
         if not hasattr(dataframe, "columns") or not hasattr(dataframe, "attrs"):
             raise ValueError("指定ステップの結果は表データではありません。")
 
@@ -508,8 +541,7 @@ class BridgeRuntime:
         }
 
     def _handle_result_get_preview(self, payload):
-        step_report = self._require_step_report(payload)
-        dataframe = step_report.get("result")
+        dataframe = self._require_latest_step_result(payload)
         if not hasattr(dataframe, "columns") or not hasattr(dataframe, "head"):
             raise ValueError("指定ステップの結果は表データではありません。")
 
@@ -533,8 +565,7 @@ class BridgeRuntime:
         }
 
     def _handle_result_get_datavolume(self, payload):
-        step_report = self._require_step_report(payload)
-        dataframe = step_report.get("result")
+        dataframe = self._require_latest_step_result(payload)
         if not hasattr(dataframe, "columns") or not hasattr(dataframe, "index"):
             raise ValueError("指定ステップの結果は表データではありません。")
 
@@ -809,8 +840,39 @@ class BridgeRuntime:
                 initial_context=session.get("seed_context") or {},
                 only_step_id=session.get("requested_step_id") or None,
             )
-            session["report"] = report
+            session["report"] = {
+                "status": str(report.get("status") or ""),
+                "error": str(report.get("error") or ""),
+                "steps": [
+                    {
+                        "step_id": _safe_text(step.get("step_id")),
+                        "status": _safe_text(step.get("status")),
+                    }
+                    for step in (report.get("steps") or [])
+                ],
+                "flow_name": _safe_text(report.get("flow_name") or session.get("flow_name") or "Untitled"),
+            }
             session["finished_at"] = _iso_now()
+            self._update_latest_by_flow(
+                session.get("flow_key"),
+                session.get("seed_context"),
+                report,
+            )
+            self._append_execution_log("run.finish", {
+                "run_id": run_id,
+                "flow_key": session.get("flow_key") or "",
+                "status": str(report.get("status") or ""),
+                "step_count": len(report.get("steps") or []),
+                "error": self._normalize_log_error(report.get("error")),
+            })
+            for step in (report.get("steps") or []):
+                self._append_execution_log("run.step", {
+                    "run_id": run_id,
+                    "flow_key": session.get("flow_key") or "",
+                    "step_id": _safe_text(step.get("step_id")),
+                    "status": _safe_text(step.get("status")),
+                    "error": self._normalize_log_error(step.get("error")),
+                })
 
             if report.get("status") == "success":
                 session["status"] = "success"
@@ -850,6 +912,12 @@ class BridgeRuntime:
         except Exception:
             session["finished_at"] = _iso_now()
             session["status"] = "error"
+            session["report"] = {
+                "status": "error",
+                "error": "内部エラーが発生しました。",
+                "steps": [],
+                "flow_name": _safe_text(session.get("flow_name") or "Untitled"),
+            }
             session["error"] = {
                 "code": "E_INTERNAL",
                 "message": "内部エラーが発生しました。",
@@ -857,12 +925,23 @@ class BridgeRuntime:
                 "retryable": False,
                 "trace_id": session.get("trace_id"),
             }
+            self._append_execution_log("run.finish", {
+                "run_id": run_id,
+                "flow_key": session.get("flow_key") or "",
+                "status": "error",
+                "step_count": 0,
+                "error": "内部エラーが発生しました。",
+            })
             self.emit_event("run.failed", {
                 "run_id": run_id,
                 "status": "error",
                 "trace_id": session.get("trace_id"),
             })
         finally:
+            flow_key = _safe_text(session.get("flow_key"))
+            with self._lock:
+                if self.active_run_by_flow.get(flow_key) == run_id:
+                    self.active_run_by_flow.pop(flow_key, None)
             logger.removeHandler(log_handler)
             log_handler.close()
 
@@ -902,31 +981,112 @@ class BridgeRuntime:
             raise FileNotFoundError("対象の実行が見つかりません。")
         return session
 
-    def _build_seed_context(self, source_run_id):
-        if not source_run_id:
-            return {}
-        session = self._require_run_session(source_run_id)
-        report = session.get("report") or {}
-        context = {}
-        for step in report.get("steps") or []:
-            if str(step.get("status") or "") != "success":
-                continue
-            output_var = _safe_text(step.get("output_variable"))
-            if not output_var:
-                continue
-            context[output_var] = step.get("result")
-        return context
+    def _build_flow_key(self, mode, flow_path=None):
+        mode_text = _safe_text(mode) or "workflow"
+        path_text = _safe_text(flow_path)
+        if path_text:
+            try:
+                normalized_path = str(Path(path_text).resolve())
+            except Exception:
+                normalized_path = path_text
+        else:
+            normalized_path = f"<unsaved:{self._unsaved_flow_uuid}>"
+        return f"{mode_text}|{normalized_path}"
 
-    def _require_step_report(self, payload):
-        session = self._require_run_session((payload or {}).get("run_id"))
+    def _get_latest_flow_context(self, flow_key):
+        key = _safe_text(flow_key)
+        if not key:
+            return {}
+        with self._lock:
+            latest = self.latest_by_flow.get(key) or {}
+            context = latest.get("context") if isinstance(latest, dict) else {}
+        return copy.copy(context) if isinstance(context, dict) else {}
+
+    def _update_latest_by_flow(self, flow_key, seed_context, report):
+        key = _safe_text(flow_key)
+        if not key:
+            return
+        with self._lock:
+            existing = self.latest_by_flow.get(key)
+            if not isinstance(existing, dict):
+                existing = {}
+            current_context = copy.copy(existing.get("context")) if isinstance(existing.get("context"), dict) else {}
+            context = copy.copy(seed_context) if isinstance(seed_context, dict) else current_context
+            step_data = dict(existing.get("step_data") or {})
+            step_status = dict(existing.get("step_status") or {})
+            for step in (report.get("steps") or []):
+                step_id = _safe_text(step.get("step_id"))
+                if not step_id:
+                    continue
+                status = _safe_text(step.get("status")) or "unknown"
+                step_status[step_id] = status
+                if status != "success":
+                    continue
+                result = step.get("result")
+                step_data[step_id] = result
+                output_var = _safe_text(step.get("output_variable")) or step_id
+                context[output_var] = result
+            self.latest_by_flow[key] = {
+                "context": context,
+                "step_data": step_data,
+                "step_status": step_status,
+            }
+
+    def _require_latest_step_result(self, payload):
         step_id = _safe_text((payload or {}).get("step_id"))
         if not step_id:
             raise ValueError("step_id は必須です。")
-        report = session.get("report") or {}
-        for step in report.get("steps") or []:
-            if str(step.get("step_id") or "") == step_id:
-                return step
-        raise FileNotFoundError("対象のステップ結果が見つかりません。")
+        mode = _safe_text((payload or {}).get("mode")) or self.current_mode or "workflow"
+        flow_key = _safe_text((payload or {}).get("flow_key")) or self._build_flow_key(mode, self.current_flow_path)
+        with self._lock:
+            latest = self.latest_by_flow.get(flow_key)
+            step_data = (latest or {}).get("step_data") if isinstance(latest, dict) else {}
+            step_status = (latest or {}).get("step_status") if isinstance(latest, dict) else {}
+            if not isinstance(step_data, dict):
+                step_data = {}
+            if not isinstance(step_status, dict):
+                step_status = {}
+            has_data = step_id in step_data
+            status = _safe_text(step_status.get(step_id))
+            result = step_data.get(step_id)
+        if not has_data:
+            if status == "error":
+                raise FileNotFoundError("指定ステップの最新実行は失敗しており、成功データがありません。")
+            raise FileNotFoundError("対象のステップ結果が見つかりません。")
+        return result
+
+    def _migrate_flow_state(self, old_flow_key, new_flow_key):
+        old_key = _safe_text(old_flow_key)
+        new_key = _safe_text(new_flow_key)
+        if not old_key or not new_key or old_key == new_key:
+            return
+        with self._lock:
+            existing = self.latest_by_flow.get(old_key)
+            if existing is None:
+                return
+            self.latest_by_flow[new_key] = existing
+            self.latest_by_flow.pop(old_key, None)
+
+    def _normalize_log_error(self, value):
+        text = _safe_text(value)
+        return text if text else ""
+
+    def _append_execution_log(self, event, payload):
+        if not event:
+            return
+        record = {
+            "ts": _iso_now(),
+            "event": str(event),
+        }
+        if isinstance(payload, dict):
+            record.update(payload)
+        try:
+            line = json.dumps(record, ensure_ascii=False, default=str)
+        except Exception:
+            return
+        with self._lock:
+            with self._execution_log_path.open("a", encoding="utf-8") as handle:
+                handle.write(line + "\n")
 
     def _register_flow_token(self, path):
         normalized = str(Path(path).resolve())
