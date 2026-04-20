@@ -3,14 +3,14 @@
 ========================================================= */
 .sidebar {
   position: sticky;
-  top: 0;
-  width: 52px;
-  height: 100vh;
+  top: var(--shell-header-height, 0px);
+  width: var(--sidebar-width, 52px);
+  height: calc(100vh - var(--shell-header-height, 0px));
   padding: 5px 3px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: var(--alpha-white-94);
+  background: #ffffff;
   border-right: 1px solid var(--border-default);
   box-shadow: var(--shadow-soft-weak);
   backdrop-filter: blur(18px);
@@ -188,4 +188,145 @@
 .sidebar-item.is-current.sidebar-item-settings .sidebar-item-icon {
   background: var(--brand-600);
   border-color: var(--brand-600);
+}
+
+/* =========================================================
+   Right Sidebar (Flow Layout)
+========================================================= */
+.right-sidebar {
+  position: sticky;
+  top: var(--shell-header-height, 0px);
+  height: var(--shell-content-height, calc(100vh - var(--shell-header-height, 0px)));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  background: #ffffff;
+  border-left: 1px solid var(--border-default);
+  box-shadow: var(--shadow-soft-weak);
+  backdrop-filter: blur(18px);
+  z-index: 80;
+  overflow: hidden;
+}
+
+.right-sidebar-rail {
+  position: sticky;
+  top: var(--shell-header-height, 0px);
+  height: var(--shell-content-height, calc(100vh - var(--shell-header-height, 0px)));
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #ffffff;
+  border-left: 1px solid var(--border-default);
+  box-shadow: var(--shadow-soft-weak);
+  backdrop-filter: blur(18px);
+  z-index: 81;
+  overflow: hidden;
+  padding: 6px 4px;
+}
+
+.right-sidebar-resizer {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 10px;
+  height: 100%;
+  cursor: ew-resize;
+  z-index: 3;
+}
+
+.right-sidebar-resizer::after {
+  content: none;
+}
+
+.right-sidebar-toggle {
+  width: 40px;
+  height: 40px;
+  margin: 8px auto 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.right-sidebar-toggle .sidebar-item-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.right-sidebar-nav {
+  margin-top: 8px;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.right-rail-item {
+  width: 100%;
+  min-height: 40px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.right-rail-item .sidebar-item-icon {
+  width: 28px;
+  height: 28px;
+}
+
+.right-sidebar-toggle:hover,
+.right-rail-item:hover {
+  background: var(--surface-hover);
+}
+
+.right-rail-item.is-current {
+  background: var(--surface-page);
+  border-color: var(--brand-600);
+  box-shadow: 0 4px 10px var(--alpha-shadow-06);
+}
+
+.right-rail-item.is-current .sidebar-item-icon {
+  background: var(--brand-600);
+  border-color: var(--brand-600);
+}
+
+.right-rail-item.is-current .sidebar-item-icon img {
+  filter: brightness(0) invert(1);
+  opacity: 1;
+}
+
+.right-sidebar-content {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  padding: 12px;
+}
+
+.right-sidebar-content > #nodeDetail {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+}
+
+body.right-sidebar-collapsed .right-sidebar-resizer,
+body.right-sidebar-collapsed .right-sidebar-content {
+  display: none;
+}
+
+body.right-sidebar-collapsed .right-sidebar {
+  border-left: 0;
+  box-shadow: none;
+  visibility: hidden;
+  pointer-events: none;
 }

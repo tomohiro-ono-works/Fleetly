@@ -22,6 +22,21 @@
     return null;
   }
 
+  function hitStickyNote(model, x, y, options = {}) {
+    const notes = Array.isArray(model?.stickyNotes) ? model.stickyNotes : [];
+    const handleSize = Math.max(8, Number(options.handleSize) || 14);
+    for (let i = notes.length - 1; i >= 0; i -= 1) {
+      const note = notes[i];
+      if (!note) continue;
+      const withinX = x >= note.x && x <= note.x + note.w;
+      const withinY = y >= note.y && y <= note.y + note.h;
+      if (!withinX || !withinY) continue;
+      const onResizeHandle = x >= (note.x + note.w - handleSize) && y >= (note.y + note.h - handleSize);
+      return { note, onResizeHandle };
+    }
+    return null;
+  }
+
   function hasSiblingControlPair(model, control) {
     return model.controls.some((candidate) =>
       candidate !== control &&
@@ -87,6 +102,7 @@
 
   nodeCanvasParts.hitTask = hitTask;
   nodeCanvasParts.hitSelectableNode = hitSelectableNode;
+  nodeCanvasParts.hitStickyNote = hitStickyNote;
   nodeCanvasParts.hitControl = hitControl;
   nodeCanvasParts.getControlTooltip = getControlTooltip;
   nodeCanvasParts.createImmediateTooltip = createImmediateTooltip;

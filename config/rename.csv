@@ -5,3 +5,12 @@ city,都道府県
 name,名称
 日付,date
 年齢,age
+club_id,クラブID
+slogan,スローガン
+company_name,会社名
+address,住所
+home_town,ホームタウン
+home_arena,ホームアリーナ
+club_color,クラブカラー
+web_site_url,WebサイトURL
+sns,SNS

@@ -11,6 +11,7 @@ const stateOps = {
       appMode,
       flowName: getDefaultFlowName(appMode),
       nodes: [first],
+      stickyNotes: [],
       startParameters: [],
       selectedNodeId: first.id,
       pendingMergeSourceId: null,
@@ -194,6 +195,156 @@ function isLoopRootStateNode(node) {
   return !!node && node.action === "loop_tasks" && !node.loopOwnerId;
 }
 
+const CANVAS_COORD_RULES = {
+  START_X: 44,
+  START_Y: 40,
+  GRID_SIZE: 64,
+  MIN_COORD: 8,
+  INSERT_DX: 128,
+  INSERT_DY: 0,
+  PARALLEL_DX: 128,
+  PARALLEL_DY: 120,
+  PARALLEL_COLLISION_DY: 128
+};
+
+function normalizeCanvasPositionValue(value) {
+  if (!value || typeof value !== "object") return null;
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return {
+    x: Math.max(CANVAS_COORD_RULES.MIN_COORD, Math.round(x)),
+    y: Math.max(CANVAS_COORD_RULES.MIN_COORD, Math.round(y))
+  };
+}
+
+function normalizeCanvasGridPositionValue(value) {
+  if (!value || typeof value !== "object") return null;
+  const x = Number(value.x);
+  const y = Number(value.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  return { x, y };
+}
+
+function roundGridUnit(value) {
+  return Math.round(Number(value || 0) * 1000) / 1000;
+}
+
+function snapToCanvasGrid(value, origin) {
+  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 64);
+  const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
+  const raw = Number(value);
+  if (!Number.isFinite(raw)) return base;
+  return base + Math.round((raw - base) / size) * size;
+}
+
+function toCanvasFromGrid(gridValue, origin) {
+  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 64);
+  const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
+  const raw = Number(gridValue);
+  if (!Number.isFinite(raw)) return base;
+  return base + raw * size;
+}
+
+function toGridFromCanvas(canvasValue, origin) {
+  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 64);
+  const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
+  const raw = Number(canvasValue);
+  if (!Number.isFinite(raw)) return 0;
+  return roundGridUnit((raw - base) / size);
+}
+
+function resolveNodeCanvasPosition(nodeLike) {
+  const gridPos = normalizeCanvasGridPositionValue(nodeLike?.canvasGridPosition);
+  if (gridPos) {
+    return normalizeCanvasPositionValue({
+      x: toCanvasFromGrid(gridPos.x, CANVAS_COORD_RULES.START_X),
+      y: toCanvasFromGrid(gridPos.y, CANVAS_COORD_RULES.START_Y)
+    });
+  }
+  return normalizeCanvasPositionValue(nodeLike?.canvasPosition);
+}
+
+function applyNodeCanvasPosition(node, position, options = {}) {
+  if (!node || !position) return null;
+  const snap = options.snap !== false;
+  const raw = normalizeCanvasPositionValue(position);
+  if (!raw) return null;
+  const nextX = snap ? snapToCanvasGrid(raw.x, CANVAS_COORD_RULES.START_X) : raw.x;
+  const nextY = snap ? snapToCanvasGrid(raw.y, CANVAS_COORD_RULES.START_Y) : raw.y;
+  const next = normalizeCanvasPositionValue({ x: nextX, y: nextY });
+  if (!next) return null;
+  node.canvasPosition = next;
+  node.canvasGridPosition = {
+    x: toGridFromCanvas(next.x, CANVAS_COORD_RULES.START_X),
+    y: toGridFromCanvas(next.y, CANVAS_COORD_RULES.START_Y)
+  };
+  return next;
+}
+
+function getAnchorBasePosition(state, anchorId) {
+  if (anchorId === null || anchorId === undefined) {
+    return { x: CANVAS_COORD_RULES.START_X, y: CANVAS_COORD_RULES.START_Y };
+  }
+  const anchorNode = state.nodes.find((node) => node.id === anchorId) || null;
+  const anchorPosition = resolveNodeCanvasPosition(anchorNode);
+  if (anchorPosition) return anchorPosition;
+  return { x: CANVAS_COORD_RULES.START_X, y: CANVAS_COORD_RULES.START_Y };
+}
+
+function hasNodeAtCanvasPosition(state, position) {
+  const target = normalizeCanvasPositionValue(position);
+  if (!target) return false;
+  return state.nodes.some((node) => {
+    const pos = resolveNodeCanvasPosition(node);
+    return !!pos && pos.x === target.x && pos.y === target.y;
+  });
+}
+
+function resolveParallelInsertPosition(state, anchorId) {
+  const basePos = getAnchorBasePosition(state, anchorId);
+  const stepY = Math.max(1, Number(CANVAS_COORD_RULES.PARALLEL_COLLISION_DY) || 128);
+  let candidate = {
+    x: snapToCanvasGrid(basePos.x + CANVAS_COORD_RULES.PARALLEL_DX, CANVAS_COORD_RULES.START_X),
+    y: snapToCanvasGrid(basePos.y + CANVAS_COORD_RULES.PARALLEL_DY, CANVAS_COORD_RULES.START_Y)
+  };
+  let guard = 0;
+  while (hasNodeAtCanvasPosition(state, candidate) && guard < 256) {
+    candidate = {
+      x: candidate.x,
+      y: snapToCanvasGrid(candidate.y + stepY, CANVAS_COORD_RULES.START_Y)
+    };
+    guard += 1;
+  }
+  return candidate;
+}
+
+function shiftSubtreeCanvasPositions(state, rootNodeId, deltaX, deltaY) {
+  if (!rootNodeId) return;
+  const queue = [rootNodeId];
+  const visited = new Set();
+  while (queue.length) {
+    const currentId = queue.shift();
+    if (!currentId || visited.has(currentId)) continue;
+    visited.add(currentId);
+    const currentNode = state.nodes.find((node) => node.id === currentId);
+    if (currentNode) {
+      const currentPos = resolveNodeCanvasPosition(currentNode);
+      if (currentPos) {
+        applyNodeCanvasPosition(
+          currentNode,
+          {
+            x: currentPos.x + (Number(deltaX) || 0),
+            y: currentPos.y + (Number(deltaY) || 0)
+          },
+          { snap: true }
+        );
+      }
+      getChildren(state, currentNode.id).forEach((child) => queue.push(child.id));
+    }
+  }
+}
+
 function collectLoopRemovalIds(state, loopRootId) {
   const removeIds = new Set([loopRootId]);
   const queue = getChildren(state, loopRootId)
@@ -260,6 +411,12 @@ function insertAtAnchor(state, anchorId) {
   const right = getFirstChild(state, anchorId);
   const newNode = createNewNode(allocateStepName(state), state.appMode);
   newNode.parentId = anchorId;
+  const anchorPosition = getAnchorBasePosition(state, anchorId);
+  const insertPosition = {
+    x: anchorPosition.x + CANVAS_COORD_RULES.INSERT_DX,
+    y: anchorPosition.y + CANVAS_COORD_RULES.INSERT_DY
+  };
+  applyNodeCanvasPosition(newNode, insertPosition, { snap: true });
 
   if (!right) {
     const nextOrder = getNextChildOrder(state, anchorId);
@@ -281,6 +438,9 @@ function insertAtAnchor(state, anchorId) {
     const order = Number(n.parallelOrder) || 1;
     if (order > rightOrder) n.parallelOrder = order + 1;
   });
+
+  // Keep inserted chain spacing by shifting existing right subtree to the right.
+  shiftSubtreeCanvasPositions(state, right.id, CANVAS_COORD_RULES.INSERT_DX, 0);
 
   // Re-parent right subtree root under new node.
   right.parentId = newNode.id;
@@ -308,6 +468,15 @@ function addParallelAtAnchor(state, anchorId) {
   newNode.parentId = anchorId;
   newNode.parallelOrder = getNextChildOrder(state, anchorId);
   newNode.parallelOf = right.id;
+  const insertPosition = resolveParallelInsertPosition(state, anchorId);
+  applyNodeCanvasPosition(
+    newNode,
+    {
+      x: insertPosition.x,
+      y: insertPosition.y
+    },
+    { snap: true }
+  );
 
   state.nodes.push(newNode);
   state.selectedNodeId = newNode.id;

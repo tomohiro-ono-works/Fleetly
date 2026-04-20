@@ -22,12 +22,14 @@ htmlcov/
 
 # Local app/runtime artifacts
 logs/
+scripts/
 workflows/
 static/old/
 *.log
 *.tmp
 *.bak
 *.orig
+recent_flows.json
 
 # Local-only personal files
 memo.md

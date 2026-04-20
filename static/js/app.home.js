@@ -146,6 +146,14 @@
       navigateToUrl(buildPageUrlForMode("dataflow"));
       return;
     }
+    if (type === "create-flow") {
+      navigateToUrl(buildPageUrlForMode("dataflow"));
+      return;
+    }
+    if (type === "create-sql") {
+      navigateToUrl(buildPageUrlForMode("query-builder"));
+      return;
+    }
     if (type === "open-flow") {
       const token = String(action?.item?.flow_token || "");
       if (!token || !bridgeApi?.available?.()) return;

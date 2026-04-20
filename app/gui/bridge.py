@@ -2,7 +2,9 @@ import copy
 import csv
 import json
 import logging
+import os
 import re
+import subprocess
 import threading
 import time
 import uuid
@@ -30,7 +32,6 @@ SECRET_FIELD_KEYS = {
     "directory",
     "output_folder",
     "output_dir",
-    "dataset_id",
     "bucket",
 }
 
@@ -166,6 +167,10 @@ class BridgeRuntime:
                 return self._success_response(message_id, message_type, self._handle_app_log_ui_event(payload))
             if message_type == "app.windowControl":
                 return self._success_response(message_id, message_type, self._handle_app_window_control(payload))
+            if message_type == "app.googleAuthLogin":
+                return self._success_response(message_id, message_type, self._handle_app_google_auth_login(payload))
+            if message_type == "app.googleAuthStatus":
+                return self._success_response(message_id, message_type, self._handle_app_google_auth_status(payload))
             if message_type == "flow.list":
                 return self._success_response(message_id, message_type, self._handle_flow_list(payload))
             if message_type == "flow.load":
@@ -225,6 +230,8 @@ class BridgeRuntime:
                 "app.getStatus",
                 "app.logUiEvent",
                 "app.windowControl",
+                "app.googleAuthLogin",
+                "app.googleAuthStatus",
                 "flow.list",
                 "flow.load",
                 "flow.save",
@@ -277,6 +284,83 @@ class BridgeRuntime:
             "accepted": True,
             "action": action,
             "state": str(state or ""),
+        }
+
+    def _handle_app_google_auth_login(self, payload):
+        mode = _safe_text((payload or {}).get("mode")) or "application-default"
+        if mode != "application-default":
+            raise ValueError("mode が不正です。")
+        command = ["gcloud", "auth", "application-default", "login"]
+        try:
+            if os.name == "nt":
+                create_new_console = int(getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010))
+                subprocess.Popen(
+                    ["cmd.exe", "/k"] + command,
+                    creationflags=create_new_console,
+                    shell=False,
+                )
+            else:
+                subprocess.Popen(command, shell=False)
+        except FileNotFoundError:
+            raise ValueError("gcloud コマンドが見つかりません。Cloud SDK のインストールと PATH 設定を確認してください。")
+        except Exception as error:
+            raise ValueError(f"Googleログインを起動できませんでした: {error}")
+        return {
+            "launched": True,
+            "command": "gcloud auth application-default login",
+            "mode": mode,
+        }
+
+    def _handle_app_google_auth_status(self, payload):
+        mode = _safe_text((payload or {}).get("mode")) or "application-default"
+        if mode != "application-default":
+            raise ValueError("mode が不正です。")
+
+        account = ""
+        account_error = ""
+        auth_error = ""
+        authenticated = False
+
+        try:
+            account_result = subprocess.run(
+                ["gcloud", "config", "get-value", "account"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+                shell=False,
+            )
+            if account_result.returncode == 0:
+                value = _safe_text(account_result.stdout)
+                if value and value != "(unset)":
+                    account = value
+            else:
+                account_error = _safe_text(account_result.stderr) or "failed to get account"
+        except FileNotFoundError:
+            raise ValueError("gcloud コマンドが見つかりません。Cloud SDK のインストールと PATH 設定を確認してください。")
+        except Exception as error:
+            account_error = str(error)
+
+        try:
+            auth_result = subprocess.run(
+                ["gcloud", "auth", "application-default", "print-access-token"],
+                capture_output=True,
+                text=True,
+                timeout=20,
+                shell=False,
+            )
+            authenticated = auth_result.returncode == 0 and bool(_safe_text(auth_result.stdout))
+            if not authenticated:
+                auth_error = _safe_text(auth_result.stderr) or "ADC is not authenticated"
+        except Exception as error:
+            authenticated = False
+            auth_error = str(error)
+
+        return {
+            "mode": mode,
+            "authenticated": bool(authenticated),
+            "account": account,
+            "account_error": account_error,
+            "error": auth_error,
         }
 
     def _handle_flow_list(self, payload):

@@ -879,14 +879,39 @@
       renderActionList();
     }
 
+    function openFlyout() {
+      if (disabled) return false;
+      if (open) return true;
+      stage = "grid";
+      setOpen(true);
+      renderStage();
+      return true;
+    }
+
+    function closeFlyout() {
+      if (!open) return true;
+      setOpen(false);
+      return true;
+    }
+
+    function toggleFlyout() {
+      if (disabled) return false;
+      if (open) return closeFlyout();
+      return openFlyout();
+    }
+
+    wrapper.__connectorFlyoutController = {
+      open: openFlyout,
+      close: closeFlyout,
+      toggle: toggleFlyout,
+      isOpen: () => open
+    };
+
     trigger.addEventListener("click", (e) => {
       if (disabled) return;
       e.preventDefault();
       e.stopPropagation();
-      const nextOpen = !open;
-      if (nextOpen) stage = "grid";
-      setOpen(nextOpen);
-      if (nextOpen) renderStage();
+      toggleFlyout();
     });
     wrapper.addEventListener("keydown", (e) => {
       if (e.key === "Escape") setOpen(false);

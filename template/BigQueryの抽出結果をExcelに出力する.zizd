@@ -1,0 +1,192 @@
+metadata:
+  name: BigQueryの抽出結果をExcelに出力する
+  mode: dataflow
+  extension: .zizd
+  execution_model: df
+  category: etl
+variables:
+  start: []
+steps:
+- step_id: step1
+  connector: bigquery_connector
+  action: execute_sql
+  params:
+    project_id: defult_project1
+    sql: 'SELECT
+
+      FROM
+
+      WHERE'
+  output_variable: step1
+  description: 抽出①
+  ui_position:
+    x: 300
+    y: 40
+- step_id: step2
+  connector: excel_connector
+  action: write_excel
+  params:
+    input_data: step15
+    output_folder: sample
+    file_name: output.xlsx
+    sheet_name: シート1
+    mode: create_or_replace
+  output_variable: step2
+  description: Excel / 書き込み
+  ui_position:
+    x: 556
+    y: 40
+- step_id: step10
+  connector: bigquery_connector
+  action: execute_sql
+  params:
+    project_id: defult_project1
+    sql: 'SELECT
+
+      FROM
+
+      WHERE'
+  output_variable: step10
+  description: 抽出②
+  ui_position:
+    x: 428
+    y: 168
+- step_id: step11
+  connector: excel_connector
+  action: write_excel
+  params:
+    input_data: step16
+    output_folder: sample
+    file_name: output.xlsx
+    sheet_name: シート2
+    mode: create_or_replace
+  output_variable: step11
+  description: Excel / 書き込み
+  ui_position:
+    x: 684
+    y: 168
+- step_id: step12
+  connector: bigquery_connector
+  action: execute_sql
+  params:
+    project_id: defult_project1
+    sql: 'SELECT
+
+      FROM
+
+      WHERE'
+  output_variable: step12
+  description: 抽出③
+  ui_position:
+    x: 556
+    y: 296
+- step_id: step13
+  connector: excel_connector
+  action: write_excel
+  params:
+    input_data: step17
+    output_folder: sample
+    file_name: output.xlsx
+    sheet_name: シート3
+    mode: create_or_replace
+  output_variable: step13
+  description: Excel / 書き込み
+  ui_position:
+    x: 812
+    y: 296
+- step_id: step14
+  connector: bigquery_connector
+  action: execute_sql
+  params:
+    project_id: defult_project1
+    sql: 'SELECT
+
+      FROM
+
+      WHERE'
+  output_variable: step14
+  description: データ更新
+  ui_position:
+    x: 172
+    y: 40
+- step_id: step15
+  connector: dataintegration_connector
+  action: replace_fields_forrenamelist
+  params:
+    input_data: step1
+    rename_list_path: config\rename.csv
+  output_variable: step15
+  description: データ加工 / フィールド名をRENAMEリストから変更
+  ui_position:
+    x: 428
+    y: 40
+- step_id: step16
+  connector: dataintegration_connector
+  action: replace_fields_forrenamelist
+  params:
+    input_data: step10
+    rename_list_path: config\rename.csv
+  output_variable: step16
+  description: データ加工 / フィールド名をRENAMEリストから変更
+  ui_position:
+    x: 556
+    y: 168
+- step_id: step17
+  connector: dataintegration_connector
+  action: replace_fields_forrenamelist
+  params:
+    input_data: step12
+    rename_list_path: config\rename.csv
+  output_variable: step17
+  description: データ加工 / フィールド名をRENAMEリストから変更
+  ui_position:
+    x: 684
+    y: 296
+flows:
+  start: START
+  end: END
+  edges:
+  - from: step14
+    to: step1
+    order: 1
+    kind: primary
+  - from: step15
+    to: step2
+    order: 1
+    kind: primary
+  - from: step2
+    to: step10
+    order: 1
+    kind: primary
+  - from: step16
+    to: step11
+    order: 1
+    kind: primary
+  - from: step11
+    to: step12
+    order: 1
+    kind: primary
+  - from: step17
+    to: step13
+    order: 1
+    kind: primary
+  - from: START
+    to: step14
+    order: 1
+    kind: primary
+  - from: step1
+    to: step15
+    order: 1
+    kind: primary
+  - from: step10
+    to: step16
+    order: 1
+    kind: primary
+  - from: step12
+    to: step17
+    order: 1
+    kind: primary
+  - from: step13
+    to: END
+    order: 0
+notes: []

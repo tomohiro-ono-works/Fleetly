@@ -4,9 +4,10 @@
 header {
   position: sticky;
   top: 0;
-  background: var(--surface-hover);
+  z-index: 120;
+  background: #20295c;
   color: var(--text-primary);
-  border-bottom: 1px solid var(--border-default);
+  /* border-bottom: 1px solid var(--border-default); */
   overflow: hidden;
 }
 
@@ -17,12 +18,13 @@ header {
   padding: 2px 8px;
   gap: 12px;
   flex-wrap: wrap;
+  position: relative;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 0;
+  gap: 6px;
   flex: 1 1 auto;
 }
 
@@ -33,18 +35,59 @@ header .actions {
 }
 
 .flow-name-input {
-  min-width: 480px;
+  min-width: 320px;
   max-width: 560px;
-  border: 1px solid var(--border-default);
-  background: var(--surface-page);
+  width: min(560px, 42vw);
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  /* border: 1px solid var(--border-default); */
+  /* background: #6f5ccf; */
   color: var(--text-primary);
   line-height: 1.2;
   padding: 5px 10px;
-  border-radius: 9px;
+  /* border-radius: 9px; */
+}
+
+.header-left,
+header .actions {
+  position: relative;
+  z-index: 1;
+}
+
+.header-home-btn {
+  min-width: 34px;
+  min-height: 30px;
+  padding: 0 4px;
+}
+
+.header-home-btn img {
+  display: block;
+  width: auto;
+  height: 20px;
+  object-fit: contain;
+}
+
+header .header-icon-btn img[src$=".svg"] {
+  filter: brightness(0) saturate(100%) invert(100%);
+}
+
+header .header-home-btn img[src$=".svg"] {
+  filter: none;
+}
+
+header .header-icon-btn:disabled img[src$=".svg"] {
+  opacity: 0.55;
 }
 
 .flow-name-input:focus {
   outline: none;
   border-color: var(--brand-600);
   box-shadow: 0 0 0 2px var(--alpha-brand-15);
+}
+
+#flowName {
+  background: #343c6a; /* 好きな色 */
+  color: #ffffff;
+  border: 1px solid #20295c;
 }

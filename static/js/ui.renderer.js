@@ -88,8 +88,29 @@
     return section;
   }
 
-  function renderHomeScreen({ flowRoot, detailRoot, homeViewModel, onHomeAction }) {
+  function createHomeCreateButton({ title, hint, actionType, onHomeAction }) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "home-screen__create-btn";
+    button.addEventListener("click", () => {
+      if (typeof onHomeAction === "function") onHomeAction({ type: actionType });
+    });
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "home-screen__create-btn-title";
+    titleEl.textContent = title;
+    button.appendChild(titleEl);
+
+    const hintEl = document.createElement("div");
+    hintEl.className = "home-screen__create-btn-hint";
+    hintEl.textContent = hint;
+    button.appendChild(hintEl);
+    return button;
+  }
+
+  function renderHomeScreen({ flowRoot, detailRoot, detailBottomRoot, homeViewModel, onHomeAction }) {
     if (detailRoot) detailRoot.innerHTML = "";
+    if (detailBottomRoot && detailBottomRoot !== detailRoot) detailBottomRoot.innerHTML = "";
 
     const uiNode = getUiNodeApi();
     if (typeof uiNode.destroyFlowCanvas === "function") {
@@ -100,30 +121,51 @@
     const shell = document.createElement("div");
     shell.className = "home-screen";
 
-    const header = document.createElement("div");
-    header.className = "home-screen__header";
-
-    const titleWrap = document.createElement("div");
-    titleWrap.className = "home-screen__title-wrap";
+    const hero = document.createElement("section");
+    hero.className = "home-screen__hero";
     const title = document.createElement("h1");
     title.className = "home-screen__title";
-    title.textContent = "トップ画面";
+    const titleText = document.createElement("span");
+    titleText.textContent = "ziz ai craft";
+    const titleIcon = document.createElement("img");
+    titleIcon.className = "home-screen__title-icon";
+    titleIcon.src = "./icons/ziz.svg";
+    titleIcon.alt = "";
+    titleIcon.setAttribute("aria-hidden", "true");
+    title.appendChild(titleText);
+    title.appendChild(titleIcon);
     const subtitle = document.createElement("div");
     subtitle.className = "home-screen__subtitle";
-    subtitle.textContent = "最近使ったファイルやテンプレートから開始できます。";
-    titleWrap.appendChild(title);
-    titleWrap.appendChild(subtitle);
-    header.appendChild(titleWrap);
+    subtitle.textContent = "自由自在の業務エージェントビルダーツール";
+    const divider = document.createElement("div");
+    divider.className = "home-screen__divider";
+    hero.appendChild(title);
+    hero.appendChild(subtitle);
+    hero.appendChild(divider);
+    shell.appendChild(hero);
 
-    const newButton = document.createElement("button");
-    newButton.type = "button";
-    newButton.className = "home-screen__new-btn";
-    newButton.textContent = "新規作成";
-    newButton.addEventListener("click", () => {
-      if (typeof onHomeAction === "function") onHomeAction({ type: "dismiss-home" });
-    });
-    header.appendChild(newButton);
-    shell.appendChild(header);
+    const createSection = document.createElement("section");
+    createSection.className = "home-screen__section home-screen__section--create";
+    const createHeading = document.createElement("h2");
+    createHeading.className = "home-screen__section-title";
+    createHeading.textContent = "作成する";
+    createSection.appendChild(createHeading);
+    const createBody = document.createElement("div");
+    createBody.className = "home-screen__create-actions";
+    createBody.appendChild(createHomeCreateButton({
+      title: "ワークフローを新規で作る",
+      hint: "データフロー画面を開きます",
+      actionType: "create-flow",
+      onHomeAction
+    }));
+    createBody.appendChild(createHomeCreateButton({
+      title: "SQLを新規で作る",
+      hint: "クエリビルダー画面を開きます",
+      actionType: "create-sql",
+      onHomeAction
+    }));
+    createSection.appendChild(createBody);
+    shell.appendChild(createSection);
 
     const grid = document.createElement("div");
     grid.className = "home-screen__grid";
@@ -165,6 +207,9 @@
 
     renderNodeShellLoading(args.flowRoot);
     if (args.detailRoot) args.detailRoot.innerHTML = "";
+    if (args.detailBottomRoot && args.detailBottomRoot !== args.detailRoot) {
+      args.detailBottomRoot.innerHTML = "";
+    }
     args.flowRoot.__uiNodeLoadingPromise = loader.ensureLoaded()
       .then(() => {
         args.flowRoot.__uiNodeLoadingPromise = null;
@@ -180,17 +225,18 @@
   }
 
   function renderApp(args) {
-    const { flowRoot, detailRoot, state, config, onStateChanged, homeViewModel, onHomeAction } = args;
-    if (!flowRoot || !detailRoot) return;
+    const { flowRoot, detailRoot, detailBottomRoot, rightPanelTab, state, config, onStateChanged, homeViewModel, onHomeAction } = args;
+    if (!flowRoot || (!detailRoot && !detailBottomRoot)) return;
 
     if (homeViewModel?.visible) {
-      renderHomeScreen({ flowRoot, detailRoot, homeViewModel, onHomeAction });
+      renderHomeScreen({ flowRoot, detailRoot, detailBottomRoot, homeViewModel, onHomeAction });
       return;
     }
 
     if (String(state?.appMode || "") === "query-builder") {
       const uiNode = getUiNodeApi();
       if (detailRoot) detailRoot.innerHTML = "";
+      if (detailBottomRoot && detailBottomRoot !== detailRoot) detailBottomRoot.innerHTML = "";
       if (typeof uiNode.destroyFlowCanvas === "function") {
         uiNode.destroyFlowCanvas(flowRoot);
       }
@@ -216,7 +262,36 @@
     }
 
     if (typeof uiNode.renderNodeDetail === "function") {
-      uiNode.renderNodeDetail({ root: detailRoot, state, config, onStateChanged });
+      const splitDetail = !!detailRoot && !!detailBottomRoot && detailBottomRoot !== detailRoot;
+      if (splitDetail) {
+        const activeRightPanel = ["detail", "yaml", "variables", "log"].includes(String(rightPanelTab || ""))
+          ? String(rightPanelTab || "")
+          : "detail";
+        uiNode.renderNodeDetail({
+          root: detailRoot,
+          state,
+          config,
+          onStateChanged,
+          tabKeys: ["detail", "yaml", "variables", "log"],
+          defaultTab: "detail",
+          includePanelRunAction: false,
+          hideTabs: true,
+          forcedActiveTab: activeRightPanel
+        });
+        uiNode.renderNodeDetail({
+          root: detailBottomRoot,
+          state,
+          config,
+          onStateChanged,
+          tabKeys: ["data"],
+          defaultTab: "data",
+          includePanelRunAction: false,
+          hideTabs: true,
+          forcedActiveTab: "data"
+        });
+        return;
+      }
+      uiNode.renderNodeDetail({ root: detailRoot || detailBottomRoot, state, config, onStateChanged });
     }
   }
 

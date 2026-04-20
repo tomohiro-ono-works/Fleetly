@@ -223,3 +223,132 @@
   background: var(--semantic-error-bg);
 }
 
+.flow-sticky-toolbar {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 30;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.flow-sticky-toolbar__icon-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid #ff9800;
+  border-radius: 10px;
+  background: #ff9800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.flow-sticky-toolbar__icon-btn:hover {
+  border-color: #f18f00;
+  background: #f18f00;
+}
+
+.flow-sticky-toolbar.is-active .flow-sticky-toolbar__icon-btn {
+  border-color: #ff9800;
+  box-shadow: none;
+}
+
+.flow-sticky-toolbar__icon-btn:focus,
+.flow-sticky-toolbar__icon-btn:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
+.flow-sticky-toolbar__icon-btn img {
+  width: 18px;
+  height: 18px;
+  display: block;
+  filter: brightness(0) invert(1);
+}
+
+.flow-sticky-toolbar__panel {
+  min-width: 240px;
+  padding: 8px;
+  border-radius: 10px;
+  border: 1px solid var(--border-default);
+  background: var(--surface-page);
+  box-shadow: 0 8px 22px var(--alpha-shadow-12);
+  display: grid;
+  gap: 6px;
+}
+
+.flow-sticky-toolbar__panel[hidden] {
+  display: none !important;
+}
+
+.flow-sticky-toolbar__btn {
+  border: 1px solid var(--border-default);
+  background: var(--surface-page);
+  color: var(--text-primary);
+  border-radius: 8px;
+  font-size: 12px;
+  line-height: 1.2;
+  padding: 6px 8px;
+  cursor: pointer;
+}
+
+.flow-sticky-toolbar__btn:hover:not(:disabled) {
+  border-color: #5332f7;
+}
+
+.flow-sticky-toolbar__btn.is-danger {
+  color: #ef475a;
+}
+
+.flow-sticky-toolbar__btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.flow-sticky-toolbar__colors {
+  display: grid;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.flow-sticky-toolbar__color {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  border: 1px solid var(--border-default);
+  background: var(--sticky-color);
+  cursor: pointer;
+}
+
+.flow-sticky-toolbar__color.is-active {
+  border-color: #5332f7;
+  box-shadow: 0 0 0 2px rgba(83, 50, 247, 0.2);
+}
+
+.flow-sticky-toolbar__color:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.flow-sticky-note-editor {
+  position: absolute;
+  z-index: 24;
+  margin: 0;
+  padding: 8px;
+  border-radius: 10px;
+  border: 2px solid #5332f7;
+  outline: none;
+  box-shadow: 0 6px 14px rgba(21, 23, 35, 0.18);
+  color: #2b2f3d;
+  font: 13px/1.35 "Segoe UI", "Yu Gothic UI", sans-serif;
+  resize: none;
+  white-space: pre-wrap;
+  overflow: auto;
+}
+
+.flow-sticky-note-editor[hidden] {
+  display: none !important;
+}

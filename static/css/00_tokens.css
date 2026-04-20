@@ -21,12 +21,13 @@
   --flow-edge-main: #5c6f88;
   --flow-edge-secondary: #74859d;
   --flow-edge-parallel: #6e829c;
-  --flow-node-border: #9aa5b6;
+  --flow-node-border: #6f8099;
   --flow-node-border-selected: #4b4e63;
   --flow-node-subtext: #626b7b;
   --flow-loop-frame-fill: #ebe6ff;
   --flow-loop-frame-stroke: #5a41da;
   --flow-drag-preview-stroke: #4b4e63;
+  --flow-node-shadow: rgba(0, 0, 0, 0.08);
   --flow-step-badge-border: #c8cad8;
   --flow-control-fill-active: #4b4e63;
   --flow-control-stroke: #bdbdbd;
@@ -35,8 +36,8 @@
   --flow-control-text-active: #fffefe;
 
   /* Main */
-  --brand-700: #6b4eff;
-  --brand-600: #6b4eff;
+  --brand-700: #5332f7;
+  --brand-600: #5332f7;
   --brand-100: #ebe6ff;
   --interactive-hover-bg: #f4f1ff;
   --surface-header: #5a41da;

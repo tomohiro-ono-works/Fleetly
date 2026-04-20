@@ -181,6 +181,100 @@
     ctx.restore();
   }
 
+  function wrapNoteText(ctx, text, maxWidth) {
+    const source = String(text || "");
+    if (!source) return [];
+    const lines = [];
+    source.split(/\r?\n/).forEach((segment) => {
+      if (!segment) {
+        lines.push("");
+        return;
+      }
+      const chars = segment.split("");
+      let line = "";
+      chars.forEach((ch) => {
+        const nextLine = line + ch;
+        if (line && ctx.measureText(nextLine).width > maxWidth) {
+          lines.push(line);
+          line = ch;
+        } else {
+          line = nextLine;
+        }
+      });
+      lines.push(line);
+    });
+    return lines;
+  }
+
+  function resolveRenderedStickyNotes(view, model) {
+    const notes = Array.isArray(model?.stickyNotes) ? model.stickyNotes.map((note) => ({ ...note })) : [];
+    const preview = view?.stickyNotePreview;
+    if (!preview || !preview.id) return notes;
+    const index = notes.findIndex((note) => note.id === preview.id);
+    if (index >= 0) {
+      notes[index] = { ...notes[index], ...preview };
+      return notes;
+    }
+    notes.push({ ...preview });
+    return notes;
+  }
+
+  function drawStickyNotes(ctx, notes, options = {}) {
+    if (!Array.isArray(notes) || !notes.length) return;
+    const mode = String(options.mode || "normal");
+    const selectedId = String(options.selectedId || "");
+    const editable = !!options.editable;
+    const noteOpacity = mode === "sticky" ? 0.95 : 0.75;
+    const textColor = "#2b2f3d";
+    const borderColor = "#b9bfd3";
+    const selectedColor = "#5332f7";
+    const handleSize = 14;
+    notes.forEach((note) => {
+      if (!note) return;
+      const x = Math.round(Number(note.x) || 0);
+      const y = Math.round(Number(note.y) || 0);
+      const w = Math.max(120, Math.round(Number(note.w) || 0));
+      const h = Math.max(72, Math.round(Number(note.h) || 0));
+      const isSelected = selectedId && note.id === selectedId;
+      const fill = String(note.color || "#fff2a8");
+
+      ctx.save();
+      ctx.globalAlpha = noteOpacity;
+      ctx.fillStyle = fill;
+      ctx.strokeStyle = isSelected ? selectedColor : borderColor;
+      ctx.lineWidth = isSelected ? 2 : 1;
+      drawRoundedRect(ctx, x, y, w, h, 10);
+      ctx.fill();
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+
+      ctx.fillStyle = textColor;
+      ctx.font = "13px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+      ctx.textAlign = "left";
+      ctx.textBaseline = "top";
+      const lines = wrapNoteText(ctx, String(note.text || ""), Math.max(20, w - 16));
+      const lineHeight = 17;
+      const maxLines = Math.max(1, Math.floor((h - 12) / lineHeight));
+      lines.slice(0, maxLines).forEach((line, idx) => {
+        const rendered = idx === maxLines - 1 && lines.length > maxLines
+          ? `${String(line || "").slice(0, Math.max(0, String(line || "").length - 1))}…`
+          : line;
+        ctx.fillText(rendered, x + 8, y + 7 + idx * lineHeight);
+      });
+
+      if (editable && isSelected) {
+        ctx.fillStyle = selectedColor;
+        ctx.globalAlpha = 0.9;
+        const hx = x + w - handleSize;
+        const hy = y + h - handleSize;
+        drawRoundedRect(ctx, hx, hy, handleSize, handleSize, 4);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      ctx.restore();
+    });
+  }
+
   function getConnectorIconSrc(nodeRef) {
     const explicitConnectorId = String(nodeRef?.form?.selected_connector_icon || "").trim();
     if (explicitConnectorId) return getConnectorImageSrc(explicitConnectorId);
@@ -247,6 +341,94 @@
     return points;
   }
 
+  function buildBackwardOrthogonalPoints(from, to, style) {
+    const sx = from.x + NODE_W;
+    const sy = from.y + NODE_H / 2;
+    const tx = to.x;
+    const ty = to.y + NODE_H / 2;
+    const sourceStub = Math.max(24, Number(style.turnOffset) || 56);
+    const outerMargin = Math.max(40, Number(style.backwardOuterMargin) || 72);
+    const targetInset = Math.max(12, Number(style.targetInset) || 18);
+    const detourDepth = Math.max(40, Number(style.detourDepth) || 64);
+    const routeX = Math.max(sx + sourceStub, Math.max(from.x + NODE_W, to.x + NODE_W) + outerMargin);
+    const entryX = Math.min(tx - targetInset, tx - 12);
+    const dy = ty - sy;
+    const minVerticalClearance = Math.max(18, Math.floor(NODE_H * 0.35));
+    let laneY;
+    if (Math.abs(dy) <= detourDepth) {
+      // 同一段/近傍段は外側へ逃がしてノード干渉を避ける
+      laneY = dy >= 0 ? ty + detourDepth : ty - detourDepth;
+    } else if (dy > 0) {
+      // target が下なら、まず中間レーン（target の上側）を試す
+      const middleLane = ty - detourDepth;
+      laneY = (middleLane - sy >= minVerticalClearance) ? middleLane : (ty + detourDepth);
+    } else {
+      // target が上なら、まず中間レーン（target の下側）を試す
+      const middleLane = ty + detourDepth;
+      laneY = (sy - middleLane >= minVerticalClearance) ? middleLane : (ty - detourDepth);
+    }
+    laneY = Math.round(laneY);
+    return [
+      { x: sx, y: sy },
+      { x: routeX, y: sy },
+      { x: routeX, y: laneY },
+      { x: entryX, y: laneY },
+      { x: entryX, y: ty },
+      { x: tx, y: ty }
+    ];
+  }
+
+  function drawOrthogonalEdge(ctx, points, style) {
+    if (!Array.isArray(points) || points.length < 2) return;
+    const last = points[points.length - 1];
+    const prev = points[points.length - 2];
+    const cornerRadius = Math.max(0, Number(style.cornerRadius) || 0);
+
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    if (cornerRadius <= 0 || points.length < 3) {
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    } else {
+      for (let i = 1; i < points.length - 1; i++) {
+        const p0 = points[i - 1];
+        const p1 = points[i];
+        const p2 = points[i + 1];
+        const v1x = p1.x - p0.x;
+        const v1y = p1.y - p0.y;
+        const v2x = p2.x - p1.x;
+        const v2y = p2.y - p1.y;
+        const len1 = Math.hypot(v1x, v1y);
+        const len2 = Math.hypot(v2x, v2y);
+        if (len1 < 0.001 || len2 < 0.001) {
+          ctx.lineTo(p1.x, p1.y);
+          continue;
+        }
+        const unit1x = v1x / len1;
+        const unit1y = v1y / len1;
+        const unit2x = v2x / len2;
+        const unit2y = v2y / len2;
+        const r = Math.min(cornerRadius, len1 / 2, len2 / 2);
+        const startX = p1.x - unit1x * r;
+        const startY = p1.y - unit1y * r;
+        const endX = p1.x + unit2x * r;
+        const endY = p1.y + unit2y * r;
+        ctx.lineTo(startX, startY);
+        ctx.quadraticCurveTo(p1.x, p1.y, endX, endY);
+      }
+      ctx.lineTo(last.x, last.y);
+    }
+    ctx.strokeStyle = style.color;
+    ctx.lineWidth = style.width;
+    ctx.setLineDash(style.dash || []);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    if (style.arrow) {
+      const angle = Math.atan2(last.y - prev.y, last.x - prev.x);
+      drawArrowHead(ctx, last.x, last.y, angle, style.arrowSize || 6, style.color);
+    }
+  }
+
   function drawEdge(ctx, from, to, style) {
     const sx = from.x + NODE_W;
     const sy = from.y + NODE_H / 2;
@@ -255,43 +437,42 @@
 
     if (style.mode === "merge_orthogonal") {
       const points = buildMergeOrthogonalPoints(from, to, style);
-      const prev = points[points.length - 2];
-
-      ctx.beginPath();
-      ctx.moveTo(points[0].x, points[0].y);
-      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
-      ctx.strokeStyle = style.color;
-      ctx.lineWidth = style.width;
-      ctx.setLineDash(style.dash || []);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
-      if (style.arrow) {
-        const angle = Math.atan2(ty - prev.y, tx - prev.x);
-        drawArrowHead(ctx, tx, ty, angle, style.arrowSize || 6, style.color);
-      }
+      drawOrthogonalEdge(ctx, points, style);
       return;
     }
 
-    const k = style.sigmoidK || 12;
-    const center = style.sigmoidBias || 0.82;
-    const steps = Math.max(18, Math.min(64, Math.floor(Math.abs(tx - sx) / 8)));
-    let prevX = sx;
-    let prevY = sy;
+    // x同値/逆向きは、開始方向を右向きで固定した直交ルートで描く
+    if (tx <= sx + 1) {
+      const points = buildBackwardOrthogonalPoints(from, to, style);
+      drawOrthogonalEdge(ctx, points, { ...style, cornerRadius: Math.max(0, Number(style.backwardCornerRadius) || 10) });
+      return;
+    }
+
+    const totalDx = Math.max(1, tx - sx);
+    const preferredStub = Math.max(6, Number(style.endpointStub) || 11);
+    const maxStub = Math.max(2, Math.floor((totalDx - 2) / 2));
+    const stub = Math.min(preferredStub, maxStub);
+    const startStubX = sx + stub;
+    const endStubX = tx - stub;
+    const middleSpan = Math.max(0, endStubX - startStubX);
+    const prevX = endStubX;
+    const prevY = ty;
 
     ctx.beginPath();
     ctx.moveTo(sx, sy);
-    for (let i = 1; i <= steps; i += 1) {
-      const t = i / steps;
-      const x = sx + (tx - sx) * t;
-      const eased = normalizedSigmoid(t, k, center);
-      const y = sy + (ty - sy) * eased;
-      ctx.lineTo(x, y);
-      if (i === steps - 1) {
-        prevX = x;
-        prevY = y;
-      }
+    ctx.lineTo(startStubX, sy);
+    if (middleSpan > 0.5) {
+      // スタブ接続は水平接線を維持しつつ、2段cubicで曲率変化をなめらかにする
+      const midX = (startStubX + endStubX) / 2;
+      const midY = (sy + ty) / 2;
+      const a = Math.max(2, Math.min(8, middleSpan * 0.25));
+      const b = Math.max(2, Math.min(10, middleSpan * 0.18));
+      ctx.bezierCurveTo(startStubX + a, sy, midX - b, sy, midX, midY);
+      ctx.bezierCurveTo(midX + b, ty, endStubX - a, ty, endStubX, ty);
+    } else {
+      ctx.lineTo(endStubX, ty);
     }
+    ctx.lineTo(tx, ty);
 
     ctx.strokeStyle = style.color;
     ctx.lineWidth = style.width;
@@ -367,18 +548,16 @@
     const rootStyles = getComputedStyle(document.documentElement);
     const warningAccent = rootStyles.getPropertyValue("--semantic-error-fg").trim() || "#9e1f5f";
     const warningText = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
-    const flowEdgeMain = rootStyles.getPropertyValue("--flow-edge-main").trim() || "#5c6f88";
-    const flowEdgeSecondary = rootStyles.getPropertyValue("--flow-edge-secondary").trim() || "#74859d";
-    const flowEdgeParallel = rootStyles.getPropertyValue("--flow-edge-parallel").trim() || "#6e829c";
-    const flowEdgeMerge = rootStyles.getPropertyValue("--flow-edge-merge").trim() || "#129d7a";
+    const flowEdgeUnified = "#d4dae4";
+    const flowEdgeWidthUnified = 2;
+    const flowSelectedNodeAccent = "#5332f7";
+    const flowSelectedEdgeAccent = "#4c4f64";
     const flowNodeBorder = rootStyles.getPropertyValue("--flow-node-border").trim() || "#9aa5b6";
-    const flowNodeBorderSelected = rootStyles.getPropertyValue("--flow-node-border-selected").trim() || "#4b4e63";
-    const flowNodeStatusRunning = rootStyles.getPropertyValue("--flow-node-status-running").trim() || "#3b82f6";
-    const flowNodeStatusSuccess = rootStyles.getPropertyValue("--flow-node-status-success").trim() || "#16a34a";
-    const flowNodeStatusError = rootStyles.getPropertyValue("--flow-node-status-error").trim() || "#dc2626";
-    const flowNodeShadow = rootStyles.getPropertyValue("--alpha-shadow-10").trim() || "rgba(79, 67, 67, 0.68)";
-    const flowLoopFrameFill = rootStyles.getPropertyValue("--flow-loop-frame-fill").trim() || "#eef8ee";
-    const flowLoopFrameStroke = rootStyles.getPropertyValue("--flow-loop-frame-stroke").trim() || "#1a7259";
+    const flowNodeStatusRunning = "#5332f7";
+    const flowNodeStatusError = "#ef475a";
+    const flowNodeShadow = rootStyles.getPropertyValue("--flow-node-shadow").trim()
+      || rootStyles.getPropertyValue("--alpha-shadow-10").trim()
+      || "rgba(79, 67, 67, 0.68)";
     const flowControlFillActive = rootStyles.getPropertyValue("--flow-control-fill-active").trim() || "#4b4e63";
     const flowControlStroke = rootStyles.getPropertyValue("--flow-control-stroke").trim() || "#bdbdbd";
     const flowControlStrokeActive = rootStyles.getPropertyValue("--flow-control-stroke-active").trim() || "#4b4e63";
@@ -391,61 +570,57 @@
     const textPrimary = rootStyles.getPropertyValue("--text-primary").trim() || "#4b4e63";
     const pseudoNodeBorder = rootStyles.getPropertyValue("--border-grid").trim() || "#e1e3ec";
     const flowStepBadgeBorder = rootStyles.getPropertyValue("--flow-step-badge-border").trim() || "#c8cad8";
+    const stickyNoteMode = !!view.stickyNoteMode;
+    const stickyNotes = resolveRenderedStickyNotes(view, model);
+    const stickyNoteSelectedId = String(view.stickyNoteSelectedId || "");
 
-    (model.loopFrames || []).forEach((frame) => {
-      ctx.fillStyle = flowLoopFrameFill;
-      drawRoundedRect(ctx, frame.x, frame.y, frame.w, frame.h, 12);
-      ctx.fill();
-      ctx.strokeStyle = flowLoopFrameStroke;
-      ctx.lineWidth = 2;
-      ctx.setLineDash([]);
-      drawRoundedRect(ctx, frame.x, frame.y, frame.w, frame.h, 12);
-      ctx.stroke();
-    });
+    if (!stickyNoteMode) {
+      drawStickyNotes(ctx, stickyNotes, { mode: "normal", selectedId: "", editable: false });
+    }
 
-    model.edges.forEach((edge) => {
-      const from = model.nodeMap.get(edge.from);
-      const to = model.nodeMap.get(edge.to);
-      if (!from || !to) return;
+    const drawModelEdge = ({ edge, from, to, isSelectedEdge }) => {
+      if (edge.kind === "to-end" || edge.kind === "to-end-main") return;
       drawEdge(ctx, from, to, {
-        color:
-          edge.kind === "to-end-main" ? flowEdgeMain :
-          edge.kind === "to-end" ? flowEdgeSecondary :
-          edge.kind === "merge" ? flowEdgeMerge :
-          edge.kind === "parallel" ? flowEdgeParallel : flowEdgeMain,
-        width:
-          edge.kind === "to-end-main" ? 2.2 :
-          edge.kind === "to-end" ? 1.3 :
-          edge.kind === "merge" ? 1.8 :
-          edge.kind === "parallel" ? 1.3 : 2.2,
-        dash:
-          edge.kind === "to-end-main" ? [] :
-          edge.kind === "to-end" ? [4, 3] :
-          edge.kind === "merge" ? [8, 4] :
-          edge.kind === "parallel" ? [3, 3] : [],
+        color: isSelectedEdge ? flowSelectedEdgeAccent : flowEdgeUnified,
+        width: flowEdgeWidthUnified,
+        dash: [],
         mode: edge.kind === "merge" ? "merge_orthogonal" : edge.kind === "parallel" ? "parallel_branch" : "horizontal",
         sigmoidBias: edge.kind === "parallel" ? 0.88 : edge.kind === "merge" ? 0.84 : 0.92,
         sigmoidK: edge.kind === "parallel" ? 10 : edge.kind === "merge" ? 9 : 12,
         arrow: true,
-        arrowSize: edge.kind === "parallel" || edge.kind === "merge" ? 5 : edge.kind === "to-end" ? 5 : 6,
+        arrowSize: edge.kind === "parallel" || edge.kind === "merge" ? 6 : edge.kind === "to-end" ? 6 : 7,
         turnOffset: edge.kind === "merge" ? 28 : 56,
         targetInset: edge.kind === "merge" ? 18 : 0,
-        detourDepth: edge.kind === "merge" ? 64 : 0
+        detourDepth: edge.kind === "merge" ? 64 : 0,
+        backwardCornerRadius: 10
       });
+    };
+
+    const edgeDrawList = [];
+    model.edges.forEach((edge) => {
+      const from = model.nodeMap.get(edge.from);
+      const to = model.nodeMap.get(edge.to);
+      if (!from || !to) return;
+      const isSelectedEdge = !!state.selectedNodeId && (edge.from === state.selectedNodeId || edge.to === state.selectedNodeId);
+      edgeDrawList.push({ edge, from, to, isSelectedEdge });
     });
+
+    edgeDrawList.filter((item) => !item.isSelectedEdge).forEach(drawModelEdge);
+    edgeDrawList.filter((item) => item.isSelectedEdge).forEach(drawModelEdge);
 
     if (view.mergeDragState?.sourceId) {
       const sourceNode = model.nodeMap.get(view.mergeDragState.sourceId);
       if (sourceNode) {
+        const isSelectedEdge = !!state.selectedNodeId && state.selectedNodeId === view.mergeDragState.sourceId;
         const targetNode = view.mergeDragState.targetNodeId ? model.nodeMap.get(view.mergeDragState.targetNodeId) : null;
         const previewTo = targetNode || {
           x: Math.max(sourceNode.x + NODE_W + 18, view.mergeDragState.canvasX || sourceNode.x + NODE_W + 18),
           y: (view.mergeDragState.canvasY || (sourceNode.y + NODE_H / 2)) - NODE_H / 2
         };
         drawEdge(ctx, sourceNode, previewTo, {
-          color: flowEdgeMerge,
-          width: 1.4,
-          dash: [6, 4],
+          color: isSelectedEdge ? flowSelectedEdgeAccent : flowEdgeUnified,
+          width: flowEdgeWidthUnified,
+          dash: [],
           mode: "merge_orthogonal",
           arrow: false,
           turnOffset: 28,
@@ -464,7 +639,7 @@
         .map((taskView) => taskView.id)
     );
 
-    const nodesToDraw = [model.start, ...model.taskViews, ...(model.loopEndViews || []), model.end];
+    const nodesToDraw = [model.start, ...model.taskViews, ...(model.loopEndViews || [])];
     let hasRunningAnimation = false;
     nodesToDraw.forEach((node) => {
       const isStart = node.kind === "start";
@@ -472,18 +647,15 @@
       const isTask = node.kind === "task";
       const isLoopEnd = node.kind === "loop-end";
       const isSelected = (isTask || isStart) && state.selectedNodeId === node.id;
-      const isParallel = isTask && !!node.nodeRef.parallelOf;
       const isDraggingNode = !!(view.dragState && view.dragState.started && view.dragState.nodeId === node.id);
       const hasAlert = isTask && alertNodeIds.has(node.id);
       const stepStatus = isTask ? String((state.stepStatuses && state.stepStatuses[node.nodeRef.stepName]) || "") : "";
       if (stepStatus === "running") hasRunningAnimation = true;
       const statusStrokeColor =
         stepStatus === "running" ? flowNodeStatusRunning :
-        stepStatus === "success" ? flowNodeStatusSuccess :
         stepStatus === "error" ? flowNodeStatusError : "";
       const statusStrokeWidth =
-        stepStatus === "running" || stepStatus === "error" ? 3 :
-        stepStatus === "success" ? 2 : 0;
+        stepStatus === "running" || stepStatus === "error" ? 3.4 : 0;
       const pseudoNodeInset = isStart || isEnd ? 9 : 0;
       const drawX = node.x + pseudoNodeInset;
       const drawY = node.y + pseudoNodeInset;
@@ -495,17 +667,21 @@
         drawRunningOrbit(ctx, node, flowNodeStatusRunning, animationNow);
       }
 
-      ctx.setLineDash(isParallel ? [4, 2] : []);
+      ctx.setLineDash([]);
       ctx.fillStyle = isStart || isEnd ? surfacePseudo : surfacePage;
       ctx.globalAlpha = isDraggingNode ? 0.28 : 1;
       ctx.shadowColor = flowNodeShadow;
       ctx.shadowBlur = isStart || isEnd ? 2 : isSelected ? 7 : 5;
       ctx.shadowOffsetX = 0;
       ctx.shadowOffsetY = isStart || isEnd ? 1 : 2;
-      ctx.strokeStyle = isStart || isEnd
-        ? (isSelected ? flowNodeBorderSelected : pseudoNodeBorder)
-        : statusStrokeColor || (isSelected ? flowNodeBorderSelected : flowNodeBorder);
-      ctx.lineWidth = isStart || isEnd ? (isSelected ? 2 : 1) : Math.max(statusStrokeWidth, isSelected ? 2 : 1);
+      ctx.strokeStyle = isSelected
+        ? flowSelectedNodeAccent
+        : isStart || isEnd
+          ? pseudoNodeBorder
+          : statusStrokeColor || flowNodeBorder;
+      ctx.lineWidth = isStart || isEnd
+        ? (isSelected ? 3.4 : 1.4)
+        : Math.max(statusStrokeWidth, isSelected ? 3.4 : 1.4);
       if (isStart) drawOneSideRoundedRect(ctx, drawX, drawY, drawW, drawH, "left");
       else if (isEnd) drawOneSideRoundedRect(ctx, drawX, drawY, drawW, drawH, "right");
       else drawRoundedRect(ctx, node.x, node.y, NODE_W, NODE_H, 8);
@@ -602,15 +778,19 @@
 
       if (isTask && String(node.description || "").trim()) {
         ctx.fillStyle = textPrimary;
-        ctx.font = "11px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+        ctx.font = "12px 'Segoe UI', 'Yu Gothic UI', sans-serif";
         ctx.textAlign = "center";
         ctx.textBaseline = "top";
         wrapText(ctx, node.description, NODE_W + 40).forEach((line, idx) => {
-          ctx.fillText(line, node.x + NODE_W / 2, node.y + NODE_H + 6 + idx * 13);
+          ctx.fillText(line, node.x + NODE_W / 2, node.y + NODE_H + 6 + idx * 14);
         });
         ctx.textBaseline = "alphabetic";
       }
     });
+
+    if (stickyNoteMode) {
+      drawStickyNotes(ctx, stickyNotes, { mode: "sticky", selectedId: stickyNoteSelectedId, editable: true });
+    }
 
     drawDraggedNodePreview(ctx, view, model);
 

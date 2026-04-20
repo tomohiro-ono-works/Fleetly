@@ -36,6 +36,7 @@
 
   const flowRoot = document.getElementById("flowchart") || document.getElementById("nodes");
   let detailRoot = document.getElementById("nodeDetail");
+  let detailBottomRoot = document.getElementById("nodeDetailBottom") || detailRoot;
 
   if (!detailRoot && flowRoot && flowRoot.parentElement) {
     detailRoot = document.createElement("div");
@@ -43,8 +44,11 @@
     flowRoot.parentElement.appendChild(detailRoot);
   }
 
-  if (!flowRoot || !detailRoot) {
-    showFatal("??????(#flowchart / #nodeDetail)????????");
+  if (!detailBottomRoot) detailBottomRoot = detailRoot;
+  if (!detailRoot) detailRoot = detailBottomRoot;
+
+  if (!flowRoot || (!detailRoot && !detailBottomRoot)) {
+    showFatal("描画先(#flowchart / #nodeDetail)が見つかりません");
     return;
   }
 
@@ -56,6 +60,13 @@
   const detailPanel = document.querySelector(".detail-panel");
   const mainRoot = document.querySelector("main");
   const bodyRoot = document.body;
+  const rightSidebarRefs = shellApi.getRightSidebarRefs?.() || {};
+  const rightSidebar = rightSidebarRefs.container || document.getElementById("rightSidebar");
+  const rightSidebarRail = rightSidebarRefs.rail || document.getElementById("rightSidebarRail");
+  const rightSidebarToggle = rightSidebarRefs.toggle || document.getElementById("rightSidebarToggle");
+  const rightSidebarResizer = rightSidebarRefs.resizer || document.getElementById("rightSidebarResizer");
+  const detailPanelResizer = document.getElementById("detailPanelResizer");
+  const splitDetailLayout = !!detailRoot && !!detailBottomRoot && detailBottomRoot !== detailRoot;
   const bodyDataset = bodyRoot?.dataset || {};
   const urlParams = new URLSearchParams(window.location.search);
   let importInput = null;
@@ -93,6 +104,7 @@
       appMode: String(source.appMode || ""),
       flowName: String(source.flowName || ""),
       nodes: cloneValue(Array.isArray(source.nodes) ? source.nodes : []),
+      stickyNotes: cloneValue(Array.isArray(source.stickyNotes) ? source.stickyNotes : []),
       startParameters: cloneValue(Array.isArray(source.startParameters) ? source.startParameters : []),
       nextStepSeq: Number(source.nextStepSeq) || 1,
       hiddenBindings: cloneValue(source.hiddenBindings && typeof source.hiddenBindings === "object" ? source.hiddenBindings : {}),
@@ -351,13 +363,18 @@
   }
   let activeMode = DEFAULT_APP_MODE;
   let state;
+  const RIGHT_PANEL_KEYS = ["detail", "yaml", "variables", "log"];
+  let activeRightPanel = "detail";
   let currentRunId = "";
+  const runKindById = Object.create(null);
   let lastRunSummary = null;
   let stateChangeFrameId = 0;
   let pendingStateChangeOptions = null;
   let stepStatusFlushTimer = 0;
   const pendingStepStatuses = {};
-  let lastStepStatusRenderAt = 0;
+  let lastHeaderSyncSignature = "";
+  let lastRightPanelSyncKey = "";
+  let successStatusResetObserver = null;
   const renderPerf = {
     count: 0,
     totalMs: 0,
@@ -372,6 +389,51 @@
     templates: [],
     refreshToken: 0,
   };
+
+  function refreshFlowStatusOnly() {
+    const uiNode = ((window.zizPackages || {}).ui || {}).node || window.uiNode || {};
+    if (typeof uiNode.refreshFlowStatus === "function") {
+      uiNode.refreshFlowStatus({ root: flowRoot, state });
+    }
+  }
+
+  function clearStepStatusesForVisuals() {
+    if (!state || !state.stepStatuses || typeof state.stepStatuses !== "object") return;
+    if (!Object.keys(state.stepStatuses).length) return;
+    state.stepStatuses = {};
+    refreshFlowStatusOnly();
+  }
+
+  function armSuccessStatusResetOnDialogClose() {
+    const dialogRoot = document.getElementById("appDialog");
+    if (!dialogRoot) {
+      clearStepStatusesForVisuals();
+      return;
+    }
+    if (successStatusResetObserver) {
+      successStatusResetObserver.disconnect();
+      successStatusResetObserver = null;
+    }
+    successStatusResetObserver = new MutationObserver(() => {
+      if (dialogRoot.classList.contains("is-open")) return;
+      if (successStatusResetObserver) {
+        successStatusResetObserver.disconnect();
+        successStatusResetObserver = null;
+      }
+      clearStepStatusesForVisuals();
+    });
+    successStatusResetObserver.observe(dialogRoot, {
+      attributes: true,
+      attributeFilter: ["class", "aria-hidden"],
+    });
+  }
+
+  function showRunCompletedDialog(summary, runId) {
+    const flowName = String(summary?.flow_name || state?.flowName || "フロー");
+    armSuccessStatusResetOnDialogClose();
+    showDialog(`${flowName} の実行が完了しました。`, { kind: "success", title: "実行完了" });
+    console.info(`[run:${runId || "-"}] 実行完了ダイアログを表示`);
+  }
 
   function mergeStateChangeOptions(base, incoming) {
     const baseHistory = base ? base.history !== false : false;
@@ -412,12 +474,28 @@
       if (detailPanel) {
         detailPanel.hidden = !!homeViewModel.visible;
       }
+      if (rightSidebar) {
+        rightSidebar.hidden = !!homeViewModel.visible;
+      }
+      if (rightSidebarRail) {
+        rightSidebarRail.hidden = !!homeViewModel.visible;
+      }
       if (mainRoot) {
-        mainRoot.style.paddingBottom = homeViewModel.visible ? "0px" : (detailPanel ? `${(detailPanel.getBoundingClientRect().height || 300) + 20}px` : "0px");
+        if (splitDetailLayout) {
+          mainRoot.style.paddingBottom = homeViewModel.visible ? "0px" : "";
+        } else {
+          mainRoot.style.paddingBottom = homeViewModel.visible ? "0px" : (detailPanel ? `${(detailPanel.getBoundingClientRect().height || 300) + 20}px` : "0px");
+        }
+      }
+      if (lastRightPanelSyncKey !== activeRightPanel) {
+        lastRightPanelSyncKey = activeRightPanel;
+        shellApi.setActiveRightPanel?.(activeRightPanel);
       }
       renderApp({
         flowRoot,
         detailRoot,
+        detailBottomRoot,
+        rightPanelTab: activeRightPanel,
         state,
         config: buildConfigForMode(state.appMode),
         onStateChanged,
@@ -464,10 +542,8 @@
       state.stepStatuses[stepId] = status;
       delete pendingStepStatuses[stepId];
     });
-    const now = Date.now();
-    const needsFullRender = !!options.forceRender || (now - lastStepStatusRenderAt >= 800);
+    const needsFullRender = !!options.forceRender;
     if (needsFullRender) {
-      lastStepStatusRenderAt = now;
       onStateChanged({ history: false });
     } else {
       const uiNode = ((window.zizPackages || {}).ui || {}).node || window.uiNode || {};
@@ -597,6 +673,7 @@
       nextState.flowName = getModeMeta(normalized).defaultFlowName;
     }
     nextState.appMode = normalized;
+    nextState.stickyNotes = normalizeStickyNotes(nextState.stickyNotes);
     nextState.hiddenBindings = {};
     nextState.fileName = "";
     nextState.stepStatuses = {};
@@ -625,6 +702,7 @@
       appMode: normalized,
       flowName: String(savedState.flowName || "").trim() || baseState.flowName,
       nodes: restoredNodes,
+      stickyNotes: normalizeStickyNotes(savedState.stickyNotes),
       startParameters: Array.isArray(savedState.startParameters) ? savedState.startParameters : baseState.startParameters,
       selectedNodeId: hasSelectedNode ? selectedNodeId : (restoredNodes[0]?.id || baseState.selectedNodeId || null),
       pendingMergeSourceId: hasPendingMergeNode ? pendingMergeSourceId : null,
@@ -822,6 +900,45 @@
     return data;
   }
 
+  function normalizeCanvasPosition(value) {
+    if (!value || typeof value !== "object") return null;
+    const x = Number(value.x);
+    const y = Number(value.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return {
+      x: Math.max(8, Math.round(x)),
+      y: Math.max(8, Math.round(y))
+    };
+  }
+
+  function normalizeStickyNote(value) {
+    if (!value || typeof value !== "object") return null;
+    const id = String(value.id || "").trim();
+    const x = Number(value.x);
+    const y = Number(value.y);
+    const w = Number(value.w);
+    const h = Number(value.h);
+    if (!id) return null;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return null;
+    return {
+      id,
+      x: Math.max(8, Math.round(x)),
+      y: Math.max(8, Math.round(y)),
+      w: Math.max(120, Math.round(w)),
+      h: Math.max(72, Math.round(h)),
+      text: String(value.text || ""),
+      color: String(value.color || "#fff2a8"),
+      anchorNodeId: value.anchorNodeId ? String(value.anchorNodeId) : null
+    };
+  }
+
+  function normalizeStickyNotes(value) {
+    if (!Array.isArray(value)) return [];
+    return value
+      .map((item) => normalizeStickyNote(item))
+      .filter(Boolean);
+  }
+
   function buildStateFromYaml(data, config) {
     if (!data || typeof data !== "object") {
       throw new Error("YAMLのルート構造が不正です");
@@ -856,6 +973,7 @@
         ? { ...step.params }
         : {};
       const hasDescription = Object.prototype.hasOwnProperty.call(step, "description");
+      const canvasPosition = normalizeCanvasPosition(step.ui_position);
 
       const node = {
         id: createLocalNodeId(),
@@ -871,6 +989,7 @@
         parallelOrder: 1,
         outputs: [stepName]
       };
+      if (canvasPosition) node.canvasPosition = canvasPosition;
 
       nodeByStep.set(stepName, node);
       nodes.push(node);
@@ -956,6 +1075,7 @@
       throw new Error(`metadata.mode が不正です: ${data.metadata?.mode || ""}`);
     }
     const importedMode = normalizeAppMode(rawMode);
+    const stickyNotes = normalizeStickyNotes(data.notes);
 
     return {
       state: {
@@ -963,6 +1083,7 @@
         appMode: importedMode,
         flowName: String(data.metadata?.name || "").trim() || getModeMeta(importedMode).defaultFlowName,
         nodes,
+        stickyNotes,
         startParameters,
         selectedNodeId: nodes[0]?.id || null,
         pendingMergeSourceId: null,
@@ -1012,12 +1133,27 @@
         params,
         output_variable: stepId
       };
+      const canvasPosition = normalizeCanvasPosition(n.canvasPosition);
       const description = typeof n.description === "string" ? n.description : "";
 
       if (description || n.descriptionAuto === false) exported.description = description;
       if (parallelOfStep) exported.parallel_of = parallelOfStep;
+      if (canvasPosition) exported.ui_position = canvasPosition;
       return exported;
     });
+  }
+
+  function buildExportNotes(stickyNotes) {
+    return normalizeStickyNotes(stickyNotes).map((note) => ({
+      id: note.id,
+      x: note.x,
+      y: note.y,
+      w: note.w,
+      h: note.h,
+      text: note.text,
+      color: note.color,
+      anchorNodeId: note.anchorNodeId || null
+    }));
   }
 
   function syncHeaderForMode() {
@@ -1028,7 +1164,7 @@
     bodyRoot.dataset.nativeFrame = bridgeApi?.available?.() ? "false" : "true";
     const undoEnabled = canUndo();
     const redoEnabled = canRedo();
-    shellApi.updateHeader?.({
+    const nextHeaderPayload = {
       value: state.flowName || meta.defaultFlowName,
       placeholder: meta.defaultFlowName,
       ariaLabel: `${meta.label}名`,
@@ -1055,7 +1191,12 @@
         title: `${meta.label}をインポート`,
         ariaLabel: `${meta.label}をインポート`,
       },
-    });
+    };
+    const nextHeaderSignature = JSON.stringify(nextHeaderPayload);
+    if (nextHeaderSignature !== lastHeaderSyncSignature) {
+      lastHeaderSyncSignature = nextHeaderSignature;
+      shellApi.updateHeader?.(nextHeaderPayload);
+    }
     if (importInput) {
       importInput.accept = ".zizw,.zizd,.zizq";
     }
@@ -1236,6 +1377,11 @@
 
   function ensureBridgeState(targetState = state) {
     if (!targetState) return {};
+    if (!Array.isArray(targetState.stickyNotes)) {
+      targetState.stickyNotes = [];
+    } else {
+      targetState.stickyNotes = normalizeStickyNotes(targetState.stickyNotes);
+    }
     if (!targetState.hiddenBindings || typeof targetState.hiddenBindings !== "object" || Array.isArray(targetState.hiddenBindings)) {
       targetState.hiddenBindings = {};
     }
@@ -1251,13 +1397,15 @@
       metadata: buildMetadataForMode(targetState.appMode, getFlowName()),
       variables: buildVariablesPayload(targetState.startParameters),
       steps: buildExportSteps(targetState.nodes, activeConfig),
-      flows: buildFlows(targetState.nodes)
+      flows: buildFlows(targetState.nodes),
+      notes: buildExportNotes(targetState.stickyNotes)
     };
   }
 
   function applyImportedFlowState(importedState, options = {}) {
     const importedMode = normalizeAppMode(options.mode || importedState?.appMode);
     importedState.appMode = importedMode;
+    importedState.stickyNotes = normalizeStickyNotes(importedState.stickyNotes);
     importedState.hiddenBindings = (options.hiddenBindings && typeof options.hiddenBindings === "object") ? options.hiddenBindings : {};
     importedState.fileName = String(options.fileName || "");
     importedState.stepStatuses = {};
@@ -1345,6 +1493,19 @@
       if (!setActiveMode("dataflow")) {
         hideHomeScreen();
         onStateChanged({ history: false });
+      }
+      return;
+    }
+    if (type === "create-flow") {
+      if (!setActiveMode("dataflow")) {
+        hideHomeScreen();
+        onStateChanged({ history: false });
+      }
+      return;
+    }
+    if (type === "create-sql") {
+      if (!setActiveMode("query-builder")) {
+        navigateToUrl(toAbsolutePageUrl(bodyDataset.queryBuilderUrl || "./query-builder.html"));
       }
       return;
     }
@@ -1477,14 +1638,18 @@
       showDialog(`必須パラメータが未入力です。\n\n${requiredErrors.join("\n")}`, { kind: "warning", title: "入力確認" });
       return null;
     }
-    if (!targetNode) {
-      state.stepStatuses = {};
-    } else {
-      if (!state.stepStatuses || typeof state.stepStatuses !== "object") {
-        state.stepStatuses = {};
-      }
+    if (stepStatusFlushTimer) {
+      window.clearTimeout(stepStatusFlushTimer);
+      stepStatusFlushTimer = 0;
+    }
+    Object.keys(pendingStepStatuses).forEach((stepId) => {
+      delete pendingStepStatuses[stepId];
+    });
+    state.stepStatuses = {};
+    if (targetNode) {
       state.stepStatuses[String(targetNode.stepName || "")] = "running";
     }
+    refreshFlowStatusOnly();
     const request = {
       mode: state.appMode,
       flow: buildCompiledFlowPayload(state)
@@ -1494,6 +1659,9 @@
     }
     const payload = await bridgeApi.call("flow.run", request);
     currentRunId = String(payload?.run_id || "");
+    if (currentRunId) {
+      runKindById[currentRunId] = targetNode ? "single" : "flow";
+    }
     console.info(`[webview-run] accepted source=${source} run_id=${currentRunId}`);
     await logUiEvent("flow.run", {
       source,
@@ -1531,21 +1699,35 @@
       if (summary) {
         console.info(`[run:${payload.run_id || "-"}] 完了: ${summary.flow_name || ""}`);
       }
-      onStateChanged({ history: false });
+      const completedRunId = String(payload.run_id || "");
+      const runKind = runKindById[completedRunId] || "flow";
+      delete runKindById[completedRunId];
+      if (runKind === "flow") {
+        showRunCompletedDialog(summary, payload.run_id);
+      }
+      refreshFlowStatusOnly();
       return;
     }
     if (message.type === "run.failed") {
       flushStepStatusUpdates();
       await fetchRunSummary(payload.run_id);
-      onStateChanged({ history: false });
+      const failedRunId = String(payload.run_id || "");
+      delete runKindById[failedRunId];
+      refreshFlowStatusOnly();
     }
   }
 
   function getDetailPanelHeightBounds() {
+    const minH = 88;
+    if (splitDetailLayout && mainRoot) {
+      const rootHeight = Math.max(240, Math.floor(mainRoot.getBoundingClientRect().height || 0));
+      const maxH = Math.max(minH, Math.floor(rootHeight * 0.75));
+      const midH = Math.max(minH, Math.floor((minH + maxH) / 2));
+      return { minH, maxH, midH };
+    }
     const header = document.querySelector("header");
     const headerBox = header ? header.getBoundingClientRect() : null;
     const headerBottom = headerBox ? Math.max(0, Math.floor(headerBox.bottom)) : 76;
-    const minH = 88;
     const maxH = Math.max(minH, Math.floor(window.innerHeight - headerBottom - 20));
     const midH = Math.max(minH, Math.floor((minH + maxH) / 2));
     return { minH, maxH, midH };
@@ -1556,12 +1738,23 @@
     const { minH, maxH } = getDetailPanelHeightBounds();
     const h = Math.max(minH, Math.min(maxH, Math.floor(px)));
     detailPanel.style.height = `${h}px`;
-    if (mainRoot) mainRoot.style.paddingBottom = `${h + 20}px`;
+    if (!splitDetailLayout && mainRoot) mainRoot.style.paddingBottom = `${h + 20}px`;
     applyFlowViewportHeight();
   }
 
   function applyFlowViewportHeight() {
     if (!flowRoot || !detailPanel) return;
+    if (splitDetailLayout && mainRoot) {
+      const mainHeight = Math.floor(mainRoot.getBoundingClientRect().height || 0);
+      if (homeViewModel.visible) {
+        flowRoot.style.height = `${Math.max(320, mainHeight - 8)}px`;
+        return;
+      }
+      const detailH = detailPanel.hidden ? 0 : (detailPanel.getBoundingClientRect().height || 300);
+      const available = Math.floor(mainHeight - detailH - 10);
+      flowRoot.style.height = `${Math.max(180, available)}px`;
+      return;
+    }
     const header = document.querySelector("header");
     const headerBox = header ? header.getBoundingClientRect() : null;
     const headerBottom = headerBox ? Math.max(0, Math.floor(headerBox.bottom)) : 76;
@@ -1670,16 +1863,25 @@
     let startY = 0;
     let startH = 0;
 
-    detailPanel.addEventListener("mousedown", (e) => {
-      const head = e.target.closest(".node-detail-meta");
-      if (!head) return;
+    const beginDrag = (e) => {
+      if (detailPanelResizer) {
+        if (e.target !== detailPanelResizer && !e.target.closest("#detailPanelResizer")) return;
+      } else {
+        const head = e.target.closest(".node-detail-meta");
+        if (!head) return;
+      }
       if (e.target.closest("button, input, select, textarea, a, label")) return;
       dragging = true;
       startY = e.clientY;
       startH = detailPanel.getBoundingClientRect().height;
       document.body.style.userSelect = "none";
       e.preventDefault();
-    });
+    };
+
+    detailPanel.addEventListener("mousedown", beginDrag);
+    if (detailPanelResizer) {
+      detailPanelResizer.addEventListener("mousedown", beginDrag);
+    }
 
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;
@@ -1699,9 +1901,12 @@
       applyFlowViewportHeight();
     });
 
-    detailPanel.addEventListener("dblclick", (e) => {
-      const hitNodeHead = e.target.closest(".node-detail-meta");
-      if (!hitNodeHead) return;
+    const dblclickTarget = detailPanelResizer || detailPanel;
+    dblclickTarget.addEventListener("dblclick", (e) => {
+      if (!detailPanelResizer) {
+        const hitNodeHead = e.target.closest(".node-detail-meta");
+        if (!hitNodeHead) return;
+      }
       if (e.target.closest("button, input, select, textarea, a, label, .connector-flyout, .combo-field")) {
         return;
       }
@@ -1711,10 +1916,132 @@
     });
   }
 
+  function getRightSidebarWidthBounds() {
+    const FIXED_RIGHT_SIDEBAR = {
+      initial: 400,
+      min: 300,
+      maxViewportRatio: 0.5
+    };
+    const appShell = document.querySelector(".app-shell");
+    const leftSidebar = document.querySelector(".sidebar");
+    const rightRail = rightSidebarRail || document.querySelector(".right-sidebar-rail");
+    const shellWidth = Math.floor(appShell?.getBoundingClientRect().width || window.innerWidth);
+    const leftWidth = Math.floor(leftSidebar?.getBoundingClientRect().width || 0);
+    const rightRailWidth = Math.floor(rightRail?.getBoundingClientRect().width || 0);
+    const available = Math.max(240, shellWidth - leftWidth - rightRailWidth);
+    const viewportMax = Math.max(1, Math.floor(window.innerWidth * FIXED_RIGHT_SIDEBAR.maxViewportRatio));
+    const max = Math.min(viewportMax, available);
+    const min = Math.min(FIXED_RIGHT_SIDEBAR.min, max);
+    const initial = Math.max(min, Math.min(FIXED_RIGHT_SIDEBAR.initial, max));
+    return {
+      min,
+      max,
+      initial
+    };
+  }
+
+  function setupRightSidebar() {
+    if (!splitDetailLayout || !rightSidebar || !rightSidebarToggle || !rightSidebarRail) return;
+
+    let currentWidth = getRightSidebarWidthBounds().initial;
+    shellApi.setRightSidebarCollapsed?.(false);
+    shellApi.setRightSidebarWidth?.(currentWidth);
+
+    function applyRightSidebarWidth(nextWidthPx) {
+      const bounds = getRightSidebarWidthBounds();
+      const width = Math.max(bounds.min, Math.min(bounds.max, Math.floor(nextWidthPx)));
+      currentWidth = width;
+      shellApi.setRightSidebarWidth?.(width, () => {
+        applyFlowViewportHeight();
+      });
+      return { bounds, width };
+    }
+
+    function openRightSidebar(widthPx) {
+      const bounds = getRightSidebarWidthBounds();
+      const requested = Number(widthPx);
+      const target = Number.isFinite(requested) ? requested : (currentWidth || bounds.initial);
+      shellApi.setRightSidebarCollapsed?.(false, () => {
+        applyRightSidebarWidth(target);
+      });
+    }
+
+    function closeRightSidebar() {
+      shellApi.setRightSidebarCollapsed?.(true, () => {
+        applyFlowViewportHeight();
+      });
+    }
+
+    shellApi.bindRightSidebar?.({
+      onToggle: ({ event }) => {
+        event.preventDefault();
+        if (shellApi.isRightSidebarCollapsed?.()) {
+          openRightSidebar();
+        } else {
+          closeRightSidebar();
+        }
+      },
+      onPanelItem: ({ panel }) => {
+        const key = String(panel || "").trim();
+        if (!RIGHT_PANEL_KEYS.includes(key)) return;
+        activeRightPanel = key;
+        shellApi.setActiveRightPanel?.(activeRightPanel);
+        if (shellApi.isRightSidebarCollapsed?.()) {
+          openRightSidebar();
+        }
+        onStateChanged({ history: false });
+      }
+    });
+    shellApi.setActiveRightPanel?.(activeRightPanel);
+
+    if (rightSidebarResizer) {
+      let dragging = false;
+      let startX = 0;
+      let startWidth = 0;
+
+      rightSidebarResizer.addEventListener("mousedown", (event) => {
+        if (shellApi.isRightSidebarCollapsed?.()) {
+          openRightSidebar();
+        }
+        dragging = true;
+        startX = event.clientX;
+        startWidth = rightSidebar.getBoundingClientRect().width || currentWidth;
+        document.body.style.userSelect = "none";
+        event.preventDefault();
+      });
+
+      window.addEventListener("mousemove", (event) => {
+        if (!dragging) return;
+        const delta = startX - event.clientX;
+        const nextWidth = startWidth + delta;
+        const { bounds } = applyRightSidebarWidth(nextWidth);
+        if (nextWidth < bounds.min) {
+          dragging = false;
+          document.body.style.userSelect = "";
+          closeRightSidebar();
+        }
+      });
+
+      window.addEventListener("mouseup", () => {
+        if (!dragging) return;
+        dragging = false;
+        document.body.style.userSelect = "";
+      });
+
+      window.addEventListener("resize", () => {
+        if (shellApi.isRightSidebarCollapsed?.()) return;
+        applyRightSidebarWidth(currentWidth || getRightSidebarWidthBounds().initial);
+      });
+    }
+
+    applyRightSidebarWidth(currentWidth);
+  }
+
   setupSidebar();
   restorePendingImportedFlow();
   shellApi.setActiveSidebar?.(activeMode);
   setupDetailPanelResizer();
+  setupRightSidebar();
   applyFlowViewportHeight();
   window.addEventListener("beforeunload", persistModeStates);
 

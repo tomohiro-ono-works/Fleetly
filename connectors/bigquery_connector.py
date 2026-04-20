@@ -1,6 +1,6 @@
 from typing import Optional, List, Dict, Any
 import os
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timezone
 from decimal import Decimal
 import json
 import re
@@ -68,6 +68,88 @@ class BQConnector(BaseConnector):
             return None
         text = str(value).strip()
         return text or None
+
+    @staticmethod
+    def _to_utc_iso(value: Any) -> str:
+        if isinstance(value, datetime):
+            dt = value
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt.isoformat().replace("+00:00", "Z")
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _build_bigquery_table_url(project_id: str, dataset_id: str, table_id: str) -> str:
+        return (
+            "https://console.cloud.google.com/bigquery?ws=!1m5!1m4!4m3!"
+            f"1s{project_id}!2s{dataset_id}!3s{table_id}"
+        )
+
+    def _build_table_update_result(
+        self,
+        *,
+        job: Any,
+        project_id: str,
+        dataset_id: str,
+        table_id: str,
+    ) -> pd.DataFrame:
+        completed_at = self._to_utc_iso(
+            getattr(job, "ended", None)
+            or getattr(job, "finished", None)
+            or getattr(job, "created", None)
+        )
+        payload = {
+            "job_id": str(getattr(job, "job_id", "") or ""),
+            "project_id": str(project_id or ""),
+            "dataset_id": str(dataset_id or ""),
+            "table_id": str(table_id or ""),
+            "url": self._build_bigquery_table_url(
+                str(project_id or ""),
+                str(dataset_id or ""),
+                str(table_id or ""),
+            ),
+            "excuted_at": completed_at,
+        }
+        schema_items = [
+            {"origin_name": "job_id", "new_name": "job_id", "description": "BigQuery Job ID", "ziz_datatype": "STRING"},
+            {"origin_name": "project_id", "new_name": "project_id", "description": "BigQuery Project ID", "ziz_datatype": "STRING"},
+            {"origin_name": "dataset_id", "new_name": "dataset_id", "description": "BigQuery Dataset ID", "ziz_datatype": "STRING"},
+            {"origin_name": "table_id", "new_name": "table_id", "description": "BigQuery Table ID", "ziz_datatype": "STRING"},
+            {"origin_name": "url", "new_name": "url", "description": "BigQuery Console URL", "ziz_datatype": "STRING"},
+            {"origin_name": "excuted_at", "new_name": "excuted_at", "description": "完了時刻", "ziz_datatype": "TIMESTAMP"},
+        ]
+        return self.attach_dataframe_schema(self.to_dataframe(payload), schema_override=schema_items)
+
+    def _infer_target_table_from_job(self, project_id: str, query_job: Any) -> tuple[str, str]:
+        candidates = [
+            getattr(query_job, "ddl_target_table", None),
+            getattr(query_job, "destination", None),
+        ]
+        referenced_tables = getattr(query_job, "referenced_tables", None)
+        if isinstance(referenced_tables, list) and len(referenced_tables) == 1:
+            candidates.append(referenced_tables[0])
+        for table_ref in candidates:
+            if table_ref is None:
+                continue
+            ref_project = str(getattr(table_ref, "project", "") or "")
+            ref_dataset = str(getattr(table_ref, "dataset_id", "") or "")
+            ref_table = str(getattr(table_ref, "table_id", "") or "")
+            if ref_dataset and ref_table:
+                return ref_dataset, ref_table
+            if ref_project and ref_project != str(project_id or ""):
+                continue
+        return "", ""
+
+    @staticmethod
+    def _is_non_tabular_statement(statement_type: Any) -> bool:
+        normalized = str(statement_type or "").strip().upper()
+        if not normalized:
+            return False
+        if normalized in {"SELECT"}:
+            return False
+        return True
 
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
         project_id = params.get("project_id")
@@ -443,7 +525,22 @@ class BQConnector(BaseConnector):
                 # dict_row[key] = format_date(dict_row[key]) 
                 
             results.append(dict_row)
-            
+        
+        statement_type = str(getattr(query_job, "statement_type", "") or "").strip().upper()
+        has_schema = bool(getattr(query_job, "schema", None))
+        if self._is_non_tabular_statement(statement_type) and not has_schema and not results:
+            dataset_id, table_id = self._infer_target_table_from_job(project_id, query_job)
+            return self._build_table_update_result(
+                job=query_job,
+                project_id=str(project_id),
+                dataset_id=dataset_id,
+                table_id=table_id,
+            )
+
+        if not results:
+            schema_columns = [str(field.name) for field in (getattr(query_job, "schema", None) or [])]
+            return self.attach_dataframe_schema(pd.DataFrame(columns=schema_columns))
+
         return self.attach_dataframe_schema(self.to_dataframe(results))
 
     def execute_sql_file(
@@ -467,7 +564,7 @@ class BQConnector(BaseConnector):
                    input_data: str,
                    write_disposition: str,
                    context: dict[str, Any],
-                   schema: Optional[List[Any]] = None) -> str:
+                   schema: Optional[List[Any]] = None) -> pd.DataFrame:
         data = context.get(input_data)
         if data is None:
             raise ValueError(f"変数 '{input_data}' にデータがありません。")
@@ -500,5 +597,10 @@ class BQConnector(BaseConnector):
 
         load_job = client.load_table_from_json(records, table_ref, job_config=job_config)
         load_job.result()
-        
-        return f"Loaded {len(records)} rows to {table_ref}."
+
+        return self._build_table_update_result(
+            job=load_job,
+            project_id=str(project_id),
+            dataset_id=str(dataset_id),
+            table_id=str(table_id),
+        )

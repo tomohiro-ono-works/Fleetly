@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>簡易ダッシュボードレイアウトツール</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f3f4f6;
+      color: #111827;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: 260px 1fr 320px;
+      height: 100vh;
+    }
+
+    .panel {
+      background: #ffffff;
+      border-right: 1px solid #d1d5db;
+      overflow: auto;
+    }
+
+    .panel.right {
+      border-right: none;
+      border-left: 1px solid #d1d5db;
+    }
+
+    .panel-header {
+      padding: 14px 16px;
+      font-weight: 700;
+      border-bottom: 1px solid #e5e7eb;
+      position: sticky;
+      top: 0;
+      background: #fff;
+      z-index: 1;
+    }
+
+    .panel-body {
+      padding: 12px;
+    }
+
+    .tool-group {
+      margin-bottom: 18px;
+    }
+
+    .tool-group-title {
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 8px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+
+    .tool-list {
+      display: grid;
+      gap: 8px;
+    }
+
+    button {
+      font: inherit;
+      cursor: pointer;
+      border: 1px solid #d1d5db;
+      background: #fff;
+      color: #111827;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+
+    button:hover {
+      background: #f9fafb;
+    }
+
+    .action-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    .canvas-wrap {
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .canvas-toolbar {
+      background: #ffffff;
+      border-bottom: 1px solid #d1d5db;
+      padding: 10px 12px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    .canvas-stage {
+      flex: 1;
+      padding: 16px;
+      overflow: auto;
+    }
+
+    .canvas {
+      min-height: calc(100vh - 88px);
+      background: #ffffff;
+      border: 1px solid #d1d5db;
+      border-radius: 14px;
+      padding: 12px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.04);
+    }
+
+    .node {
+      position: relative;
+      min-width: 0;
+      min-height: 72px;
+      border: 1px solid #d1d5db;
+      border-radius: 10px;
+      background: #fff;
+      overflow: hidden;
+    }
+
+    .node.selected {
+      outline: 3px solid #60a5fa;
+      outline-offset: 2px;
+    }
+
+    .node-header {
+      font-size: 12px;
+      color: #4b5563;
+      padding: 6px 8px;
+      border-bottom: 1px solid #e5e7eb;
+      background: #f9fafb;
+    }
+
+    .node-content {
+      height: calc(100% - 30px);
+      padding: 10px;
+    }
+
+    .split {
+      display: flex;
+      gap: 10px;
+      padding: 10px;
+      background: #f8fafc;
+      min-height: 220px;
+    }
+
+    .split.horizontal {
+      flex-direction: row;
+    }
+
+    .split.vertical {
+      flex-direction: column;
+    }
+
+    .split-slot {
+      min-width: 0;
+      min-height: 100px;
+      display: flex;
+      flex: 1 1 0;
+    }
+
+    .split-slot > .node {
+      width: 100%;
+      height: 100%;
+    }
+
+    .empty-slot {
+      width: 100%;
+      min-height: 100px;
+      border: 2px dashed #cbd5e1;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #94a3b8;
+      background: #fff;
+      font-size: 13px;
+    }
+
+    .dashboard-title {
+      font-size: 28px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      height: 100%;
+    }
+
+    .block-title {
+      font-size: 18px;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      height: 100%;
+    }
+
+    .chart-box {
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      justify-content: center;
+    }
+
+    .chart-title {
+      font-size: 14px;
+      font-weight: 700;
+      color: #374151;
+    }
+
+    .trend-lines {
+      height: 90px;
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      background:
+        linear-gradient(to top, #eef2ff 0 100%),
+        #fff;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .trend-lines svg,
+    .pie-demo svg,
+    .bar-demo svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    .score-card {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border: 1px solid #e5e7eb;
+      border-radius: 10px;
+      padding: 16px;
+      background: #f9fafb;
+      height: 100%;
+    }
+
+    .score-value {
+      font-size: 34px;
+      font-weight: 800;
+    }
+
+    .score-label {
+      color: #6b7280;
+      font-size: 13px;
+    }
+
+    .table-demo table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 12px;
+    }
+
+    .table-demo th,
+    .table-demo td {
+      border: 1px solid #e5e7eb;
+      padding: 6px 8px;
+      text-align: left;
+    }
+
+    .table-demo th {
+      background: #f9fafb;
+    }
+
+    .form-group {
+      margin-bottom: 14px;
+    }
+
+    .form-group label {
+      display: block;
+      font-size: 12px;
+      color: #6b7280;
+      margin-bottom: 6px;
+      font-weight: 700;
+    }
+
+    input, textarea, select {
+      width: 100%;
+      font: inherit;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      padding: 9px 10px;
+      background: #fff;
+    }
+
+    textarea {
+      min-height: 90px;
+      resize: vertical;
+    }
+
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    .muted {
+      color: #6b7280;
+      font-size: 13px;
+      line-height: 1.5;
+    }
+
+    .danger {
+      border-color: #fca5a5;
+      color: #991b1b;
+      background: #fff5f5;
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <aside class="panel">
+      <div class="panel-header">ノード一覧</div>
+      <div class="panel-body">
+        <div class="muted" style="margin-bottom: 12px;">
+          分割ノードを選択した状態で追加してください。<br>
+          何も選択していない場合は root に追加します。
+        </div>
+
+        <div class="tool-group">
+          <div class="tool-group-title">テキスト</div>
+          <div class="tool-list">
+            <button data-add="dashboard_title">ダッシュボードタイトル</button>
+            <button data-add="block_title">ブロックタイトル</button>
+          </div>
+        </div>
+
+        <div class="tool-group">
+          <div class="tool-group-title">グラフ</div>
+          <div class="tool-list">
+            <button data-add="trend_chart">推移グラフ</button>
+            <button data-add="score_card">スコアカード</button>
+            <button data-add="comparison_chart">比較グラフ</button>
+            <button data-add="report_table">帳票</button>
+            <button data-add="composition_chart">構成比グラフ</button>
+          </div>
+        </div>
+
+        <div class="tool-group">
+          <div class="tool-group-title">分割</div>
+          <div class="tool-list">
+            <button data-add="horizontal_split">横分割</button>
+            <button data-add="vertical_split">縦分割</button>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <section class="canvas-wrap">
+      <div class="canvas-toolbar">
+        <button id="resetBtn">サンプル初期化</button>
+        <button id="exportBtn">JSON出力</button>
+        <span class="muted">選択中ノード: <span id="selectedLabel">root</span></span>
+      </div>
+      <div class="canvas-stage">
+        <div id="canvas" class="canvas"></div>
+      </div>
+    </section>
+
+    <aside class="panel right">
+      <div class="panel-header">プロパティ</div>
+      <div class="panel-body" id="propertyPanel"></div>
+    </aside>
+  </div>
+
+  <script>
+    const state = {
+      selectedNodeId: 'root',
+      layout: createInitialLayout()
+    };
+
+    function createId() {
+      return 'node_' + Math.random().toString(36).slice(2, 10);
+    }
+
+    function createNode(type) {
+      switch (type) {
+        case 'dashboard_title':
+          return { id: createId(), type, text: '売上ダッシュボード' };
+        case 'block_title':
+          return { id: createId(), type, text: 'ブロックタイトル' };
+        case 'trend_chart':
+          return { id: createId(), type, title: '売上推移' };
+        case 'score_card':
+          return { id: createId(), type, title: '達成率', value: '92%' };
+        case 'comparison_chart':
+          return { id: createId(), type, title: '部門別比較' };
+        case 'report_table':
+          return { id: createId(), type, title: '売上帳票' };
+        case 'composition_chart':
+          return { id: createId(), type, title: '構成比' };
+        case 'horizontal_split':
+          return {
+            id: createId(),
+            type: 'split',
+            direction: 'horizontal',
+            children: [null, null],
+            ratios: [1, 1]
+          };
+        case 'vertical_split':
+          return {
+            id: createId(),
+            type: 'split',
+            direction: 'vertical',
+            children: [null, null],
+            ratios: [1, 1]
+          };
+        default:
+          throw new Error('Unknown node type: ' + type);
+      }
+    }
+
+    function createInitialLayout() {
+      return {
+        id: 'root',
+        type: 'split',
+        direction: 'vertical',
+        ratios: [1, 4],
+        children: [
+          {
+            id: createId(),
+            type: 'dashboard_title',
+            text: '営業ダッシュボード'
+          },
+          {
+            id: createId(),
+            type: 'split',
+            direction: 'horizontal',
+            ratios: [2, 1],
+            children: [
+              {
+                id: createId(),
+                type: 'split',
+                direction: 'vertical',
+                ratios: [1, 3],
+                children: [
+                  {
+                    id: createId(),
+                    type: 'block_title',
+                    text: '売上推移'
+                  },
+                  {
+                    id: createId(),
+                    type: 'trend_chart',
+                    title: '月次売上'
+                  }
+                ]
+              },
+              {
+                id: createId(),
+                type: 'split',
+                direction: 'vertical',
+                ratios: [1, 1, 2],
+                children: [
+                  {
+                    id: createId(),
+                    type: 'score_card',
+                    title: '達成率',
+                    value: '92%'
+                  },
+                  {
+                    id: createId(),
+                    type: 'composition_chart',
+                    title: '商品構成比'
+                  },
+                  {
+                    id: createId(),
+                    type: 'comparison_chart',
+                    title: '部門比較'
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+    }
+
+    function getNodeLabel(node) {
+      if (!node) return '空';
+      switch (node.type) {
+        case 'split': return node.direction === 'horizontal' ? '横分割' : '縦分割';
+        case 'dashboard_title': return 'ダッシュボードタイトル';
+        case 'block_title': return 'ブロックタイトル';
+        case 'trend_chart': return '推移グラフ';
+        case 'score_card': return 'スコアカード';
+        case 'comparison_chart': return '比較グラフ';
+        case 'report_table': return '帳票';
+        case 'composition_chart': return '構成比グラフ';
+        default: return node.type;
+      }
+    }
+
+    function findNodeAndParent(node, targetId, parent = null, index = null) {
+      if (!node) return null;
+      if (node.id === targetId) {
+        return { node, parent, index };
+      }
+      if (node.type === 'split') {
+        for (let i = 0; i < node.children.length; i++) {
+          const child = node.children[i];
+          const found = findNodeAndParent(child, targetId, node, i);
+          if (found) return found;
+        }
+      }
+      return null;
+    }
+
+    function addNodeToSelected(type) {
+      const selected = findNodeAndParent(state.layout, state.selectedNodeId);
+      const target = selected?.node;
+      const newNode = createNode(type);
+
+      if (!target || target.type !== 'split') {
+        alert('分割ノードを選択してください。');
+        return;
+      }
+
+      const emptyIndex = target.children.findIndex(child => child === null);
+      if (emptyIndex >= 0) {
+        target.children[emptyIndex] = newNode;
+        if (!target.ratios || target.ratios.length !== target.children.length) {
+          target.ratios = target.children.map(() => 1);
+        }
+      } else {
+        target.children.push(newNode);
+        target.ratios.push(1);
+      }
+
+      state.selectedNodeId = newNode.id;
+      render();
+    }
+
+    function updateSelectedNode(patch) {
+      const found = findNodeAndParent(state.layout, state.selectedNodeId);
+      if (!found) return;
+      Object.assign(found.node, patch);
+      render();
+    }
+
+    function updateSplitRatiosFromText(text) {
+      const found = findNodeAndParent(state.layout, state.selectedNodeId);
+      if (!found || found.node.type !== 'split') return;
+      const values = text
+        .split(',')
+        .map(v => Number(v.trim()))
+        .filter(v => Number.isFinite(v) && v > 0);
+
+      if (values.length !== found.node.children.length) {
+        alert('比率の数は子要素数と一致させてください。');
+        return;
+      }
+      found.node.ratios = values;
+      render();
+    }
+
+    function deleteSelectedNode() {
+      if (state.selectedNodeId === 'root') {
+        alert('root は削除できません。');
+        return;
+      }
+      const found = findNodeAndParent(state.layout, state.selectedNodeId);
+      if (!found || !found.parent) return;
+      found.parent.children[found.index] = null;
+      state.selectedNodeId = found.parent.id;
+      render();
+    }
+
+    function moveSelected(offset) {
+      if (state.selectedNodeId === 'root') return;
+      const found = findNodeAndParent(state.layout, state.selectedNodeId);
+      if (!found || !found.parent) return;
+      const from = found.index;
+      const to = from + offset;
+      if (to < 0 || to >= found.parent.children.length) return;
+
+      [found.parent.children[from], found.parent.children[to]] = [found.parent.children[to], found.parent.children[from]];
+      [found.parent.ratios[from], found.parent.ratios[to]] = [found.parent.ratios[to], found.parent.ratios[from]];
+      render();
+    }
+
+    function exportJson() {
+      const json = JSON.stringify(state.layout, null, 2);
+      alert(json);
+    }
+
+    function escapeHtml(text) {
+      return String(text)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
+    function renderNode(node) {
+      if (!node) {
+        return '<div class="empty-slot">空スロット</div>';
+      }
+
+      const selectedClass = node.id === state.selectedNodeId ? 'selected' : '';
+      const label = getNodeLabel(node);
+
+      if (node.type === 'split') {
+        const childrenHtml = node.children.map((child, index) => {
+          const ratio = node.ratios?.[index] ?? 1;
+          return `
+            <div class="split-slot" style="flex:${ratio} 1 0;">
+              ${renderNode(child)}
+            </div>
+          `;
+        }).join('');
+
+        return `
+          <div class="node ${selectedClass}" data-node-id="${node.id}">
+            <div class="node-header">${label}</div>
+            <div class="split ${node.direction}">
+              ${childrenHtml}
+            </div>
+          </div>
+        `;
+      }
+
+      let contentHtml = '';
+      switch (node.type) {
+        case 'dashboard_title':
+          contentHtml = `<div class="dashboard-title">${escapeHtml(node.text || '')}</div>`;
+          break;
+        case 'block_title':
+          contentHtml = `<div class="block-title">${escapeHtml(node.text || '')}</div>`;
+          break;
+        case 'trend_chart':
+          contentHtml = `
+            <div class="chart-box">
+              <div class="chart-title">${escapeHtml(node.title || '')}</div>
+              <div class="trend-lines">
+                <svg viewBox="0 0 300 100" preserveAspectRatio="none">
+                  <polyline points="0,70 50,62 100,68 150,42 200,48 250,26 300,35" fill="none" stroke="#2563eb" stroke-width="3"></polyline>
+                  <polyline points="0,80 50,72 100,76 150,60 200,58 250,52 300,50" fill="none" stroke="#93c5fd" stroke-width="3"></polyline>
+                </svg>
+              </div>
+            </div>
+          `;
+          break;
+        case 'score_card':
+          contentHtml = `
+            <div class="score-card">
+              <div>
+                <div class="score-label">${escapeHtml(node.title || '')}</div>
+                <div class="score-value">${escapeHtml(node.value || '')}</div>
+              </div>
+              <div class="score-label">前月比 +4.2%</div>
+            </div>
+          `;
+          break;
+        case 'comparison_chart':
+          contentHtml = `
+            <div class="chart-box">
+              <div class="chart-title">${escapeHtml(node.title || '')}</div>
+              <div class="bar-demo" style="height:110px; border:1px solid #e5e7eb; border-radius:8px;">
+                <svg viewBox="0 0 300 100" preserveAspectRatio="none">
+                  <rect x="20" y="35" width="40" height="55" fill="#93c5fd"></rect>
+                  <rect x="90" y="20" width="40" height="70" fill="#60a5fa"></rect>
+                  <rect x="160" y="45" width="40" height="45" fill="#3b82f6"></rect>
+                  <rect x="230" y="10" width="40" height="80" fill="#1d4ed8"></rect>
+                </svg>
+              </div>
+            </div>
+          `;
+          break;
+        case 'report_table':
+          contentHtml = `
+            <div class="chart-box table-demo">
+              <div class="chart-title">${escapeHtml(node.title || '')}</div>
+              <table>
+                <thead>
+                  <tr><th>項目</th><th>値</th><th>前年差</th></tr>
+                </thead>
+                <tbody>
+                  <tr><td>売上</td><td>12,300</td><td>+8%</td></tr>
+                  <tr><td>利益</td><td>3,200</td><td>+4%</td></tr>
+                  <tr><td>件数</td><td>182</td><td>-2%</td></tr>
+                </tbody>
+              </table>
+            </div>
+          `;
+          break;
+        case 'composition_chart':
+          contentHtml = `
+            <div class="chart-box">
+              <div class="chart-title">${escapeHtml(node.title || '')}</div>
+              <div class="pie-demo" style="height:110px; border:1px solid #e5e7eb; border-radius:8px;">
+                <svg viewBox="0 0 120 120">
+                  <circle cx="60" cy="60" r="42" fill="transparent" stroke="#dbeafe" stroke-width="24" stroke-dasharray="80 184" transform="rotate(-90 60 60)"></circle>
+                  <circle cx="60" cy="60" r="42" fill="transparent" stroke="#60a5fa" stroke-width="24" stroke-dasharray="55 209" stroke-dashoffset="-80" transform="rotate(-90 60 60)"></circle>
+                  <circle cx="60" cy="60" r="42" fill="transparent" stroke="#1d4ed8" stroke-width="24" stroke-dasharray="49 215" stroke-dashoffset="-135" transform="rotate(-90 60 60)"></circle>
+                </svg>
+              </div>
+            </div>
+          `;
+          break;
+        default:
+          contentHtml = '<div>unknown</div>';
+      }
+
+      return `
+        <div class="node ${selectedClass}" data-node-id="${node.id}">
+          <div class="node-header">${label}</div>
+          <div class="node-content">${contentHtml}</div>
+        </div>
+      `;
+    }
+
+    function renderPropertyPanel() {
+      const found = findNodeAndParent(state.layout, state.selectedNodeId);
+      const node = found?.node;
+      const panel = document.getElementById('propertyPanel');
+      document.getElementById('selectedLabel').textContent = node ? getNodeLabel(node) + ' / ' + node.id : 'なし';
+
+      if (!node) {
+        panel.innerHTML = '<div class="muted">ノードが見つかりません。</div>';
+        return;
+      }
+
+      let html = `
+        <div class="form-group">
+          <label>ノード種別</label>
+          <input value="${escapeHtml(getNodeLabel(node))}" disabled>
+        </div>
+        <div class="form-group">
+          <label>ID</label>
+          <input class="mono" value="${escapeHtml(node.id)}" disabled>
+        </div>
+      `;
+
+      if (node.type === 'dashboard_title' || node.type === 'block_title') {
+        html += `
+          <div class="form-group">
+            <label>テキスト</label>
+            <textarea id="propText">${escapeHtml(node.text || '')}</textarea>
+          </div>
+        `;
+      }
+
+      if (['trend_chart', 'comparison_chart', 'report_table', 'composition_chart'].includes(node.type)) {
+        html += `
+          <div class="form-group">
+            <label>タイトル</label>
+            <input id="propTitle" value="${escapeHtml(node.title || '')}">
+          </div>
+        `;
+      }
+
+      if (node.type === 'score_card') {
+        html += `
+          <div class="form-group">
+            <label>タイトル</label>
+            <input id="propTitle" value="${escapeHtml(node.title || '')}">
+          </div>
+          <div class="form-group">
+            <label>値</label>
+            <input id="propValue" value="${escapeHtml(node.value || '')}">
+          </div>
+        `;
+      }
+
+      if (node.type === 'split') {
+        html += `
+          <div class="form-group">
+            <label>分割方向</label>
+            <select id="propDirection">
+              <option value="horizontal" ${node.direction === 'horizontal' ? 'selected' : ''}>横分割</option>
+              <option value="vertical" ${node.direction === 'vertical' ? 'selected' : ''}>縦分割</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>比率 (カンマ区切り)</label>
+            <input id="propRatios" value="${escapeHtml((node.ratios || []).join(', '))}">
+          </div>
+          <div class="muted" style="margin-bottom: 12px;">子要素数: ${node.children.length}</div>
+        `;
+      }
+
+      html += `
+        <div class="action-row">
+          <button id="movePrevBtn">前へ移動</button>
+          <button id="moveNextBtn">次へ移動</button>
+        </div>
+        <div class="action-row">
+          <button id="savePropBtn">反映</button>
+          <button id="deleteBtn" class="danger">削除</button>
+        </div>
+      `;
+
+      panel.innerHTML = html;
+
+      const saveBtn = document.getElementById('savePropBtn');
+      if (saveBtn) {
+        saveBtn.onclick = () => {
+          if (node.type === 'dashboard_title' || node.type === 'block_title') {
+            updateSelectedNode({ text: document.getElementById('propText').value });
+            return;
+          }
+          if (['trend_chart', 'comparison_chart', 'report_table', 'composition_chart'].includes(node.type)) {
+            updateSelectedNode({ title: document.getElementById('propTitle').value });
+            return;
+          }
+          if (node.type === 'score_card') {
+            updateSelectedNode({
+              title: document.getElementById('propTitle').value,
+              value: document.getElementById('propValue').value
+            });
+            return;
+          }
+          if (node.type === 'split') {
+            updateSelectedNode({ direction: document.getElementById('propDirection').value });
+            updateSplitRatiosFromText(document.getElementById('propRatios').value);
+          }
+        };
+      }
+
+      const deleteBtn = document.getElementById('deleteBtn');
+      if (deleteBtn) deleteBtn.onclick = deleteSelectedNode;
+
+      const prevBtn = document.getElementById('movePrevBtn');
+      if (prevBtn) prevBtn.onclick = () => moveSelected(-1);
+
+      const nextBtn = document.getElementById('moveNextBtn');
+      if (nextBtn) nextBtn.onclick = () => moveSelected(1);
+    }
+
+    function bindCanvasEvents() {
+      document.querySelectorAll('[data-node-id]').forEach(el => {
+        el.addEventListener('click', (event) => {
+          event.stopPropagation();
+          const id = el.getAttribute('data-node-id');
+          state.selectedNodeId = id;
+          render();
+        });
+      });
+    }
+
+    function render() {
+      const canvas = document.getElementById('canvas');
+      canvas.innerHTML = renderNode(state.layout);
+      bindCanvasEvents();
+      renderPropertyPanel();
+    }
+
+    function bindEvents() {
+      document.querySelectorAll('[data-add]').forEach(btn => {
+        btn.addEventListener('click', () => addNodeToSelected(btn.dataset.add));
+      });
+
+      document.getElementById('resetBtn').addEventListener('click', () => {
+        state.layout = createInitialLayout();
+        state.selectedNodeId = 'root';
+        render();
+      });
+
+      document.getElementById('exportBtn').addEventListener('click', exportJson);
+    }
+
+    bindEvents();
+    render();
+  </script>
+</body>
+</html>

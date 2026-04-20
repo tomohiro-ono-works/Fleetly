@@ -2,6 +2,7 @@ import os
 import json
 import time
 import logging
+import ctypes
 from pathlib import Path
 
 logger = logging.getLogger("ziz.gui_host")
@@ -30,10 +31,20 @@ def _configure_qtwebengine_environment():
     os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = merged
 
 
+def _set_windows_app_user_model_id():
+    if os.name != "nt":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("tomoh.zizai.desktop")
+    except Exception:
+        logger.debug("AppUserModelID の設定に失敗しました。", exc_info=True)
+
+
 def run_webview_app(form_html_path, debug=False):
     startup_started = time.perf_counter()
     logger.info("[gui-startup] phase=begin debug=%s", bool(debug))
     _configure_qtwebengine_environment()
+    _set_windows_app_user_model_id()
     logger.info("[gui-startup] phase=environment_configured elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     try:
         from PySide6.QtCore import QObject, Qt, QUrl, Signal, Slot
@@ -116,13 +127,17 @@ def run_webview_app(form_html_path, debug=False):
 
     app = QApplication.instance() or QApplication([])
     logger.info("[gui-startup] phase=app_ready elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
-    icon_path = html_path.parent / "icons" / "icon.png"
+    icon_dir = html_path.parent / "icons"
+    icon_path = icon_dir / "icon.ico"
+    if not icon_path.exists():
+        icon_path = icon_dir / "ziz.svg"
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
     window = QMainWindow()
     window.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
     window.setWindowTitle("zizai")
+    window.setMinimumSize(700, 700)
     window.resize(1440, 960)
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
@@ -133,6 +148,11 @@ def run_webview_app(form_html_path, debug=False):
     )
 
     profile = QWebEngineProfile("zizai-webview", view)
+    try:
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
+        profile.clearHttpCache()
+    except Exception:
+        logger.debug("WebView HTTPキャッシュ無効化に失敗しました。", exc_info=True)
     profile.setUrlRequestInterceptor(LockedDownRequestInterceptor(html_path.parent, html_path))
     page = LockedDownPage(profile, html_path.parent, html_path, view)
     view.setPage(page)

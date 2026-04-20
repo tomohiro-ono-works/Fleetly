@@ -271,12 +271,36 @@
     return JSON.stringify(normalizeSimpleSchemaItems(items), null, 2);
   }
 
+  function normalizeChecklistValues(value) {
+    if (Array.isArray(value)) {
+      return value.map((item) => String(item || "").trim()).filter(Boolean);
+    }
+    if (value && typeof value === "object") {
+      return Object.keys(value).filter((key) => !!value[key]).map((key) => String(key || "").trim()).filter(Boolean);
+    }
+    const text = String(value || "").trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        return parsed.map((item) => String(item || "").trim()).filter(Boolean);
+      }
+    } catch (_) {}
+    return text.split(",").map((item) => item.trim()).filter(Boolean);
+  }
+
   const FILTER_OPERATOR_OPTIONS = [
     { value: "exact", label: "完全一致" },
     { value: "prefix", label: "前方一致" },
     { value: "suffix", label: "後方一致" },
     { value: "contains", label: "部分一致" },
-    { value: "range", label: "範囲一致" }
+    { value: "regex", label: "正規表現" },
+    { value: "range", label: "範囲一致" },
+    { value: "is_null", label: "空(null)" }
+  ];
+  const FILTER_APPLY_OPTIONS = [
+    { value: "include", label: "対象" },
+    { value: "exclude", label: "除外" }
   ];
 
   function parseFilterConditionText(value) {
@@ -304,6 +328,7 @@
     return (Array.isArray(items) ? items : []).map((item) => ({
       field: String(item?.field || ""),
       operator: String(item?.operator || "exact").trim().toLowerCase() || "exact",
+      apply: String(item?.apply || item?.target || "include").trim().toLowerCase() === "exclude" ? "exclude" : "include",
       value: String(item?.value || ""),
       value_to: String(item?.value_to || "")
     }));
@@ -362,6 +387,7 @@
     const header = el("div", { class: "filter-builder-header" }, [
       el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("対象フィールド")]),
       el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("演算子")]),
+      el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("対象/除外")]),
       el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("値")]),
       el("div", { class: "filter-builder-header__cell" }, [document.createTextNode("範囲終点")]),
       el("div", { class: "filter-builder-header__cell filter-builder-header__cell--action" }, [document.createTextNode("")])
@@ -391,6 +417,7 @@
       return Array.from(rowsHost.querySelectorAll(".filter-builder-row")).map((row) => ({
         field: row.querySelector("[data-filter-key='field']")?.value || "",
         operator: row.querySelector("[data-filter-key='operator']")?.value || "exact",
+        apply: row.querySelector("[data-filter-key='apply']")?.value || "include",
         value: row.querySelector("[data-filter-key='value']")?.value || "",
         value_to: row.querySelector("[data-filter-key='value_to']")?.value || ""
       }));
@@ -422,12 +449,18 @@
     }
 
     function updateRangeState(row, operator) {
+      const valueInput = row.querySelector("[data-filter-key='value']");
       const endInput = row.querySelector("[data-filter-key='value_to']");
-      if (!endInput) return;
+      if (!valueInput || !endInput) return;
       const isRange = operator === "range";
+      const isNull = operator === "is_null";
+      valueInput.disabled = isNull;
       endInput.disabled = !isRange;
       row.classList.toggle("is-range", isRange);
-      if (!isRange) {
+      if (isNull) {
+        valueInput.value = "";
+        endInput.value = "";
+      } else if (!isRange) {
         endInput.value = "";
       }
     }
@@ -435,7 +468,7 @@
     function renderConditionRows() {
       rowsHost.innerHTML = "";
       if (!conditions.length) {
-        conditions.push({ field: "", operator: "exact", value: "", value_to: "" });
+        conditions.push({ field: "", operator: "exact", apply: "include", value: "", value_to: "" });
       }
 
       conditions.forEach((item, index) => {
@@ -459,6 +492,19 @@
           const opt = el("option", { value: option.value }, [document.createTextNode(option.label)]);
           if (option.value === item.operator) opt.selected = true;
           operatorSelect.appendChild(opt);
+        });
+
+        const applySelect = el("select", {
+          "data-filter-key": "apply",
+          onchange: () => {
+            conditions = collectConditions();
+            syncNodeForm(stringifyFilterConditions(conditions), true);
+          }
+        });
+        FILTER_APPLY_OPTIONS.forEach((option) => {
+          const opt = el("option", { value: option.value }, [document.createTextNode(option.label)]);
+          if (option.value === item.apply) opt.selected = true;
+          applySelect.appendChild(opt);
         });
 
         const valueInput = el("input", {
@@ -503,6 +549,7 @@
 
         row.appendChild(fieldSelect);
         row.appendChild(operatorSelect);
+        row.appendChild(applySelect);
         row.appendChild(valueInput);
         row.appendChild(valueToInput);
         row.appendChild(removeBtn);
@@ -518,7 +565,7 @@
     }
 
     addRowBtn.addEventListener("click", () => {
-      conditions.push({ field: "", operator: "exact", value: "", value_to: "" });
+      conditions.push({ field: "", operator: "exact", apply: "include", value: "", value_to: "" });
       renderConditionRows();
       syncNodeForm(stringifyFilterConditions(conditions), true);
     });
@@ -536,20 +583,28 @@
     return { input: hiddenValue, wrapper, skipVarSuggest: true };
   }
 
-  function renderSchemaEditor({ node, field, current, onInputChanged, onCommitChanged }) {
+  function renderSchemaEditor({ node, field, current, state, onInputChanged, onCommitChanged }) {
     const parsed = parseSchemaText(current);
-    const initialMode = canUseSchemaFormMode(parsed) ? "form" : "json";
+    const initialMode = canUseSchemaFormMode(parsed) ? "input" : "json";
     const wrapper = el("div", { class: "schema-editor" }, []);
     const toolbar = el("div", { class: "schema-editor-toolbar" }, []);
     const toolbarMain = el("div", { class: "schema-editor-toolbar-main" }, []);
     const modeSwitch = el("div", { class: "schema-editor-mode" }, []);
-    const formBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("フォーム")]);
-    const jsonBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("JSON")]);
+    const inputBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("スキーマ定義")]);
+    const jsonBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("スキーマ定義（JSON）")]);
+    const outputBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("データ出力")]);
     const hint = el("div", { class: "schema-editor-hint" }, []);
     const body = el("div", { class: "schema-editor-body" }, []);
     const formPane = el("div", { class: "schema-form-pane" }, []);
     const jsonPane = el("div", { class: "schema-json-pane" }, []);
+    const outputPane = el("div", { class: "schema-output-pane" }, []);
     const addRowBtn = el("button", { type: "button", class: "schema-add-row-btn" }, [document.createTextNode("+ カラム追加")]);
+    const outputStatusNote = el("div", { class: "schema-output-note node-data-note" }, []);
+    const outputPreviewHead = el("thead", {}, []);
+    const outputPreviewBody = el("tbody", {}, []);
+    const outputPreviewTable = el("table", { class: "node-data-table" }, [outputPreviewHead, outputPreviewBody]);
+    const outputPreviewWrap = el("div", { class: "schema-output-wrap node-data-wrap is-preview" }, [outputPreviewTable]);
+    const addRowRow = el("div", { class: "schema-form-add-row" }, [addRowBtn]);
     const headerRow = el("div", { class: "schema-form-header" }, [
       el("div", { class: "schema-form-header__cell" }, [document.createTextNode("元フィールド名")]),
       el("div", { class: "schema-form-header__cell" }, [document.createTextNode("新フィールド名")]),
@@ -594,6 +649,95 @@
         description: row.querySelector("[data-schema-key='description']")?.value || "",
         ziz_datatype: row.querySelector("[data-schema-key='ziz_datatype']")?.value || "STRING"
       }));
+    }
+
+    let outputRequestSeq = 0;
+
+    function setOutputStatus(message = "") {
+      const text = String(message || "").trim();
+      outputStatusNote.textContent = text;
+      outputStatusNote.hidden = !text;
+    }
+
+    function clearOutputTable() {
+      outputPreviewHead.innerHTML = "";
+      outputPreviewBody.innerHTML = "";
+      outputPreviewWrap.hidden = true;
+    }
+
+    function renderOutputPreview(previewDto) {
+      const columns = Array.isArray(previewDto?.columns) ? previewDto.columns : [];
+      const sourceRows = Array.isArray(previewDto?.rows) ? previewDto.rows : [];
+      const rows = sourceRows.slice(0, 200);
+      outputPreviewHead.innerHTML = "";
+      outputPreviewBody.innerHTML = "";
+
+      if (!columns.length) {
+        clearOutputTable();
+        setOutputStatus("実行結果がありません。");
+        return;
+      }
+
+      outputPreviewHead.appendChild(
+        el("tr", {}, columns.map((column) => el("th", {}, [document.createTextNode(String(column || ""))])))
+      );
+
+      if (!rows.length) {
+        outputPreviewBody.appendChild(
+          el("tr", {}, [
+            el(
+              "td",
+              { class: "node-data-value", colspan: String(Math.max(columns.length, 1)) },
+              [document.createTextNode("データがありません。")]
+            )
+          ])
+        );
+      } else {
+        rows.forEach((row) => {
+          const values = Array.isArray(row) ? row : [];
+          outputPreviewBody.appendChild(
+            el("tr", {}, columns.map((_, index) =>
+              el("td", { class: "node-data-value" }, [document.createTextNode(String(values[index] ?? ""))])
+            ))
+          );
+        });
+      }
+
+      const rowCount = Number(previewDto?.row_count || sourceRows.length || 0);
+      const truncated = !!previewDto?.truncated || sourceRows.length > 200;
+      setOutputStatus(truncated ? `実行結果（先頭 ${Math.min(rows.length, 200)} / 全 ${rowCount} 行）` : `実行結果（${rowCount} 行）`);
+      outputPreviewWrap.hidden = false;
+    }
+
+    async function syncOutputPreview() {
+      clearOutputTable();
+      if (!bridgeApi?.available?.()) {
+        setOutputStatus("WebView モードでのみ利用できます。");
+        return;
+      }
+      const stepId = String(node?.stepName || "").trim();
+      if (!stepId) {
+        setOutputStatus("ステップIDがありません。");
+        return;
+      }
+      const requestSeq = ++outputRequestSeq;
+      setOutputStatus("実行結果を取得しています...");
+      try {
+        const previewDto = await bridgeApi.call("result.getPreview", {
+          mode: String(state?.appMode || ""),
+          step_id: stepId
+        });
+        if (requestSeq !== outputRequestSeq) return;
+        renderOutputPreview(previewDto);
+      } catch (error) {
+        if (requestSeq !== outputRequestSeq) return;
+        const code = String(error?.code || "").trim();
+        if (code === "E_NOT_FOUND") {
+          setOutputStatus("まだ実行結果がありません。");
+          return;
+        }
+        setOutputStatus(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`);
+      }
     }
 
     function renderFormRows() {
@@ -660,12 +804,20 @@
         const removeBtn = el("button", {
           type: "button",
           class: "schema-remove-row-btn",
+          title: "削除",
+          "aria-label": "削除",
           onclick: () => {
             formItems.splice(index, 1);
             renderFormRows();
             syncNodeForm(stringifySchemaItems(formItems), true);
           }
-        }, [document.createTextNode("削除")]);
+        }, [
+          el("img", {
+            src: "./icons/delete.svg",
+            alt: "",
+            class: "schema-remove-row-btn__icon"
+          })
+        ]);
         row.appendChild(originInput);
         row.appendChild(newNameInput);
         row.appendChild(descInput);
@@ -676,28 +828,29 @@
     }
 
     function syncHint() {
+      const BASE_HINT = "※複雑型はスキーマ定義（JSON）で編集してください。";
       const currentParsed = parseSchemaText(textarea.value);
-      if (mode === "json") {
-        if (currentParsed.invalid) {
-          hint.textContent = "JSON が不正です。フォームへ切り替えるには配列JSONを整形してください。";
-          hint.className = "schema-editor-hint is-warning";
-          return;
-        }
-        if (!canUseSchemaFormMode(currentParsed)) {
-          hint.textContent = "ARRAY / STRUCT などの複雑型を含むため、JSON モード推奨です。";
-          hint.className = "schema-editor-hint";
-          return;
-        }
-        hint.textContent = "単純列のみです。フォームモードへ切り替えられます。";
+      if (mode === "output") {
+        hint.textContent = "※実行結果を表形式で最大200件表示します。";
         hint.className = "schema-editor-hint";
         return;
       }
-      hint.textContent = "単純列はフォームで編集できます。複雑型は JSON モードで編集してください。";
+      if (mode === "json") {
+        if (currentParsed.invalid) {
+          hint.textContent = `${BASE_HINT} JSON が不正です。`;
+          hint.className = "schema-editor-hint is-warning";
+          return;
+        }
+        hint.textContent = BASE_HINT;
+        hint.className = "schema-editor-hint";
+        return;
+      }
+      hint.textContent = BASE_HINT;
       hint.className = "schema-editor-hint";
     }
 
     function setMode(nextMode) {
-      if (nextMode === "form") {
+      if (nextMode === "input") {
         const currentParsed = parseSchemaText(textarea.value);
         if (!canUseSchemaFormMode(currentParsed)) {
           syncHint();
@@ -708,11 +861,16 @@
       }
       mode = nextMode;
       wrapper.dataset.mode = mode;
-      formBtn.classList.toggle("is-active", mode === "form");
+      inputBtn.classList.toggle("is-active", mode === "input");
       jsonBtn.classList.toggle("is-active", mode === "json");
-      formPane.classList.toggle("is-hidden", mode !== "form");
+      outputBtn.classList.toggle("is-active", mode === "output");
+      formPane.classList.toggle("is-hidden", mode !== "input");
       jsonPane.classList.toggle("is-hidden", mode !== "json");
-      addRowBtn.classList.toggle("is-hidden", mode !== "form");
+      outputPane.classList.toggle("is-hidden", mode !== "output");
+      addRowRow.classList.toggle("is-hidden", mode !== "input");
+      if (mode === "output") {
+        void syncOutputPreview();
+      }
       syncHint();
     }
 
@@ -722,19 +880,31 @@
       syncNodeForm(stringifySchemaItems(formItems), true);
     });
 
-    formBtn.addEventListener("click", () => setMode("form"));
-    jsonBtn.addEventListener("click", () => setMode("json"));
+    inputBtn.addEventListener("click", () => {
+      setMode("input");
+    });
+    jsonBtn.addEventListener("click", () => {
+      setMode("json");
+    });
+    outputBtn.addEventListener("click", () => {
+      setMode("output");
+    });
 
-    modeSwitch.appendChild(formBtn);
+    modeSwitch.appendChild(inputBtn);
     modeSwitch.appendChild(jsonBtn);
+    modeSwitch.appendChild(outputBtn);
     toolbarMain.appendChild(modeSwitch);
-    toolbarMain.appendChild(addRowBtn);
     toolbar.appendChild(toolbarMain);
     formPane.appendChild(headerRow);
     formPane.appendChild(rowsHost);
+    formPane.appendChild(addRowRow);
     jsonPane.appendChild(textarea);
-    body.appendChild(formPane);
+    outputPane.appendChild(outputStatusNote);
+    outputPane.appendChild(outputPreviewWrap);
+    outputPreviewWrap.hidden = true;
     body.appendChild(jsonPane);
+    body.appendChild(formPane);
+    body.appendChild(outputPane);
     wrapper.appendChild(toolbar);
     wrapper.appendChild(hint);
     wrapper.appendChild(body);
@@ -928,9 +1098,11 @@
 
     if (!supportsVars) return [];
 
+    const isHiddenRefName = (ref) => String(ref || "").startsWith("hidden.");
     const invalidRefs = extractInvalidTemplateReferenceNames(value)
       .map((ref) => `変数名 ${ref} は無効です。英数字、_、. のみ使用できます。`);
     const missingRefs = extractReferencedVariableNames(value)
+      .filter((ref) => !isHiddenRefName(ref))
       .filter((ref) => !variableSet.has(ref))
       .map((ref) => `変数 ${ref} は定義されていません。`);
     return [...invalidRefs, ...missingRefs];
@@ -938,14 +1110,20 @@
 
   function renderField({ node, field, upstreamSteps, availableVariableNames, hiddenBindings, state, config, onStateChanged }) {
     const row = el("div", { class: "row" }, []);
-    row.appendChild(el("label", {}, [document.createTextNode(field.label)]));
+    if (field.kind === "textarea") {
+      row.classList.add("row--textarea");
+    }
+    const labelChildren = [document.createTextNode(field.label)];
+    if (field.required) {
+      labelChildren.push(el("span", { class: "label-required" }, [document.createTextNode("（必須）")]));
+    }
+    row.appendChild(el("label", {}, labelChildren));
 
     const current = getFieldCurrentValue(node, field);
 
     let inputEl = null;
     let wrapper = null;
     const warningEl = el("div", { class: "field-warning", hidden: "hidden" }, []);
-    const hiddenMetaEl = el("div", { class: "sub field-secret-meta", hidden: "hidden" }, []);
 
     function updateRequiredState() {
       if (!field.required || !inputEl) {
@@ -970,19 +1148,12 @@
     function notifyLocalChanged() {
       updateRequiredState();
       updateReferenceWarning();
-      updateHiddenBindingMeta();
     }
 
     function notifyCommitted() {
       updateRequiredState();
       updateReferenceWarning();
-      updateHiddenBindingMeta();
       if (onStateChanged) onStateChanged();
-    }
-
-    function updateHiddenBindingMeta() {
-      hiddenMetaEl.hidden = true;
-      hiddenMetaEl.textContent = "";
     }
 
     if (field.kind === "textarea" && field.key === "schema") {
@@ -990,6 +1161,7 @@
         node,
         field,
         current,
+        state,
         onInputChanged: notifyLocalChanged,
         onCommitChanged: notifyCommitted
       });
@@ -1053,6 +1225,76 @@
       });
       inputEl.value = current;
       wrapper = inputEl;
+    } else if (field.kind === "google-auth-login") {
+      row.classList.add("row-inline-action");
+      const authBtn = el(
+        "button",
+        {
+          type: "button",
+          class: "node-inline-preview-btn",
+          title: String(field.buttonLabel || "Googleログイン"),
+          "aria-label": String(field.buttonLabel || "Googleログイン"),
+          onclick: async () => {
+            if (!bridgeApi?.available?.()) {
+              if (dialogApi?.show) dialogApi.show("WebView モードでのみ利用できます。", { kind: "warning", title: "認証" });
+              else window.alert("WebView モードでのみ利用できます。");
+              return;
+            }
+            try {
+              await bridgeApi.call("app.googleAuthLogin", { mode: "application-default" });
+              if (dialogApi?.show) {
+                dialogApi.show("Googleログインを起動しました。開いたターミナルで認証を完了してください。", {
+                  kind: "info",
+                  title: "認証"
+                });
+              }
+            } catch (error) {
+              if (dialogApi?.show) dialogApi.show(`認証起動に失敗しました。\n${error?.message || error}`, { kind: "error", title: "認証エラー" });
+              else window.alert(`認証起動に失敗しました。\n${error?.message || error}`);
+            }
+          }
+        },
+        [document.createTextNode(String(field.buttonLabel || "Googleログイン"))]
+      );
+      inputEl = null;
+      wrapper = el("div", { class: "row-inline-action-body" }, [authBtn]);
+    } else if (field.kind === "checklist") {
+      const optionItems = (Array.isArray(field.options) ? field.options : []).map((option) => {
+        if (option && typeof option === "object") {
+          return {
+            value: String(option.value ?? option.id ?? ""),
+            label: String(option.label ?? option.value ?? option.id ?? "")
+          };
+        }
+        const value = String(option ?? "");
+        return { value, label: value };
+      }).filter((item) => item.value);
+      const selectedSet = new Set(normalizeChecklistValues(current));
+      const checklist = el("div", { class: "checklist-field" }, []);
+      function syncChecklist(committed) {
+        const nextValues = Array.from(checklist.querySelectorAll("input[data-checklist-value]"))
+          .filter((checkbox) => !!checkbox.checked)
+          .map((checkbox) => String(checkbox.getAttribute("data-checklist-value") || "").trim())
+          .filter(Boolean);
+        node.form[field.key] = nextValues;
+        if (committed) notifyCommitted();
+        else notifyLocalChanged();
+      }
+      optionItems.forEach((item) => {
+        const checkbox = el("input", {
+          type: "checkbox",
+          "data-checklist-value": item.value,
+          onchange: () => syncChecklist(true)
+        });
+        checkbox.checked = selectedSet.has(item.value);
+        const optionLabel = el("label", { class: "checklist-option" }, [
+          checkbox,
+          el("span", { class: "checklist-option__text" }, [document.createTextNode(item.label)])
+        ]);
+        checklist.appendChild(optionLabel);
+      });
+      inputEl = null;
+      wrapper = checklist;
     } else if (field.kind === "checkbox") {
       inputEl = el("input", {
         type: "checkbox",
@@ -1073,9 +1315,16 @@
         field,
         current,
         upstreamSteps,
-        onValueChanged: async () => {
-          await applyBqLoadSchemaFromInputData({ node, state });
+        onValueChanged: () => {
+          // 選択反映は先に行い、重い schema 解決は後追いで適用する
           notifyCommitted();
+          applyBqLoadSchemaFromInputData({ node, state })
+            .then((applied) => {
+              if (applied) notifyCommitted();
+            })
+            .catch((error) => {
+              console.warn("input_data schema sync failed", error);
+            });
         }
       });
       inputEl = r.input;
@@ -1222,15 +1471,10 @@
     delete field.__skipVarSuggest;
 
     const right = el("div", {}, [wrapper]);
-    if (field.required) {
-      right.appendChild(el("div", { class: "sub" }, [document.createTextNode("必須")]));
-    }
-    right.appendChild(hiddenMetaEl);
     right.appendChild(warningEl);
     row.appendChild(right);
     updateRequiredState();
     updateReferenceWarning();
-    updateHiddenBindingMeta();
     return row;
   }
 

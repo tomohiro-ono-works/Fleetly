@@ -78,7 +78,7 @@ const CONFIG = {
     { id: "PlotlyConnector",          label: "Plotly", exportId: "plotly_connector" },
     { id: "PPTConnector",             label: "PowerPoint", exportId: "ppt_connector" },
     { id: "OperationConnector",       label: "操作", exportId: "operation_connector"},
-    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector"},
+    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector", category: "data"},
     { id: "VectorConnector",          label: "VectorDB", exportId: "vector_connector"},
     { id: "APIConnector",             label: "API実行", exportId: "api_connector"},
 
@@ -230,17 +230,20 @@ const CONFIG = {
       ],
 
     "BQConnector.execute_sql": [
+      { key:"google_auth", label:"認証", kind:"google-auth-login", buttonLabel:"Googleログイン" },
       { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
       { key:"sql", label:"SQL", kind:"textarea", codeLanguage:"sql", required:true, allowVars:true, placeholder:"SELECT ...\nFROM ..." }
     ],
 
     "BQConnector.execute_sql_file": [
+      { key:"google_auth", label:"認証", kind:"google-auth-login", buttonLabel:"Googleログイン" },
       { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
       { key:"sql_file", label:"SQLファイル", kind:"file", required:true },
       { key:"encoding", label:"文字コード", kind:"combo", required:true, default:"utf8", options:["utf8","shift_jis"] }
     ],
     
     "BQConnector.load_data": [
+      { key:"google_auth", label:"認証", kind:"google-auth-login", buttonLabel:"Googleログイン" },
       { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
       { key:"dataset_id", label:"データセット", kind:"combo", default:dataset_options[0], options:dataset_options, required:true},
       { key:"table_id", label:"テーブル", kind:"text", required:true, default:"defult_table", allowVars:true },
@@ -380,12 +383,35 @@ const CONFIG = {
 
     "DataintegrationConnector.replace_fields_forrenamelist": [
       { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
-      { key:"rename_list_path", label:"RENAMEリストファイル", kind:"file", required:true, default:"config\\rename.csv", accept:".csv" }
+      { key:"rename_list_path", label:"RENAMEリストファイル", kind:"file", required:true, default:"config\\rename.csv", accept:".csv" },
+      {
+        key:"pre_rename_cleansing",
+        label:"リネーム前クレンジング",
+        kind:"checklist",
+        required:false,
+        options:[
+          { value:"remove_spaces", label:"スペース（全角・半角）を削除" },
+          { value:"remove_newlines", label:"改行削除" },
+          { value:"to_halfwidth_alnum", label:"全角（数字・英語）を半角変換" },
+          { value:"symbols_to_snake", label:"半角記号をスネークケースに変換" }
+        ]
+      },
+      {
+        key:"post_rename_cleansing",
+        label:"リネーム後クレンジング",
+        kind:"checklist",
+        required:false,
+        options:[
+          { value:"exclude_japanese_columns", label:"全角（漢字・ひらがな・カタカナ）文字を含むカラムを対象から外す" }
+        ]
+      },
+      { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
     "DataintegrationConnector.filter_rows": [
       { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
-      { key:"conditions", label:"条件指定", kind:"filter-builder", required:false }
+      { key:"conditions", label:"条件指定", kind:"filter-builder", required:false },
+      { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
     "RpaSlackConnector.move_channel": [

@@ -23,10 +23,22 @@
     buildNodeYamlSettings,
     isDataConnector,
     getNodeLogLines,
+    getConnectorLabel,
     getNodeDescriptionSeed,
-    renderConnectorSelect
+    renderConnectorSelect,
+    getConnectorImageSrc,
+    NOIMAGE_SRC
   } = shared;
   const VARIABLE_NAME_PATTERN = /^[a-zA-Z0-9_]+$/;
+  const ALL_DETAIL_TABS = ["detail", "yaml", "data", "variables", "log"];
+
+  function normalizeTabKeys(tabKeys) {
+    if (!Array.isArray(tabKeys) || !tabKeys.length) return [...ALL_DETAIL_TABS];
+    const normalized = tabKeys
+      .map((key) => String(key || "").trim())
+      .filter((key, index, self) => ALL_DETAIL_TABS.includes(key) && self.indexOf(key) === index);
+    return normalized.length ? normalized : [...ALL_DETAIL_TABS];
+  }
 
   function getInvalidVariableNameMessage(name) {
     const text = String(name || "").trim();
@@ -127,10 +139,14 @@
     root.appendChild(el("section", { class: "node detail-node" }, [body]));
   }
 
-  function renderNodeDetail({ state, config, root, onStateChanged }) {
+  function renderNodeDetail({ state, config, root, onStateChanged, tabKeys, defaultTab, includePanelRunAction, forcedActiveTab, hideTabs }) {
     root.innerHTML = "";
+    const enabledTabs = normalizeTabKeys(tabKeys);
+    const enabledTabSet = new Set(enabledTabs);
+    const defaultTabKey = enabledTabSet.has(String(defaultTab || "")) ? String(defaultTab || "") : enabledTabs[0];
+    const hideTabHeader = !!hideTabs;
     if (!state.nodes.length) return;
-    if (state.selectedNodeId === "__start__") {
+    if (state.selectedNodeId === "__start__" && enabledTabSet.has("detail")) {
       renderStartNodeDetail({ state, root, onStateChanged });
       return;
     }
@@ -144,6 +160,22 @@
     const upstreamSteps = getUpstreamSteps(state, node.id);
     const availableVariables = getAvailableVariables(state, node);
     const schema = getFormSchema(config, node.connector, node.action);
+    const schemaField = schema.find((field) => String(field?.key || "") === "schema") || null;
+    const detailFields = schema.filter((field) => String(field?.key || "") !== "schema");
+    const hasSchemaField = !!schemaField;
+    const dataViewNodeKey = [
+      String(node?.id || "").trim(),
+      String(node?.stepName || "").trim(),
+      String(node?.connector || "").trim(),
+      String(node?.action || "").trim()
+    ].join("|");
+    if (root.__nodeDetailDataViewNodeKey !== dataViewNodeKey) {
+      root.__nodeDetailDataViewNodeKey = dataViewNodeKey;
+      root.__nodeDetailDataView = hasSchemaField ? "schema" : "preview";
+    } else if (hasSchemaField && root.__nodeDetailDataView !== "schema") {
+      // 下部データエリアは schema 編集を主表示とする（preview は schema editor 内で表示）
+      root.__nodeDetailDataView = "schema";
+    }
     const actionConfig = getActionConfig(config, node.connector, node.action);
     const detailModal = actionConfig && actionConfig.detailModal;
     const missingRequiredLabels = getMissingRequiredFieldLabels(config, node);
@@ -161,9 +193,13 @@
     const inlineDetailModal = detailModal && (detailModal.type === "excel" || detailModal.type === "csv") ? detailModal : null;
     const headDetailModal = detailModal && detailModal.type !== "excel" && detailModal.type !== "csv" ? detailModal : null;
 
-    function buildHeadActions() {
+    function buildHeadActions(options = {}) {
+      const includeSupport = options.includeSupport !== false;
+      const includeRun = options.includeRun !== false;
+      const includeDelete = options.includeDelete !== false;
+      const className = String(options.className || "node-head-actions");
       const headActionItems = [];
-      if (headDetailModal && headDetailModal.label) {
+      if (includeSupport && headDetailModal && headDetailModal.label) {
         headActionItems.push(
           el(
             "button",
@@ -184,49 +220,53 @@
           )
         );
       }
-      headActionItems.push(
-        el(
-          "button",
-          {
-            class: "run-btn node-head-icon-btn",
-            type: "button",
-            title: "ステップ実行",
-            "aria-label": "ステップ実行",
-            onclick: () => requestNodeRun(node, "single", onStateChanged)
-          },
-          [
-            el("img", {
-              src: "./icons/run.svg",
-              alt: "",
-              class: "node-head-icon-btn__icon"
-            })
-          ]
-        )
-      );
-      headActionItems.push(
-        el(
-          "button",
-          {
-            class: "danger node-head-icon-btn",
-            type: "button",
-            title: "削除",
-            "aria-label": "削除",
-            onclick: () => removeNodeById(state, node.id, onStateChanged)
-          },
-          [
-            el("img", {
-              src: "./icons/delete.svg",
-              alt: "",
-              class: "node-head-icon-btn__icon"
-            })
-          ]
-        )
-      );
-      return el("div", { class: "node-head-actions" }, headActionItems);
+      if (includeRun) {
+        headActionItems.push(
+          el(
+            "button",
+            {
+              class: "run-btn node-head-icon-btn",
+              type: "button",
+              title: "ステップ実行",
+              "aria-label": "ステップ実行",
+              onclick: () => requestNodeRun(node, "single", onStateChanged)
+            },
+            [
+              el("img", {
+                src: "./icons/run.svg",
+                alt: "",
+                class: "node-head-icon-btn__icon"
+              })
+            ]
+          )
+        );
+      }
+      if (includeDelete) {
+        headActionItems.push(
+          el(
+            "button",
+            {
+              class: "danger node-head-icon-btn",
+              type: "button",
+              title: "削除",
+              "aria-label": "削除",
+              onclick: () => removeNodeById(state, node.id, onStateChanged)
+            },
+            [
+              el("img", {
+                src: "./icons/delete.svg",
+                alt: "",
+                class: "node-head-icon-btn__icon"
+              })
+            ]
+          )
+        );
+      }
+      return el("div", { class: className }, headActionItems);
     }
 
     const body = el("div", { class: "node-body" }, []);
-    const tabBar = el("div", { class: "node-tabs", role: "tablist", "aria-label": "ノード詳細タブ" }, []);
+    const tabBar = hideTabHeader ? null : el("div", { class: "node-tabs", role: "tablist", "aria-label": "ノード詳細タブ" }, []);
     const detailTabBtn = el(
       "button",
       { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "detail" },
@@ -252,12 +292,44 @@
       { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "log" },
       [document.createTextNode("ログ")]
     );
-    tabBar.appendChild(detailTabBtn);
-    tabBar.appendChild(yamlTabBtn);
-    tabBar.appendChild(dataTabBtn);
-    tabBar.appendChild(variablesTabBtn);
-    tabBar.appendChild(logTabBtn);
-    const tabsHead = el("div", { class: "node-tabs-head" }, [tabBar]);
+    const tabButtonMap = {
+      detail: detailTabBtn,
+      yaml: yamlTabBtn,
+      data: dataTabBtn,
+      variables: variablesTabBtn,
+      log: logTabBtn,
+    };
+    enabledTabs.forEach((tabKey) => {
+      const button = tabButtonMap[tabKey];
+      if (button && tabBar) tabBar.appendChild(button);
+    });
+    const compactTopRow = enabledTabSet.has("detail") && enabledTabSet.has("yaml") && !includePanelRunAction;
+    const tabsHeadChildren = [];
+    if (tabBar) tabsHeadChildren.push(tabBar);
+    if (includePanelRunAction) {
+      tabsHeadChildren.push(
+        el("div", { class: "node-tabs-actions" }, [
+          el(
+            "button",
+            {
+              type: "button",
+              class: "node-tab-run-btn",
+              title: "ステップ実行",
+              "aria-label": "ステップ実行",
+              onclick: () => requestNodeRun(node, "single", onStateChanged)
+            },
+            [
+              el("img", {
+                src: "./icons/run.svg",
+                alt: ""
+              })
+            ]
+          )
+        ])
+      );
+    }
+    const tabsHeadClass = compactTopRow ? "node-tabs-head node-tabs-head--compact" : "node-tabs-head";
+    const tabsHead = el("div", { class: tabsHeadClass }, tabsHeadChildren);
 
     const detailPane = el("div", { class: "node-tab-pane", "data-tab-key": "detail" }, [body]);
     const yamlText = el("textarea", {
@@ -268,37 +340,8 @@
     });
     const yamlPane = el("div", { class: "node-tab-pane", "data-tab-key": "yaml" }, [yamlText]);
     const dataStatusNote = el("div", { class: "node-data-note" }, []);
-    const dataViewToggle = el("div", { class: "schema-editor-mode node-data-mode", role: "tablist", "aria-label": "データ表示切替" }, []);
-    const dataSchemaBtn = el(
-      "button",
-      { type: "button", class: "schema-mode-btn", role: "tab", "data-data-view": "schema" },
-      [document.createTextNode("スキーマ")]
-    );
-    const dataPreviewBtn = el(
-      "button",
-      { type: "button", class: "schema-mode-btn", role: "tab", "data-data-view": "preview" },
-      [document.createTextNode("データ")]
-    );
-    const dataSummaryBtn = el(
-      "button",
-      { type: "button", class: "schema-mode-btn", role: "tab", "data-data-view": "summary" },
-      [document.createTextNode("サマリ")]
-    );
-    dataViewToggle.appendChild(dataSchemaBtn);
-    dataViewToggle.appendChild(dataPreviewBtn);
-    dataViewToggle.appendChild(dataSummaryBtn);
-    const dataSchemaBody = el("tbody", {}, []);
-    const dataSchemaTable = el("table", { class: "node-data-table" }, [
-      el("thead", {}, [
-        el("tr", {}, [
-          el("th", {}, [document.createTextNode("項目")]),
-          el("th", {}, [document.createTextNode("説明")]),
-          el("th", {}, [document.createTextNode("型")])
-        ])
-      ]),
-      dataSchemaBody
-    ]);
-    const dataSchemaWrap = el("div", { class: "node-data-wrap" }, [dataSchemaTable]);
+    const dataSchemaEditorHost = el("div", { class: "node-data-schema-editor" }, []);
+    const dataSchemaWrap = el("div", { class: "node-data-wrap node-data-wrap--schema-editor" }, [dataSchemaEditorHost]);
     const dataPreviewHead = el("thead", {}, []);
     const dataPreviewBody = el("tbody", {}, []);
     const dataPreviewTable = el("table", { class: "node-data-table" }, [
@@ -306,18 +349,14 @@
       dataPreviewBody
     ]);
     const dataPreviewWrap = el("div", { class: "node-data-wrap is-preview" }, [dataPreviewTable]);
-    const dataVolumeList = el("div", { class: "node-data-volume-list" }, []);
-    const dataVolumeWrap = el("div", { class: "node-data-wrap" }, [dataVolumeList]);
     const dataUnsupportedNote = el("div", { class: "node-data-note" }, [
       document.createTextNode("データコネクタではないため対応していません。")
     ]);
     const dataPane = el("div", { class: "node-tab-pane", "data-tab-key": "data" }, [
       dataUnsupportedNote,
       dataStatusNote,
-      dataViewToggle,
       dataSchemaWrap,
-      dataPreviewWrap,
-      dataVolumeWrap
+      dataPreviewWrap
     ]);
     const variablesPaneBody = el("div", { class: "variable-pane-body" }, []);
     const variablesPane = el("div", { class: "node-tab-pane", "data-tab-key": "variables" }, [variablesPaneBody]);
@@ -328,6 +367,13 @@
       "aria-label": "処理ログ"
     });
     const logPane = el("div", { class: "node-tab-pane", "data-tab-key": "log" }, [el("div", { class: "node-log-wrap" }, [logText])]);
+    const tabPaneMap = {
+      detail: detailPane,
+      yaml: yamlPane,
+      data: dataPane,
+      variables: variablesPane,
+      log: logPane,
+    };
 
     const connectorSelect = renderConnectorSelect({
       config,
@@ -335,6 +381,60 @@
       onStateChanged,
       disabled: loopRootSelected
     });
+    const connectorLabelFor = (connectorId) => (
+      typeof getConnectorLabel === "function"
+        ? (getConnectorLabel(config, connectorId) || String(connectorId || ""))
+        : String(connectorId || "")
+    );
+    const connectorIconSrcFor = (connectorId) => (
+      typeof getConnectorImageSrc === "function"
+        ? getConnectorImageSrc(connectorId)
+        : "./img/noimage.jpg"
+    );
+    connectorSelect.classList.add("node-topbar-connector-flyout");
+    const connectorFlyoutTrigger = connectorSelect.querySelector(".connector-flyout-trigger");
+    const connectorFlyoutController = connectorSelect.__connectorFlyoutController || null;
+    const openConnectorFlyoutFromIcon = () => {
+      if (connectorFlyoutController && typeof connectorFlyoutController.toggle === "function") {
+        connectorFlyoutController.toggle();
+        return;
+      }
+      if (!connectorFlyoutTrigger || connectorFlyoutTrigger.disabled) return;
+      connectorFlyoutTrigger.click();
+    };
+    const connectorIconImage = el("img", {
+      src: connectorIconSrcFor(node.connector),
+      alt: "",
+      class: "node-topbar-connector-icon__img"
+    });
+    if (NOIMAGE_SRC) {
+      connectorIconImage.addEventListener("error", () => {
+        if (connectorIconImage.getAttribute("src") !== NOIMAGE_SRC) {
+          connectorIconImage.setAttribute("src", NOIMAGE_SRC);
+        }
+      });
+    }
+    const connectorIcon = el("button", {
+      type: "button",
+      class: "node-topbar-connector-icon",
+      title: connectorLabelFor(node.connector) || "コネクタ",
+      "aria-label": connectorLabelFor(node.connector) || "コネクタ",
+      onclick: (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        openConnectorFlyoutFromIcon();
+      },
+      onkeydown: (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        openConnectorFlyoutFromIcon();
+      }
+    }, [connectorIconImage]);
+    if ((!connectorFlyoutController && !connectorFlyoutTrigger) || connectorFlyoutTrigger?.disabled) {
+      connectorIcon.classList.add("is-disabled");
+      connectorIcon.setAttribute("aria-disabled", "true");
+    }
+    const connectorHost = el("div", { class: "node-topbar-connector-host" }, [connectorIcon, connectorSelect]);
     const descriptionInput = el("input", {
       type: "text",
       value: String(node.description || ""),
@@ -350,14 +450,36 @@
         onStateChanged();
       }
     });
-    const detailMeta = el("div", { class: "node-detail-meta" }, [
-      el("div", { class: "badge" }, [document.createTextNode(`{${node.stepName}}`)]),
-      buildHeadActions(),
-      el("div", { class: "head-selects" }, [
+    const isRightSidebarTopRow = compactTopRow && hideTabHeader;
+    let headSelects = null;
+    if (!isRightSidebarTopRow) {
+      headSelects = el("div", { class: compactTopRow ? "head-selects node-topbar-selects" : "head-selects" }, [
         el("div", { class: "head-select" }, [connectorSelect])
-      ]),
-      el("div", { class: "head-description" }, [descriptionInput])
-    ]);
+      ]);
+    }
+    if (compactTopRow) {
+      const stepBadge = el("div", { class: "badge node-topbar-badge" }, [document.createTextNode(`{${node.stepName}}`)]);
+      if (isRightSidebarTopRow) {
+        tabsHead.appendChild(stepBadge);
+        tabsHead.appendChild(buildHeadActions({ includeSupport: false, className: "node-head-actions node-topbar-actions" }));
+        tabsHead.appendChild(connectorHost);
+      } else {
+        tabsHead.insertBefore(stepBadge, tabsHead.firstChild);
+        tabsHead.appendChild(buildHeadActions({ includeSupport: false, className: "node-head-actions node-topbar-actions" }));
+        if (headSelects) tabsHead.appendChild(headSelects);
+      }
+    }
+    const detailMetaChildren = [];
+    if (!compactTopRow) {
+      detailMetaChildren.push(el("div", { class: "badge" }, [document.createTextNode(`{${node.stepName}}`)]));
+      detailMetaChildren.push(buildHeadActions());
+      if (headSelects) detailMetaChildren.push(headSelects);
+    }
+    detailMetaChildren.push(el("div", { class: "head-description" }, [descriptionInput]));
+    const detailMeta = detailMetaChildren.length
+      ? el("div", { class: compactTopRow ? "node-detail-meta node-detail-meta--description-only" : "node-detail-meta" }, detailMetaChildren)
+      : null;
+    const showDetailMeta = !!detailMeta && (enabledTabSet.has("detail") || enabledTabSet.has("yaml"));
     if (loopRootSelected) {
       body.appendChild(
         el("div", { class: "small" }, [
@@ -403,14 +525,14 @@
       );
     }
 
-    if (!schema.length) {
+    if (!detailFields.length && !hasSchemaField) {
       body.appendChild(
         el("div", { class: "small" }, [
           document.createTextNode("フォーム定義がありません（設定のキー不一致の可能性）")
         ])
       );
     } else {
-      for (const field of schema) {
+      for (const field of detailFields) {
         body.appendChild(renderFieldSafe({
           node,
           field,
@@ -422,6 +544,25 @@
           onStateChanged
         }));
       }
+    }
+
+    if (schemaField) {
+      const schemaRow = renderFieldSafe({
+        node,
+        field: schemaField,
+        upstreamSteps,
+        availableVariableNames: availableVariables.suggestNames,
+        hiddenBindings: state.hiddenBindings,
+        state,
+        config,
+        onStateChanged
+      });
+      if (schemaRow && schemaRow.classList) {
+        schemaRow.classList.add("row--schema-inline");
+        const schemaLabel = schemaRow.querySelector(":scope > label");
+        if (schemaLabel) schemaLabel.remove();
+      }
+      dataSchemaEditorHost.appendChild(schemaRow);
     }
 
     function syncYamlView() {
@@ -511,48 +652,45 @@
       return messages.join(" / ");
     }
 
-    function setActiveDataView(viewKey) {
-      const activeView = ["schema", "preview", "summary"].includes(viewKey) ? viewKey : "preview";
-      root.__nodeDetailDataView = activeView;
-
-      const showSchema = activeView === "schema";
-      const showPreview = activeView === "preview";
-      const showSummary = activeView === "summary";
-
-      dataSchemaBtn.classList.toggle("is-active", showSchema);
-      dataSchemaBtn.setAttribute("aria-selected", showSchema ? "true" : "false");
-      dataPreviewBtn.classList.toggle("is-active", showPreview);
-      dataPreviewBtn.setAttribute("aria-selected", showPreview ? "true" : "false");
-      dataSummaryBtn.classList.toggle("is-active", showSummary);
-      dataSummaryBtn.setAttribute("aria-selected", showSummary ? "true" : "false");
-
-      dataSchemaWrap.hidden = !showSchema || !dataSchemaBody.children.length;
-      dataPreviewWrap.hidden = !showPreview || (!dataPreviewHead.children.length && !dataPreviewBody.children.length);
-      dataVolumeWrap.hidden = !showSummary || !dataVolumeList.children.length;
+    let currentDataConnector = false;
+    function getSupportedDataViews() {
+      const views = [];
+      if (hasSchemaField) views.push("schema");
+      if (currentDataConnector) {
+        views.push("preview");
+      }
+      return views;
     }
 
-    function renderSchemaRows(schemaDto) {
-      const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
-      dataSchemaBody.innerHTML = "";
-      if (!columns.length) {
+    function setActiveDataView(viewKey) {
+      const supportedViews = getSupportedDataViews();
+      if (!supportedViews.length) {
+        root.__nodeDetailDataView = "";
         dataSchemaWrap.hidden = true;
-        return {};
+        dataPreviewWrap.hidden = true;
+        dataUnsupportedNote.hidden = false;
+        return;
       }
+      const fallbackView = hasSchemaField ? "schema" : supportedViews[0];
+      const activeView = supportedViews.includes(viewKey)
+        ? viewKey
+        : (supportedViews.includes(fallbackView) ? fallbackView : supportedViews[0]);
+      root.__nodeDetailDataView = activeView;
+
+      const showSchema = hasSchemaField && activeView === "schema";
+      const showPreview = currentDataConnector && activeView === "preview";
+      dataSchemaWrap.hidden = !showSchema || !hasSchemaField;
+      dataPreviewWrap.hidden = !showPreview || (!dataPreviewHead.children.length && !dataPreviewBody.children.length);
+      dataUnsupportedNote.hidden = showSchema || currentDataConnector;
+    }
+
+    function buildSchemaByName(schemaDto) {
+      const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
       const schemaByName = {};
       columns.forEach((column) => {
         const newName = String(column?.new_name || column?.origin_name || "");
-        const description = String(column?.description || "");
-        const zizDatatype = String(column?.ziz_datatype || "");
         if (newName) schemaByName[newName] = column;
-        dataSchemaBody.appendChild(
-          el("tr", {}, [
-            el("td", {}, [document.createTextNode(newName || "-")]),
-            el("td", { class: "node-data-value" }, [document.createTextNode(description || "-")]),
-            el("td", {}, [document.createTextNode(zizDatatype || "-")])
-          ])
-        );
       });
-      dataSchemaWrap.hidden = false;
       return schemaByName;
     }
 
@@ -597,108 +735,81 @@
       dataPreviewWrap.hidden = false;
     }
 
-    function renderDatavolume(datavolumeDto) {
-      const columns = Array.isArray(datavolumeDto?.columns) ? datavolumeDto.columns : [];
-      dataVolumeList.innerHTML = "";
-      if (!columns.length) {
-        dataVolumeWrap.hidden = true;
-        return;
-      }
-      columns.forEach((column) => {
-        const name = String(column?.name || "");
-        const items = Array.isArray(column?.items) ? column.items : [];
-        const itemList = el("ul", { class: "node-data-volume-items" }, []);
-        if (!items.length) {
-          itemList.appendChild(
-            el("li", { class: "node-data-volume-item is-empty" }, [document.createTextNode("値がないです。")])
-          );
-        } else {
-          items.forEach((item) => {
-            const value = String(item?.value ?? "");
-            const count = Number(item?.count || 0);
-            const ratio = Number(item?.ratio || 0);
-            const barWidth = Math.max(4, Math.min(100, ratio));
-            const barLabel = `${value || "NULL"} / ${count}件`;
-            itemList.appendChild(
-              el("li", { class: "node-data-volume-item" }, [
-                el("div", { class: "node-data-volume-item-head" }, [
-                  el("span", { class: "node-data-volume-item-meta" }, [document.createTextNode(`${count}件 ${ratio.toFixed(1)}%`)])
-                ]),
-                el("div", { class: "node-data-volume-bar-track" }, [
-                  el("div", { class: "node-data-volume-bar-fill", style: `width:${barWidth}%` }, [
-                    el("span", { class: "node-data-volume-bar-label", title: barLabel }, [document.createTextNode(barLabel)])
-                  ])
-                ])
-              ])
-            );
-          });
-        }
-        dataVolumeList.appendChild(
-          el("section", { class: "node-data-volume-block" }, [
-            el("div", { class: "node-data-volume-title" }, [
-              document.createTextNode(name || "-")
-            ]),
-            itemList
-          ])
-        );
-      });
-      dataVolumeWrap.hidden = false;
-    }
-
-    function applyDataPayload(schemaDto, previewDto, datavolumeDto) {
-      const schemaByName = renderSchemaRows(schemaDto);
+    function applyDataPayload(schemaDto, previewDto) {
+      const schemaByName = buildSchemaByName(schemaDto);
       renderPreviewRows(previewDto, schemaByName);
-      renderDatavolume(datavolumeDto);
-      dataViewToggle.hidden = false;
       const previewRowCount = Number(previewDto?.row_count || 0);
       const truncated = !!previewDto?.truncated;
       const previewLabel = truncated ? `プレビュー ${previewRowCount} 行（先頭のみ）` : `プレビュー ${previewRowCount} 行`;
       setDataStatus(buildDataStatusMessage(previewLabel));
-      setActiveDataView(root.__nodeDetailDataView || "preview");
+      setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : "preview"));
     }
 
     async function syncDataView() {
-      const dataConnector = isDataConnector(node.connector, config);
-      dataUnsupportedNote.hidden = dataConnector;
+      currentDataConnector = isDataConnector(node.connector, config);
+      dataUnsupportedNote.hidden = true;
       dataSchemaWrap.hidden = true;
       dataPreviewWrap.hidden = true;
-      dataVolumeWrap.hidden = true;
-      dataViewToggle.hidden = true;
-      dataSchemaBody.innerHTML = "";
       dataPreviewHead.innerHTML = "";
       dataPreviewBody.innerHTML = "";
-      dataVolumeList.innerHTML = "";
-      if (!dataConnector) return;
+      if (!currentDataConnector) {
+        setDataStatus(hasSchemaField ? "" : buildDataStatusMessage("データコネクタではないため対応していません。"));
+        setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : ""));
+        return;
+      }
       if (!bridgeApi?.available?.()) {
         setDataStatus(buildDataStatusMessage("WebView モードでのみ利用できます。"));
+        setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : "preview"));
         return;
       }
       const cacheKey = getDataCacheKey();
       const cached = cacheKey ? dataCacheStore[cacheKey] : null;
       if (cached) {
-        applyDataPayload(cached.schemaDto, cached.previewDto, cached.datavolumeDto);
+        applyDataPayload(cached.schemaDto, cached.previewDto);
         return;
       }
       const requestSeq = ++dataRequestSeq;
       setDataStatus(buildDataStatusMessage("データを取得しています..."));
       try {
-        const [schemaDto, previewDto, datavolumeDto] = await Promise.all([
+        const [schemaDto, previewDto] = await Promise.all([
           bridgeApi.call("result.getSchema", { mode: String(state?.appMode || ""), step_id: node.stepName }),
-          bridgeApi.call("result.getPreview", { mode: String(state?.appMode || ""), step_id: node.stepName }),
-          bridgeApi.call("result.getDatavolume", { mode: String(state?.appMode || ""), step_id: node.stepName, top_n: 5 })
+          bridgeApi.call("result.getPreview", { mode: String(state?.appMode || ""), step_id: node.stepName })
         ]);
         if (requestSeq !== dataRequestSeq) return;
-        writeDataCache(cacheKey, { schemaDto, previewDto, datavolumeDto });
-        applyDataPayload(schemaDto, previewDto, datavolumeDto);
+        writeDataCache(cacheKey, { schemaDto, previewDto });
+        applyDataPayload(schemaDto, previewDto);
       } catch (error) {
         if (requestSeq !== dataRequestSeq) return;
         const code = String(error?.code || "").trim();
         if (code === "E_NOT_FOUND") {
           setDataStatus(buildDataStatusMessage("まだ実行結果がありません。"));
+          setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : "preview"));
           return;
         }
         setDataStatus(buildDataStatusMessage(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`));
+        setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : "preview"));
       }
+    }
+
+    function buildDataSyncKey() {
+      return [
+        String(node?.id || "").trim(),
+        String(node?.stepName || "").trim(),
+        String(node?.connector || "").trim(),
+        String(node?.action || "").trim(),
+        String(node?.form?.input_data || "").trim(),
+        flowScopeKey
+      ].join("|");
+    }
+
+    function ensureDataViewSynced(options = {}) {
+      const force = !!options.force;
+      const nextKey = buildDataSyncKey();
+      if (!force && root.__nodeDetailLastDataSyncKey === nextKey) return;
+      root.__nodeDetailLastDataSyncKey = nextKey;
+      syncDataView().catch((error) => {
+        console.error("data view sync failed", error);
+      });
     }
 
     function buildVariableGroup(title, items, toneClass = "", options = {}) {
@@ -769,75 +880,84 @@
       logText.value = lines.join("\n");
     }
 
-    const activeTabByRoot = ["detail", "yaml", "data", "variables", "log"].includes(root.__nodeDetailActiveTab)
+    const forcedTabKey = enabledTabSet.has(String(forcedActiveTab || ""))
+      ? String(forcedActiveTab || "")
+      : "";
+    const activeTabByRoot = forcedTabKey || (enabledTabSet.has(root.__nodeDetailActiveTab)
       ? root.__nodeDetailActiveTab
-      : "detail";
+      : defaultTabKey);
     function setActiveTab(tabKey) {
-      const activeTab = ["yaml", "data", "variables", "log"].includes(tabKey) ? tabKey : "detail";
+      const prevTab = String(root.__nodeDetailActiveTab || "");
+      const activeTab = enabledTabSet.has(tabKey) ? tabKey : defaultTabKey;
       root.__nodeDetailActiveTab = activeTab;
-      const showDetail = activeTab === "detail";
-      const showYaml = activeTab === "yaml";
-      const showData = activeTab === "data";
-      const showVariables = activeTab === "variables";
-      const showLog = activeTab === "log";
+      ALL_DETAIL_TABS.forEach((key) => {
+        const button = tabButtonMap[key];
+        const pane = tabPaneMap[key];
+        if (!pane) return;
+        if (!enabledTabSet.has(key)) {
+          if (button) button.hidden = true;
+          pane.hidden = true;
+          pane.classList.remove("is-active");
+          return;
+        }
+        const isActive = key === activeTab;
+        if (button) {
+          button.hidden = hideTabHeader;
+          button.classList.toggle("is-active", isActive);
+          button.setAttribute("aria-selected", isActive ? "true" : "false");
+        }
+        pane.classList.toggle("is-active", isActive);
+        pane.hidden = !isActive;
+      });
 
-      detailTabBtn.classList.toggle("is-active", showDetail);
-      detailTabBtn.setAttribute("aria-selected", showDetail ? "true" : "false");
-
-      yamlTabBtn.classList.toggle("is-active", showYaml);
-      yamlTabBtn.setAttribute("aria-selected", showYaml ? "true" : "false");
-
-      dataTabBtn.classList.toggle("is-active", showData);
-      dataTabBtn.setAttribute("aria-selected", showData ? "true" : "false");
-
-      variablesTabBtn.classList.toggle("is-active", showVariables);
-      variablesTabBtn.setAttribute("aria-selected", showVariables ? "true" : "false");
-
-      logTabBtn.classList.toggle("is-active", showLog);
-      logTabBtn.setAttribute("aria-selected", showLog ? "true" : "false");
-
-      detailPane.classList.toggle("is-active", showDetail);
-      yamlPane.classList.toggle("is-active", showYaml);
-      dataPane.classList.toggle("is-active", showData);
-      variablesPane.classList.toggle("is-active", showVariables);
-      logPane.classList.toggle("is-active", showLog);
-      detailPane.hidden = !showDetail;
-      yamlPane.hidden = !showYaml;
-      dataPane.hidden = !showData;
-      variablesPane.hidden = !showVariables;
-      logPane.hidden = !showLog;
-
-      if (showYaml) syncYamlView();
-      if (showData) {
-        syncDataView().catch((error) => {
-          console.error("data view sync failed", error);
-        });
+      if (activeTab === "yaml") syncYamlView();
+      if (activeTab === "data") {
+        // data タブ表示時のみ同期し、同一キーでは再取得しない
+        ensureDataViewSynced({ force: prevTab !== "data" });
       }
-      if (showVariables) syncVariablesView();
-      if (showLog) syncLogView();
+      if (activeTab === "variables") syncVariablesView();
+      if (activeTab === "log") syncLogView();
     }
 
-    detailTabBtn.addEventListener("click", () => setActiveTab("detail"));
-    yamlTabBtn.addEventListener("click", () => setActiveTab("yaml"));
-    dataTabBtn.addEventListener("click", () => setActiveTab("data"));
-    dataSchemaBtn.addEventListener("click", () => setActiveDataView("schema"));
-    dataPreviewBtn.addEventListener("click", () => setActiveDataView("preview"));
-    dataSummaryBtn.addEventListener("click", () => setActiveDataView("summary"));
-    variablesTabBtn.addEventListener("click", () => setActiveTab("variables"));
-    logTabBtn.addEventListener("click", () => setActiveTab("log"));
+    if (enabledTabSet.has("detail")) detailTabBtn.addEventListener("click", () => setActiveTab("detail"));
+    if (enabledTabSet.has("yaml")) yamlTabBtn.addEventListener("click", () => setActiveTab("yaml"));
+    if (enabledTabSet.has("data")) dataTabBtn.addEventListener("click", () => setActiveTab("data"));
+    if (enabledTabSet.has("variables")) variablesTabBtn.addEventListener("click", () => setActiveTab("variables"));
+    if (enabledTabSet.has("log")) logTabBtn.addEventListener("click", () => setActiveTab("log"));
 
-    body.addEventListener("input", syncYamlView);
-    body.addEventListener("change", syncYamlView);
-    body.addEventListener("input", syncVariablesView);
-    body.addEventListener("change", syncVariablesView);
-    body.addEventListener("input", syncLogView);
-    body.addEventListener("change", syncLogView);
-    syncYamlView();
-    syncVariablesView();
-    syncLogView();
+    if (enabledTabSet.has("yaml")) {
+      body.addEventListener("input", syncYamlView);
+      body.addEventListener("change", syncYamlView);
+      syncYamlView();
+    }
+    if (enabledTabSet.has("variables")) {
+      body.addEventListener("input", syncVariablesView);
+      body.addEventListener("change", syncVariablesView);
+      syncVariablesView();
+    }
+    if (enabledTabSet.has("log")) {
+      body.addEventListener("input", syncLogView);
+      body.addEventListener("change", syncLogView);
+      syncLogView();
+    }
     setActiveTab(activeTabByRoot);
 
-    root.appendChild(el("section", { class: "node detail-node" }, [tabsHead, detailMeta, detailPane, yamlPane, dataPane, variablesPane, logPane]));
+    const placeDetailMetaAboveTabs = compactTopRow && hideTabHeader && showDetailMeta;
+    const sectionChildren = [];
+    if (placeDetailMetaAboveTabs) {
+      const topUnifiedFrame = el("div", { class: "node-top-unified-frame" }, []);
+      if (detailMeta) topUnifiedFrame.appendChild(detailMeta);
+      topUnifiedFrame.appendChild(tabsHead);
+      sectionChildren.push(topUnifiedFrame);
+    } else {
+      sectionChildren.push(tabsHead);
+      if (showDetailMeta) sectionChildren.push(detailMeta);
+    }
+    enabledTabs.forEach((tabKey) => {
+      const pane = tabPaneMap[tabKey];
+      if (pane) sectionChildren.push(pane);
+    });
+    root.appendChild(el("section", { class: "node detail-node" }, sectionChildren));
   }
   const nodeDetail = { renderNodeDetail };
   window.uiNodeDetail = nodeDetail;

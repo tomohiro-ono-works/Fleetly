@@ -4,16 +4,16 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>ziz</title>
-  <link rel="icon" href="./icons/icon.png">
+  <link rel="icon" href="./icons/ziz.svg">
   <link rel="stylesheet" href="./css/00_tokens.css">
-  <link rel="stylesheet" href="./css/01_base.css">
-  <link rel="stylesheet" href="./css/05_sidebar.css">
-  <link rel="stylesheet" href="./css/10_header.css?v=20260408-2">
+  <link rel="stylesheet" href="./css/01_base.css?v=20260418-3">
+  <link rel="stylesheet" href="./css/05_sidebar.css?v=20260418-4">
+  <link rel="stylesheet" href="./css/10_header.css?v=20260419-3">
   <link rel="stylesheet" href="./css/15_dialog.css?v=20260406-3">
-  <link rel="stylesheet" href="./css/20_node-detail.css?v=20260407-1">
+  <link rel="stylesheet" href="./css/20_node-detail.css?v=20260419-5">
   <link rel="stylesheet" href="./css/22_code-editor.css?v=20260411-1">
   <link rel="stylesheet" href="./css/30_flowchart.css">
-  <link rel="stylesheet" href="./css/40_detail-panel.css?v=20260406-2">
+  <link rel="stylesheet" href="./css/40_detail-panel.css?v=20260419-6">
   <link rel="stylesheet" href="./css/90_responsive.css">
   <link rel="stylesheet" href="./modal/modal_core.css">
   <link rel="stylesheet" href="./modal/excel_modal.css">
@@ -33,7 +33,8 @@
   <main data-shell-main>
     <div id="flowchart"></div>
     <section class="panel detail-panel">
-      <div id="nodeDetail"></div>
+      <div id="detailPanelResizer" class="detail-panel-resizer" aria-hidden="true"></div>
+      <div id="nodeDetailBottom"></div>
     </section>
   </main>
 
@@ -119,13 +120,13 @@
     </div>
   </div>
 
-  <script src="./js/config.js?v=20260407-3"></script>
+  <script src="./js/config.js?v=20260419-1"></script>
   <script src="./js/packages/core.package.js?v=20260406-2"></script>
   <script src="./js/packages/ui.package.js?v=20260406-1"></script>
   <script src="./js/packages/modal.package.js?v=20260406-2"></script>
   <script src="./js/utils.js?v=20260406-1"></script>
   <script src="./js/dialog.js?v=20260406-5"></script>
-  <script src="./js/state.js?v=20260406-1"></script>
+  <script src="./js/state.js?v=20260419-4"></script>
   <script src="./js/vars.js"></script>
   <script src="./vendor/js-yaml/js-yaml.min.js"></script>
   <script src="./js/bridge.js?v=20260406-1"></script>
@@ -136,16 +137,16 @@
   <script src="./js/code.highlight.js?v=20260411-1"></script>
   <script src="./js/code.editor.js?v=20260411-2"></script>
   <script src="./js/ui.suggest.js?v=20260407-1"></script>
-  <script src="./js/ui.fields.js?v=20260407-3"></script>
+  <script src="./js/ui.fields.js?v=20260419-2"></script>
   <script src="./js/ui.node.shared.js?v=20260411-2"></script>
-  <script src="./js/ui.node.canvas.layout.js?v=20260413-1"></script>
-  <script src="./js/ui.node.canvas.draw.js?v=20260413-1"></script>
-  <script src="./js/ui.node.canvas.hit.js?v=20260413-1"></script>
-  <script src="./js/ui.node.canvas.js?v=20260413-1"></script>
-  <script src="./js/ui.node.detail.js?v=20260411-3"></script>
+  <script src="./js/ui.node.canvas.layout.js?v=20260419-1"></script>
+  <script src="./js/ui.node.canvas.draw.js?v=20260419-20"></script>
+  <script src="./js/ui.node.canvas.hit.js?v=20260419-2"></script>
+  <script src="./js/ui.node.canvas.js?v=20260419-4"></script>
+  <script src="./js/ui.node.detail.js?v=20260419-5"></script>
   <script src="./js/ui.node.runtime.js?v=20260411-3"></script>
-  <script src="./js/ui.renderer.js?v=20260411-1"></script>
-  <script src="./js/app-shell.js?v=20260412-2"></script>
-  <script src="./js/app.js?v=20260411-2"></script>
+  <script src="./js/ui.renderer.js?v=20260419-6"></script>
+  <script src="./js/app-shell.js?v=20260418-2"></script>
+  <script src="./js/app.js?v=20260419-4"></script>
 </body>
 </html>

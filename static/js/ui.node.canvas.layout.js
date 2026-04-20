@@ -20,6 +20,7 @@
     MIN_SIBLING_GAP: 56,
     START_X: 44,
     START_Y: 40,
+    GRID_SIZE: 64,
     BTN_X_OFFSET: 12,
     BTN_GAP: 20,
     BTN_R: 8,
@@ -36,10 +37,138 @@
     MIN_SIBLING_GAP,
     START_X,
     START_Y,
+    GRID_SIZE,
     BTN_X_OFFSET,
     BTN_GAP,
     BTN_R
   } = constants;
+
+  function clampCanvasCoordinate(value) {
+    return Math.max(8, Math.round(Number(value) || 0));
+  }
+
+  function roundGridUnit(value) {
+    return Math.round(Number(value || 0) * 1000) / 1000;
+  }
+
+  function toCanvasCoordinate(unit, origin) {
+    const size = Math.max(1, Number(GRID_SIZE) || 64);
+    const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
+    const rawUnit = Number(unit);
+    if (!Number.isFinite(rawUnit)) return base;
+    return clampCanvasCoordinate(base + rawUnit * size);
+  }
+
+  function toGridCoordinate(value, origin) {
+    const size = Math.max(1, Number(GRID_SIZE) || 64);
+    const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
+    const raw = Number(value);
+    if (!Number.isFinite(raw)) return 0;
+    return roundGridUnit((raw - base) / size);
+  }
+
+  function normalizeCanvasPosition(value) {
+    if (!value || typeof value !== "object") return null;
+    const x = Number(value.x);
+    const y = Number(value.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return {
+      x: clampCanvasCoordinate(x),
+      y: clampCanvasCoordinate(y)
+    };
+  }
+
+  function normalizeCanvasGridPosition(value) {
+    if (!value || typeof value !== "object") return null;
+    const x = Number(value.x);
+    const y = Number(value.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
+  }
+
+  function canvasPositionToGrid(position) {
+    const normalized = normalizeCanvasPosition(position);
+    if (!normalized) return null;
+    return {
+      x: toGridCoordinate(normalized.x, START_X),
+      y: toGridCoordinate(normalized.y, START_Y)
+    };
+  }
+
+  function gridPositionToCanvas(position) {
+    const normalized = normalizeCanvasGridPosition(position);
+    if (!normalized) return null;
+    return normalizeCanvasPosition({
+      x: toCanvasCoordinate(normalized.x, START_X),
+      y: toCanvasCoordinate(normalized.y, START_Y)
+    });
+  }
+
+  function resolveStoredCanvasPosition(nodeLike) {
+    const storedGrid = normalizeCanvasGridPosition(nodeLike?.canvasGridPosition);
+    if (storedGrid) {
+      const fromGrid = gridPositionToCanvas(storedGrid);
+      if (fromGrid) return fromGrid;
+    }
+    return normalizeCanvasPosition(nodeLike?.canvasPosition);
+  }
+
+  function normalizeStickyNote(note) {
+    if (!note || typeof note !== "object") return null;
+    const id = String(note.id || "").trim();
+    const x = Number(note.x);
+    const y = Number(note.y);
+    const w = Number(note.w);
+    const h = Number(note.h);
+    if (!id) return null;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(w) || !Number.isFinite(h)) return null;
+    return {
+      id,
+      x: clampCanvasCoordinate(x),
+      y: clampCanvasCoordinate(y),
+      w: Math.max(120, Math.round(w)),
+      h: Math.max(72, Math.round(h)),
+      text: String(note.text || ""),
+      color: String(note.color || "#fff2a8"),
+      anchorNodeId: note.anchorNodeId ? String(note.anchorNodeId) : null
+    };
+  }
+
+  function applyNodeCanvasCoordinates(node, normalizedNode, position) {
+    const normalizedPosition = normalizeCanvasPosition(position);
+    if (!normalizedPosition) return null;
+    const normalizedGrid = canvasPositionToGrid(normalizedPosition);
+    if (node) {
+      node.canvasPosition = normalizedPosition;
+      if (normalizedGrid) node.canvasGridPosition = normalizedGrid;
+    }
+    if (normalizedNode) {
+      normalizedNode.canvasPosition = normalizedPosition;
+      if (normalizedGrid) normalizedNode.canvasGridPosition = normalizedGrid;
+    }
+    return normalizedPosition;
+  }
+
+  function applyStoredNodePositions(normalizedNodes, viewById, rawById) {
+    normalizedNodes.forEach((normalizedNode) => {
+      const view = viewById.get(normalizedNode.id);
+      if (!view) return;
+      const rawNode = rawById.get(normalizedNode.id) || normalizedNode;
+      const storedPosition = resolveStoredCanvasPosition(rawNode) || resolveStoredCanvasPosition(normalizedNode);
+      if (storedPosition) {
+        view.x = storedPosition.x;
+        view.y = storedPosition.y;
+        applyNodeCanvasCoordinates(rawNode, normalizedNode, storedPosition);
+        return;
+      }
+
+      const autoPosition = {
+        x: clampCanvasCoordinate(view.x),
+        y: clampCanvasCoordinate(view.y)
+      };
+      applyNodeCanvasCoordinates(rawNode, normalizedNode, autoPosition);
+    });
+  }
 
   function createPseudoNode(id, text, kind) {
     return {
@@ -213,9 +342,14 @@
       yCursor = subtreeBottom + MIN_SIBLING_GAP;
     });
 
+    applyStoredNodePositions(normalizedNodes, viewById, rawById);
+
     const taskViews = normalizedNodes.map((node) => viewById.get(node.id)).filter(Boolean);
     const loopEndViews = Array.from(loopMetaByRootId.values())
       .map((meta) => viewById.get(meta.loopEndId))
+      .filter(Boolean);
+    const stickyNotes = (Array.isArray(state.stickyNotes) ? state.stickyNotes : [])
+      .map((note) => normalizeStickyNote(note))
       .filter(Boolean);
 
     const edges = [];
@@ -250,7 +384,13 @@
     if (!leaves.length) pushEdge(start.id, end.id, "to-end-main");
 
     const maxDepth = Math.max(1, ...Array.from(depthById.values()));
-    end.x = START_X + LEVEL_MARGIN * (maxDepth + 1);
+    const maxTaskX = taskViews.length ? Math.max(...taskViews.map((view) => view.x)) : START_X;
+    const maxLoopEndX = loopEndViews.length ? Math.max(...loopEndViews.map((view) => view.x)) : START_X;
+    const rightMostNodeX = Math.max(START_X, maxTaskX, maxLoopEndX);
+    end.x = Math.max(
+      START_X + LEVEL_MARGIN * (maxDepth + 1),
+      rightMostNodeX + LEVEL_MARGIN
+    );
     end.y = START_Y;
 
     const controls = [];
@@ -400,8 +540,10 @@
     const maxNodeY = Math.max(START_Y, ...drawableNodes.map((n) => n.y));
     const maxFrameX = loopFrames.length ? Math.max(...loopFrames.map((f) => f.x + f.w)) : 0;
     const maxFrameY = loopFrames.length ? Math.max(...loopFrames.map((f) => f.y + f.h)) : 0;
-    const width = Math.max(end.x + NODE_W + 220, maxNodeX + NODE_W + 220, maxFrameX + 220);
-    const height = Math.max(220, maxNodeY + NODE_H + 48, maxFrameY + 48);
+    const maxNoteX = stickyNotes.length ? Math.max(...stickyNotes.map((note) => note.x + note.w)) : 0;
+    const maxNoteY = stickyNotes.length ? Math.max(...stickyNotes.map((note) => note.y + note.h)) : 0;
+    const width = Math.max(end.x + NODE_W + 220, maxNodeX + NODE_W + 220, maxFrameX + 220, maxNoteX + 220);
+    const height = Math.max(220, maxNodeY + NODE_H + 48, maxFrameY + 48, maxNoteY + 48);
 
     return {
       start,
@@ -412,6 +554,7 @@
       edges,
       controls,
       loopFrames,
+      stickyNotes,
       width,
       height
     };
