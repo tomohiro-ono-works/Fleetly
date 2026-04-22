@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tableau Bulk Downloader</title>
+
+  <style>
+    :root {
+      --card-width: 250px;
+      --card-height: 400px;
+
+      /* Tableau本体の描画サイズ */
+      --viz-width: 1200;
+      --viz-height: 900;
+
+      /* 見た目だけ縮小 */
+      --viz-scale: 0.2083333333; /* 250 / 1200 */
+    }
+
+    body {
+      margin: 16px;
+      font-family: Arial, sans-serif;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+
+    #globalStatus {
+      display: inline-block;
+      padding: 4px 10px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-weight: 700;
+    }
+
+    #bulkDownloadBtn {
+      display: none;
+    }
+
+    #grid {
+      display: grid;
+      grid-template-columns: repeat(8, var(--card-width));
+      gap: 12px;
+      align-items: start;
+    }
+
+    .card {
+      width: var(--card-width);
+      border: 1px solid #d8d8d8;
+      border-radius: 8px;
+      padding: 8px;
+      box-sizing: border-box;
+      background: #fff;
+    }
+
+    .card-title {
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.4;
+      margin-bottom: 6px;
+      word-break: break-word;
+      min-height: 36px;
+    }
+
+    .card-meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: #444;
+      margin-bottom: 8px;
+      gap: 6px;
+    }
+
+    .status {
+      font-weight: 700;
+    }
+
+    .error {
+      color: #b00020;
+    }
+
+    .viz-shell {
+      width: var(--card-width);
+      height: var(--card-height);
+      overflow: hidden;
+      border: 1px solid #eee;
+      box-sizing: border-box;
+      background: #fafafa;
+      position: relative;
+    }
+
+    .viz-scale {
+      width: calc(var(--viz-width) * 1px);
+      height: calc(var(--viz-height) * 1px);
+      transform: scale(var(--viz-scale));
+      transform-origin: top left;
+    }
+
+    tableau-viz {
+      width: calc(var(--viz-width) * 1px);
+      height: calc(var(--viz-height) * 1px);
+      display: block;
+    }
+
+    .actions {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    button {
+      cursor: pointer;
+      padding: 6px 10px;
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <input id="jsonFile" type="file" accept=".json,application/json" />
+    <button id="bulkDownloadBtn">一括ダウンロード</button>
+    <span id="globalStatus">未読込</span>
+  </div>
+
+  <div id="grid"></div>
+
+  <script type="module">
+    import {
+      TableauEventType,
+      PrintScaling,
+      PrintPageSize,
+      PrintOrientation
+    } from "https://public.tableau.com/javascripts/api/tableau.embedding.3.latest.min.js";
+
+    const jsonFile = document.getElementById("jsonFile");
+    const bulkDownloadBtn = document.getElementById("bulkDownloadBtn");
+    const globalStatus = document.getElementById("globalStatus");
+    const grid = document.getElementById("grid");
+
+    const reportStates = [];
+
+    jsonFile.addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+
+      let defs;
+      try {
+        defs = JSON.parse(await file.text());
+      } catch (err) {
+        console.error(err);
+        alert("JSONの読み込みに失敗しました。");
+        globalStatus.textContent = "JSONエラー";
+        return;
+      }
+
+      if (!Array.isArray(defs)) {
+        alert("JSONの先頭は配列にしてください。");
+        globalStatus.textContent = "JSONエラー";
+        return;
+      }
+
+      try {
+        renderReports(defs);
+      } catch (err) {
+        console.error(err);
+        alert(err.message || "描画に失敗しました。");
+        globalStatus.textContent = "エラー";
+      }
+    });
+
+    function normalizeDef(raw, index) {
+      const name = raw.name || raw.export?.name || `report_${index + 1}`;
+      const tableau_url = raw.tableau_url;
+      if (!tableau_url) {
+        throw new Error(`tableau_url がありません: index=${index}`);
+      }
+
+      let filters = [];
+      if (Array.isArray(raw.filters)) {
+        filters = raw.filters.map(f => ({ field: f.field, value: f.value }));
+      } else if (raw.filters && typeof raw.filters === "object") {
+        filters = Object.entries(raw.filters).map(([field, value]) => ({ field, value }));
+      }
+
+      const exportType = (raw.export?.type || "pdf").toLowerCase();
+      if (!["pdf", "ppt", "img"].includes(exportType)) {
+        throw new Error(`export.type は pdf / ppt / img のみ対応です: ${exportType}`);
+      }
+
+      return {
+        name,
+        tableau_url,
+        filters,
+        export: {
+          type: exportType,
+          size: raw.export?.size || "auto",
+          name: raw.export?.name || name
+        }
+      };
+    }
+
+    function renderReports(defs) {
+      grid.innerHTML = "";
+      reportStates.length = 0;
+      bulkDownloadBtn.style.display = "none";
+      globalStatus.textContent = "読込中";
+
+      defs.forEach((raw, index) => {
+        const def = normalizeDef(raw, index);
+
+        const card = document.createElement("div");
+        card.className = "card";
+
+        const title = document.createElement("div");
+        title.className = "card-title";
+        title.textContent = def.name;
+
+        const meta = document.createElement("div");
+        meta.className = "card-meta";
+
+        const typeLabel = document.createElement("span");
+        typeLabel.textContent = def.export.type.toUpperCase();
+
+        const statusLabel = document.createElement("span");
+        statusLabel.className = "status";
+        statusLabel.textContent = "読込中";
+
+        meta.appendChild(typeLabel);
+        meta.appendChild(statusLabel);
+
+        const vizShell = document.createElement("div");
+        vizShell.className = "viz-shell";
+
+        const vizScale = document.createElement("div");
+        vizScale.className = "viz-scale";
+
+        const viz = document.createElement("tableau-viz");
+        viz.setAttribute("src", def.tableau_url);
+        viz.setAttribute("width", String(getCssNumber("--viz-width")));
+        viz.setAttribute("height", String(getCssNumber("--viz-height")));
+        viz.setAttribute("device", "desktop");
+        viz.setAttribute("toolbar", "hidden");
+        viz.setAttribute("hide-tabs", "");
+        viz.setAttribute("iframe-attr-loading", "eager");
+
+        for (const f of def.filters) {
+          const vf = document.createElement("viz-filter");
+          vf.setAttribute("field", f.field);
+          vf.setAttribute("value", Array.isArray(f.value) ? f.value.join(",") : String(f.value));
+          viz.appendChild(vf);
+        }
+
+        vizScale.appendChild(viz);
+        vizShell.appendChild(vizScale);
+
+        const actions = document.createElement("div");
+        actions.className = "actions";
+
+        const nameLabel = document.createElement("span");
+        nameLabel.style.fontSize = "11px";
+        nameLabel.style.color = "#666";
+        nameLabel.style.flex = "1";
+        nameLabel.style.overflow = "hidden";
+        nameLabel.style.textOverflow = "ellipsis";
+        nameLabel.style.whiteSpace = "nowrap";
+        nameLabel.textContent = def.export.name || def.name;
+
+        const singleBtn = document.createElement("button");
+        singleBtn.textContent = "DL";
+        singleBtn.disabled = true;
+
+        actions.appendChild(nameLabel);
+        actions.appendChild(singleBtn);
+
+        card.appendChild(title);
+        card.appendChild(meta);
+        card.appendChild(vizShell);
+        card.appendChild(actions);
+        grid.appendChild(card);
+
+        const state = {
+          def,
+          viz,
+          singleBtn,
+          statusLabel,
+          ready: false,
+          errored: false,
+          timeoutId: null
+        };
+        reportStates.push(state);
+
+        viz.addEventListener(TableauEventType.FirstInteractive, () => {
+          if (state.ready || state.errored) return;
+          clearTimeout(state.timeoutId);
+          state.ready = true;
+          statusLabel.textContent = "完了";
+          singleBtn.disabled = false;
+          updateGlobalStatus();
+        });
+
+        viz.addEventListener("vizloaderror", () => {
+          if (state.ready || state.errored) return;
+          clearTimeout(state.timeoutId);
+          state.errored = true;
+          statusLabel.textContent = "エラー";
+          statusLabel.classList.add("error");
+          updateGlobalStatus();
+        });
+
+        state.timeoutId = setTimeout(() => {
+          if (state.ready || state.errored) return;
+          state.errored = true;
+          statusLabel.textContent = "タイムアウト";
+          statusLabel.classList.add("error");
+          updateGlobalStatus();
+        }, 60000);
+
+        singleBtn.addEventListener("click", async () => {
+          try {
+            singleBtn.disabled = true;
+            await exportOne(state);
+          } catch (err) {
+            console.error(err);
+            alert(`${def.name} のダウンロードに失敗しました。`);
+          } finally {
+            singleBtn.disabled = false;
+          }
+        });
+      });
+
+      updateGlobalStatus();
+    }
+
+    function getCssNumber(varName) {
+      return parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue(varName)
+      );
+    }
+
+    async function exportOne(state) {
+      const { viz, def } = state;
+
+      switch (def.export.type) {
+        case "pdf":
+          await viz.exportPDFAsync(undefined, {
+            scaling: PrintScaling.Automatic,
+            pageSize: PrintPageSize.Unspecified,
+            orientation: PrintOrientation.Portrait
+          });
+          break;
+        case "ppt":
+          await viz.exportPowerPointAsync();
+          break;
+        case "img":
+          await viz.exportImageAsync();
+          break;
+      }
+    }
+
+    function updateGlobalStatus() {
+      if (reportStates.length === 0) {
+        globalStatus.textContent = "未読込";
+        bulkDownloadBtn.style.display = "none";
+        return;
+      }
+
+      const allReady = reportStates.every(s => s.ready);
+      const hasError = reportStates.some(s => s.errored);
+
+      if (allReady) {
+        globalStatus.textContent = "完了";
+        bulkDownloadBtn.style.display = "inline-block";
+      } else if (hasError) {
+        globalStatus.textContent = "一部エラー";
+        bulkDownloadBtn.style.display = "none";
+      } else {
+        globalStatus.textContent = "読込中";
+        bulkDownloadBtn.style.display = "none";
+      }
+    }
+
+    bulkDownloadBtn.addEventListener("click", async () => {
+      bulkDownloadBtn.disabled = true;
+      globalStatus.textContent = "一括DL中";
+
+      try {
+        for (const state of reportStates) {
+          if (!state.ready) continue;
+          await exportOne(state);
+          await new Promise(resolve => setTimeout(resolve, 700));
+        }
+        globalStatus.textContent = "完了";
+      } catch (err) {
+        console.error(err);
+        globalStatus.textContent = "一括DLエラー";
+        alert("一括ダウンロードでエラーが発生しました。");
+      } finally {
+        bulkDownloadBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
