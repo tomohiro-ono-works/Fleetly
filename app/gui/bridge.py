@@ -1,5 +1,6 @@
 import copy
 import csv
+import getpass
 import json
 import logging
 import os
@@ -253,6 +254,33 @@ class BridgeRuntime:
                 "api_profile_count": len(policies.get("apis", {}).get("profiles", {})),
                 "web_allowlist_count": len(policies.get("web", {}).get("allowlist", [])),
             },
+            "runtime_context_defaults": self._build_runtime_context_defaults(),
+        }
+
+    def _resolve_runtime_user_name(self):
+        candidates = [
+            os.environ.get("ZIZ_USER_NAME"),
+            os.environ.get("USERNAME"),
+            os.environ.get("USER"),
+        ]
+        try:
+            candidates.append(getpass.getuser())
+        except Exception:
+            pass
+        try:
+            candidates.append(os.getlogin())
+        except Exception:
+            pass
+        for candidate in candidates:
+            text = _safe_text(candidate)
+            if text:
+                return text
+        return "unknown"
+
+    def _build_runtime_context_defaults(self):
+        return {
+            "current_date": datetime.now().strftime("%Y-%m-%d"),
+            "user_name": self._resolve_runtime_user_name(),
         }
 
     def _handle_app_log_ui_event(self, payload):

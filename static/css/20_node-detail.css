@@ -409,12 +409,28 @@
   align-items: center;
 }
 
+.define-values-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+}
+
 .start-param-add {
   justify-self: start;
 }
 
 .start-param-remove {
   white-space: nowrap;
+}
+
+.start-param-input--readonly {
+  background: var(--surface-hover);
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.start-param-remove:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .variable-pane-body {
@@ -504,6 +520,10 @@
   display: grid;
   grid-template-columns: var(--label-col) 1fr;
   gap: 14px;
+}
+
+.row.row--label-hidden {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 label {
@@ -881,6 +901,11 @@ textarea {
 
 .schema-editor-hint.is-warning {
   color: var(--semantic-error-fg);
+}
+
+.schema-validation-note {
+  color: var(--semantic-error-fg);
+  white-space: pre-wrap;
 }
 
 .schema-editor-body {

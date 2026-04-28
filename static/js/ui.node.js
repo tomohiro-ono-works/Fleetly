@@ -10,22 +10,22 @@
     },
     {
       key: "canvas-layout",
-      src: "./js/ui.node.canvas.layout.js?v=20260419-1",
+      src: "./js/ui.node.canvas.layout.js?v=20260426-2",
       isReady: () => typeof ((uiPkg.nodeCanvasParts || window.uiNodeCanvasParts || {}).buildFlowModel) === "function"
     },
     {
       key: "canvas-draw",
-      src: "./js/ui.node.canvas.draw.js?v=20260419-20",
+      src: "./js/ui.node.canvas.draw.js?v=20260426-1",
       isReady: () => typeof ((uiPkg.nodeCanvasParts || window.uiNodeCanvasParts || {}).drawFlowCanvas) === "function"
     },
     {
       key: "canvas-hit",
-      src: "./js/ui.node.canvas.hit.js?v=20260419-2",
+      src: "./js/ui.node.canvas.hit.js?v=20260426-1",
       isReady: () => typeof ((uiPkg.nodeCanvasParts || window.uiNodeCanvasParts || {}).hitControl) === "function"
     },
     {
       key: "canvas",
-      src: "./js/ui.node.canvas.js?v=20260419-4",
+      src: "./js/ui.node.canvas.js?v=20260426-3",
       isReady: () => typeof ((uiPkg.nodeCanvas || window.uiNodeCanvas || {}).renderFlowChart) === "function"
     },
     {

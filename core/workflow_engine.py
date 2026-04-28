@@ -9,6 +9,8 @@ import pkgutil
 import re
 import heapq
 import threading
+from datetime import datetime
+import getpass
 from collections import defaultdict
 from connectors.base_connector import BaseConnector
 
@@ -135,8 +137,39 @@ class WorkflowEngine:
                     continue
                 self.context[normalized_name] = value
 
+    def _resolve_runtime_user_name(self) -> str:
+        candidates = [
+            os.environ.get("ZIZ_USER_NAME"),
+            os.environ.get("USERNAME"),
+            os.environ.get("USER"),
+        ]
+        try:
+            candidates.append(getpass.getuser())
+        except Exception:
+            pass
+        try:
+            candidates.append(os.getlogin())
+        except Exception:
+            pass
+        for candidate in candidates:
+            text = str(candidate or "").strip()
+            if text:
+                return text
+        return "unknown"
+
+    def _load_system_variables(self):
+        now = datetime.now()
+        system_values = {
+            "current_date": now.strftime("%Y-%m-%d"),
+            "user_name": self._resolve_runtime_user_name(),
+        }
+        for name, value in system_values.items():
+            self.context[name] = value
+
     def _resolve_scalar_reference(self, name: str):
         normalized_name = str(name or "").strip()
+        if normalized_name.endswith("()"):
+            normalized_name = normalized_name[:-2].strip()
         if not normalized_name:
             raise ValueError("変数名が空です。")
         if normalized_name in self.context:
@@ -187,11 +220,11 @@ class WorkflowEngine:
         if key in self._context_ref_param_keys:
             return ref_name
 
-        exact_match = re.fullmatch(r"\{\{\s*([a-zA-Z0-9_\.]+)\s*\}\}", text.strip())
+        exact_match = re.fullmatch(r"\{\{\s*([a-zA-Z0-9_\.]+(?:\(\))?)\s*\}\}", text.strip())
         if exact_match:
             return self._resolve_scalar_reference(exact_match.group(1).strip())
 
-        pattern = re.compile(r"\{\{\s*([a-zA-Z0-9_\.]+)\s*\}\}")
+        pattern = re.compile(r"\{\{\s*([a-zA-Z0-9_\.]+(?:\(\))?)\s*\}\}")
         if not pattern.search(text):
             return value
 
@@ -553,6 +586,7 @@ class WorkflowEngine:
         report["flow_name"] = meta.get("name", "Untitled")
         report["workflow_name"] = report["flow_name"]
         self._load_start_variables(config)
+        self._load_system_variables()
         self.logger.info(f"--- フロー開始: {report['flow_name']} ---")
 
         runtime = self._build_execution_runtime(config)

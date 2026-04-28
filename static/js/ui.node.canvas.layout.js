@@ -42,6 +42,10 @@
     BTN_GAP,
     BTN_R
   } = constants;
+  const CANVAS_MIN_WIDTH = 2000;
+  const CANVAS_MIN_HEIGHT = 1200;
+  const CANVAS_PADDING_RIGHT = 520;
+  const CANVAS_PADDING_BOTTOM = 260;
 
   function clampCanvasCoordinate(value) {
     return Math.max(8, Math.round(Number(value) || 0));
@@ -394,120 +398,6 @@
     end.y = START_Y;
 
     const controls = [];
-    function pushInsertControl({ anchorId, rightId, x, y, mode, loopRootId }) {
-      controls.push({
-        kind: "insert",
-        anchorId,
-        rightId: rightId || null,
-        x,
-        y,
-        r: BTN_R,
-        label: "I",
-        mode: mode || "normal",
-        loopRootId: loopRootId || null
-      });
-    }
-    function pushParallelControl({ anchorId, rightId, x, y, mode, loopRootId }) {
-      controls.push({
-        kind: "parallel",
-        anchorId,
-        rightId: rightId || null,
-        x,
-        y,
-        r: BTN_R,
-        label: "P",
-        mode: mode || "normal",
-        loopRootId: loopRootId || null
-      });
-    }
-
-    function addNormalControls(anchorId, anchorView) {
-      const children = displayChildren.get(anchorId) || [];
-      const rightId = children[0] || null;
-      const centerY = anchorView.y + NODE_H / 2;
-      const cx = anchorView.x + NODE_W + BTN_X_OFFSET;
-
-      if (rightId) {
-        pushInsertControl({ anchorId, rightId, x: cx, y: centerY - BTN_GAP / 2 });
-        pushParallelControl({ anchorId, rightId, x: cx, y: centerY + BTN_GAP / 2 });
-      } else {
-        pushInsertControl({ anchorId, rightId: null, x: cx, y: centerY });
-      }
-    }
-
-    addNormalControls(start.id, start);
-    taskViews.forEach((view) => {
-      const node = view.nodeRef;
-      const cx = view.x + NODE_W + BTN_X_OFFSET;
-      const centerY = view.y + NODE_H / 2;
-      if (isLoopRootNode(node)) {
-        const meta = loopMetaByRootId.get(node.id);
-        const rightId = meta?.chainIds?.[0] || meta?.loopEndId || null;
-        pushInsertControl({
-          anchorId: node.id,
-          rightId,
-          x: cx,
-          y: centerY,
-          mode: "loop-root",
-          loopRootId: node.id
-        });
-        return;
-      }
-
-      const ownerRootId = loopOwnerByNodeId.get(node.id);
-      if (ownerRootId) {
-        const meta = loopMetaByRootId.get(ownerRootId);
-        const idx = meta?.chainIds?.indexOf(node.id) ?? -1;
-        const nextId = idx >= 0 ? (meta.chainIds[idx + 1] || meta.loopEndId) : meta?.loopEndId;
-        pushInsertControl({
-          anchorId: node.id,
-          rightId: nextId || null,
-          x: cx,
-          y: centerY,
-          mode: "loop-internal",
-          loopRootId: ownerRootId
-        });
-        return;
-      }
-
-      addNormalControls(node.id, view);
-    });
-
-    loopEndViews.forEach((view) => {
-      const loopRootId = loopRootIdByLoopEndId.get(view.id) || null;
-      const children = displayChildren.get(view.id) || [];
-      const rightId = children[0] || null;
-      const centerY = view.y + NODE_H / 2;
-      const cx = view.x + NODE_W + BTN_X_OFFSET;
-
-      if (rightId) {
-        pushInsertControl({
-          anchorId: view.id,
-          rightId,
-          x: cx,
-          y: centerY - BTN_GAP / 2,
-          mode: "loop-end",
-          loopRootId
-        });
-        pushParallelControl({
-          anchorId: view.id,
-          rightId,
-          x: cx,
-          y: centerY + BTN_GAP / 2,
-          mode: "loop-end",
-          loopRootId
-        });
-      } else {
-        pushInsertControl({
-          anchorId: view.id,
-          rightId: null,
-          x: cx,
-          y: centerY,
-          mode: "loop-end",
-          loopRootId
-        });
-      }
-    });
 
     const loopFrames = [];
     loopMetaByRootId.forEach((meta) => {
@@ -542,8 +432,19 @@
     const maxFrameY = loopFrames.length ? Math.max(...loopFrames.map((f) => f.y + f.h)) : 0;
     const maxNoteX = stickyNotes.length ? Math.max(...stickyNotes.map((note) => note.x + note.w)) : 0;
     const maxNoteY = stickyNotes.length ? Math.max(...stickyNotes.map((note) => note.y + note.h)) : 0;
-    const width = Math.max(end.x + NODE_W + 220, maxNodeX + NODE_W + 220, maxFrameX + 220, maxNoteX + 220);
-    const height = Math.max(220, maxNodeY + NODE_H + 48, maxFrameY + 48, maxNoteY + 48);
+    const width = Math.max(
+      CANVAS_MIN_WIDTH,
+      end.x + NODE_W + CANVAS_PADDING_RIGHT,
+      maxNodeX + NODE_W + CANVAS_PADDING_RIGHT,
+      maxFrameX + CANVAS_PADDING_RIGHT,
+      maxNoteX + CANVAS_PADDING_RIGHT
+    );
+    const height = Math.max(
+      CANVAS_MIN_HEIGHT,
+      maxNodeY + NODE_H + CANVAS_PADDING_BOTTOM,
+      maxFrameY + CANVAS_PADDING_BOTTOM,
+      maxNoteY + CANVAS_PADDING_BOTTOM
+    );
 
     return {
       start,

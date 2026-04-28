@@ -868,6 +868,7 @@
       variablesPaneBody.appendChild(
         buildVariableGroup("開始変数", ensureStartParameters(state), "is-start", { showValue: true })
       );
+      variablesPaneBody.appendChild(buildVariableGroup("システム変数", availableVariables.systemVariables));
       variablesPaneBody.appendChild(buildVariableGroup("上流ステップ出力", availableVariables.upstreamVariables));
     }
 

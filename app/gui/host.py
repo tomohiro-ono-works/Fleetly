@@ -47,7 +47,7 @@ def run_webview_app(form_html_path, debug=False):
     _set_windows_app_user_model_id()
     logger.info("[gui-startup] phase=environment_configured elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     try:
-        from PySide6.QtCore import QObject, Qt, QUrl, Signal, Slot
+        from PySide6.QtCore import QObject, QEvent, QRect, Qt, QUrl, Signal, Slot
         from PySide6.QtGui import QAction, QIcon, QKeySequence
         from PySide6.QtWebChannel import QWebChannel
         from PySide6.QtWidgets import (
@@ -61,6 +61,7 @@ def run_webview_app(form_html_path, debug=False):
             QMainWindow,
             QPushButton,
             QVBoxLayout,
+            QWidget,
         )
         from PySide6.QtWebEngineCore import (
             QWebEnginePage,
@@ -125,6 +126,90 @@ def run_webview_app(form_html_path, debug=False):
             )
             super().javaScriptConsoleMessage(level, message, line_number, source_id)
 
+    class ResizeHandle(QWidget):
+        def __init__(self, parent, edges, cursor_shape):
+            super().__init__(parent)
+            self._edges = edges
+            self.setCursor(cursor_shape)
+            self.setStyleSheet("background: transparent;")
+
+        def mousePressEvent(self, event):
+            if event.button() != Qt.MouseButton.LeftButton:
+                super().mousePressEvent(event)
+                return
+            host_window = self.window()
+            if host_window.isMaximized() or host_window.isFullScreen():
+                event.ignore()
+                return
+            handle = host_window.windowHandle()
+            if handle is not None and hasattr(handle, "startSystemResize"):
+                if handle.startSystemResize(self._edges):
+                    event.accept()
+                    return
+            super().mousePressEvent(event)
+
+    class FramelessMainWindow(QMainWindow):
+        _RESIZE_MARGIN = 6
+
+        def __init__(self):
+            super().__init__()
+            self._resize_handles = []
+
+        def install_resize_handles(self):
+            if self._resize_handles:
+                return
+            specs = [
+                (Qt.Edge.LeftEdge, Qt.CursorShape.SizeHorCursor),
+                (Qt.Edge.RightEdge, Qt.CursorShape.SizeHorCursor),
+                (Qt.Edge.TopEdge, Qt.CursorShape.SizeVerCursor),
+                (Qt.Edge.BottomEdge, Qt.CursorShape.SizeVerCursor),
+                (Qt.Edge.TopEdge | Qt.Edge.LeftEdge, Qt.CursorShape.SizeFDiagCursor),
+                (Qt.Edge.TopEdge | Qt.Edge.RightEdge, Qt.CursorShape.SizeBDiagCursor),
+                (Qt.Edge.BottomEdge | Qt.Edge.LeftEdge, Qt.CursorShape.SizeBDiagCursor),
+                (Qt.Edge.BottomEdge | Qt.Edge.RightEdge, Qt.CursorShape.SizeFDiagCursor),
+            ]
+            self._resize_handles = [ResizeHandle(self, edges, cursor_shape) for edges, cursor_shape in specs]
+            self._layout_resize_handles()
+            self._update_resize_handles_visibility()
+
+        def resizeEvent(self, event):
+            super().resizeEvent(event)
+            self._layout_resize_handles()
+
+        def changeEvent(self, event):
+            super().changeEvent(event)
+            if event.type() == QEvent.Type.WindowStateChange:
+                self._update_resize_handles_visibility()
+
+        def _layout_resize_handles(self):
+            if not self._resize_handles:
+                return
+            margin = self._RESIZE_MARGIN
+            width = max(0, int(self.width()))
+            height = max(0, int(self.height()))
+            vertical_height = max(0, height - (margin * 2))
+            horizontal_width = max(0, width - (margin * 2))
+            geometries = [
+                QRect(0, margin, margin, vertical_height),
+                QRect(max(0, width - margin), margin, margin, vertical_height),
+                QRect(margin, 0, horizontal_width, margin),
+                QRect(margin, max(0, height - margin), horizontal_width, margin),
+                QRect(0, 0, margin, margin),
+                QRect(max(0, width - margin), 0, margin, margin),
+                QRect(0, max(0, height - margin), margin, margin),
+                QRect(max(0, width - margin), max(0, height - margin), margin, margin),
+            ]
+            for handle, geometry in zip(self._resize_handles, geometries):
+                handle.setGeometry(geometry)
+                handle.raise_()
+
+        def _update_resize_handles_visibility(self):
+            hidden = self.isMaximized() or self.isFullScreen()
+            for handle in self._resize_handles:
+                handle.setVisible(not hidden)
+                if not hidden:
+                    handle.raise_()
+
     app = QApplication.instance() or QApplication([])
     logger.info("[gui-startup] phase=app_ready elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     icon_dir = html_path.parent / "icons"
@@ -134,7 +219,7 @@ def run_webview_app(form_html_path, debug=False):
     if icon_path.exists():
         app.setWindowIcon(QIcon(str(icon_path)))
 
-    window = QMainWindow()
+    window = FramelessMainWindow()
     window.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
     window.setWindowTitle("zizai")
     window.setMinimumSize(700, 700)
@@ -528,6 +613,7 @@ def run_webview_app(form_html_path, debug=False):
 
     view.setUrl(QUrl.fromLocalFile(str(html_path)))
     window.setCentralWidget(view)
+    window.install_resize_handles()
     if debug:
         debug_menu = window.menuBar().addMenu("Debug")
         open_devtools_action = QAction("Open DevTools", window)

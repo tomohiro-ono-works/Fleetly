@@ -17,6 +17,8 @@ class CSVConnector(BaseConnector):
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
                 schema=params.get('schema'),
+                date_field_mode=params.get("date_field_mode", "speed"),
+                keep_raw_date_field=params.get("keep_raw_date_field", False),
             )
         elif action == "write_csv":
             input_data = params.get('input_data')
@@ -55,7 +57,17 @@ class CSVConnector(BaseConnector):
             return "\t"
         return raw
 
-    def read_csv(self, path: str, encoding: str, delimiter: str, header_row: int, data_start_row: int, schema: Any = None):
+    def read_csv(
+        self,
+        path: str,
+        encoding: str,
+        delimiter: str,
+        header_row: int,
+        data_start_row: int,
+        schema: Any = None,
+        date_field_mode: str = "speed",
+        keep_raw_date_field=False,
+    ):
         normalized_path = self.normalize_file_path(path)
         if normalized_path is None:
             raise ValueError("file_path は必須です。")
@@ -76,9 +88,25 @@ class CSVConnector(BaseConnector):
                 dtype=object,
             )
         except pd.errors.EmptyDataError:
-            return self.attach_dataframe_schema(pd.DataFrame(), schema_override=schema)
+            result = self.attach_dataframe_schema(
+                pd.DataFrame(),
+                schema_override=schema,
+                date_field_mode=date_field_mode,
+                keep_raw_date_field=keep_raw_date_field,
+                date_serial_system="excel_1900",
+            )
+            self.log_date_parse_metrics(result)
+            return result
 
-        return self.attach_dataframe_schema(df, schema_override=schema)
+        result = self.attach_dataframe_schema(
+            df,
+            schema_override=schema,
+            date_field_mode=date_field_mode,
+            keep_raw_date_field=keep_raw_date_field,
+            date_serial_system="excel_1900",
+        )
+        self.log_date_parse_metrics(result)
+        return result
 
     def write_csv(self, input_var: str, output_path: str, encoding: str, delimiter: str, context: dict[str, Any], schema: Any = None):
         normalized_output_path = self.normalize_file_path(output_path)

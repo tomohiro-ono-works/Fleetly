@@ -55,6 +55,7 @@
   const EDGE_CURVE = 42;
   const ICON_CACHE = new Map();
   let copiedNodeSnapshot = null;
+  const SYSTEM_VARIABLE_NAMES = ["current_date", "user_name"];
 
   function jpLabel(x) {
     return (x && (x.label_jp || x.label)) || (x && x.id) || "";
@@ -275,10 +276,12 @@
       .map((item) => String(item?.name || "").trim())
       .filter(Boolean);
     const upstreamVariables = getUpstreamSteps(state, node.id);
+    const systemVariables = [...SYSTEM_VARIABLE_NAMES];
     return {
       startVariables,
+      systemVariables,
       upstreamVariables,
-      suggestNames: Array.from(new Set(startVariables))
+      suggestNames: Array.from(new Set([...startVariables, ...systemVariables]))
     };
   }
 

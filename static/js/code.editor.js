@@ -2,6 +2,7 @@
   const CODE_EDITOR_VISIBLE_LINES = 15;
   const CODE_EDITOR_LINE_HEIGHT = 20;
   const CODE_EDITOR_VERTICAL_PADDING = 20;
+  const CODE_EDITOR_GUTTER_DIGITS = 3;
   const INDENT_TEXT = "  ";
   const PYTHON_FALLBACK_HINTS = [
     "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except",
@@ -22,7 +23,20 @@
       || {};
   }
 
-  function applyEditorHeight(input, surface, highlight) {
+  function applyEditorHeight(input, surface, highlight, host) {
+    const basis = host || input;
+    const shouldStretchInRightSidebar = !!basis?.closest?.(
+      ".right-sidebar-content .node-tab-pane[data-tab-key='detail'] .row.row--code-editor"
+    );
+    if (shouldStretchInRightSidebar) {
+      [input, surface, highlight].forEach((node) => {
+        if (!node) return;
+        node.style.height = "100%";
+        node.style.minHeight = "100%";
+        node.style.maxHeight = "none";
+      });
+      return;
+    }
     const height = CODE_EDITOR_LINE_HEIGHT * CODE_EDITOR_VISIBLE_LINES + CODE_EDITOR_VERTICAL_PADDING;
     [input, surface, highlight].forEach((node) => {
       if (!node) return;
@@ -90,8 +104,13 @@
     let currentContext = null;
     let currentItems = [];
     let activeIndex = 0;
+    let positionFrameId = 0;
 
     function hide() {
+      if (positionFrameId) {
+        window.cancelAnimationFrame(positionFrameId);
+        positionFrameId = 0;
+      }
       currentContext = null;
       currentItems = [];
       activeIndex = 0;
@@ -99,11 +118,19 @@
       list.innerHTML = "";
     }
 
-    function positionList() {
+    function positionListNow() {
       if (list.style.display !== "block") return;
       const rect = host.getBoundingClientRect();
       list.style.left = `${Math.max(12, rect.left + 8)}px`;
       list.style.top = `${Math.max(12, rect.bottom - 8)}px`;
+    }
+
+    function positionList() {
+      if (positionFrameId) return;
+      positionFrameId = window.requestAnimationFrame(() => {
+        positionFrameId = 0;
+        positionListNow();
+      });
     }
 
     function applyItem(index = activeIndex) {
@@ -232,6 +259,36 @@
     return { surface, highlight, render, syncScroll };
   }
 
+  function createLineNumberController({ input, wrapper }) {
+    const gutter = document.createElement("div");
+    gutter.className = "code-editor-gutter";
+    gutter.style.setProperty("--code-editor-gutter-digits", String(CODE_EDITOR_GUTTER_DIGITS));
+    const inner = document.createElement("pre");
+    inner.className = "code-editor-gutter-lines";
+    gutter.appendChild(inner);
+    wrapper.insertBefore(gutter, wrapper.firstChild || null);
+
+    function render() {
+      const text = String(input.value || "");
+      const lineCount = Math.max(1, text.split(/\r\n|\r|\n/).length);
+      const lines = [];
+      for (let i = 1; i <= lineCount; i += 1) {
+        lines.push(String(i).padStart(CODE_EDITOR_GUTTER_DIGITS, " "));
+      }
+      inner.textContent = lines.join("\n");
+    }
+
+    function syncScroll() {
+      inner.style.transform = `translateY(${-input.scrollTop}px)`;
+    }
+
+    input.addEventListener("input", render);
+    input.addEventListener("scroll", syncScroll);
+    render();
+    syncScroll();
+    return { gutter, inner, render, syncScroll };
+  }
+
   function mountCodeEditor({ input, value, language, variableNames, suggestionHost, onCommitChanged }) {
     if (!input || !suggestionHost) {
       return Promise.reject(new Error("Textarea host is not available"));
@@ -257,7 +314,15 @@
       wrapper: suggestionHost,
       language
     });
-    applyEditorHeight(input, surface, highlight);
+    const lineNumbers = createLineNumberController({
+      input,
+      wrapper: suggestionHost
+    });
+    const syncEditorHeight = () => applyEditorHeight(input, surface, highlight, suggestionHost);
+    syncEditorHeight();
+    window.requestAnimationFrame(syncEditorHeight);
+    window.setTimeout(syncEditorHeight, 0);
+    window.addEventListener("resize", syncEditorHeight);
 
     createCompletionController({
       input,
@@ -272,7 +337,7 @@
       });
     }
 
-    return Promise.resolve({ input, surface, highlight });
+    return Promise.resolve({ input, surface, highlight, lineNumbers });
   }
 
   const codeEditors = { mountCodeEditor };

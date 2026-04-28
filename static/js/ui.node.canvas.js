@@ -4,29 +4,29 @@
   const dialogApi = corePkg.dialog || null;
   const { el } = corePkg.utils || {};
   const {
-    addNodeAfter,
-    addParallelAfter,
-    duplicateNodeAfter,
-    insertNodeAt,
     addMergeParent,
     clearPendingMergeSource,
+    createNodeAtAnchor,
+    createParallelNodeAtAnchor,
+    duplicateNodesByIds,
+    getSelectedNodeIds,
+    hasDirectedEdge,
+    hasSuccessorNode,
+    removeDirectedEdge,
+    removeNodesByIds,
     removeMergeParent,
+    setSelectedNodes,
     setPendingMergeSource,
     setSelectedNode
   } = corePkg.stateOps || {};
   const shared = (packages.ui && packages.ui.nodeShared) || window.uiNodeShared || {};
   const {
-    buildNodeClipboardSnapshot,
     isEditingShortcutTarget,
     getMergeParentIds,
     ensureNodeDefaults,
     isMergeableNode,
     getMergeErrorMessage,
-    isLoopRootNode,
     isDraggableNode,
-    insertLoopInternalAtAnchor,
-    insertAfterLoopEnd,
-    addParallelAfterLoopEnd,
     requestNodeRunById,
     removeNodeById
   } = shared;
@@ -34,11 +34,10 @@
   const {
     buildFlowModel,
     drawFlowCanvas,
+    hitEdge,
     hitTask,
     hitSelectableNode,
     hitStickyNote,
-    hitControl,
-    getControlTooltip,
     createImmediateTooltip
   } = parts;
   const {
@@ -58,6 +57,7 @@
   const STICKY_NOTE_GRID_SIZE = 32;
   const STICKY_NOTE_COLORS = ["#fff2a8", "#ffd7a8", "#ffd0d8", "#c9f7d1", "#cfe4ff", "#e0d4ff"];
   const STICKY_NOTE_HANDLE_SIZE = 14;
+  const STICKY_TOOLBAR_MARGIN = 10;
 
   function snapToGrid(value, origin, gridSize) {
     const size = Math.max(1, Number(gridSize) || 20);
@@ -166,12 +166,16 @@
   function destroyFlowCanvas(root) {
     const view = root?.__flowView;
     if (!view) return;
+    if (view.drawFrameId) {
+      try { window.cancelAnimationFrame(view.drawFrameId); } catch (_) {}
+    }
     if (view.animationFrameId) {
       try { window.cancelAnimationFrame(view.animationFrameId); } catch (_) {}
     }
     try { view.menuEl?.remove?.(); } catch (_) {}
     try { view.tooltipEl?.remove?.(); } catch (_) {}
     try { view.stickyToolbar?.remove?.(); } catch (_) {}
+    try { view.stickyToolbarResizeObserver?.disconnect?.(); } catch (_) {}
     try { view.stickyEditorEl?.remove?.(); } catch (_) {}
     try { view.canvas?.remove?.(); } catch (_) {}
     delete root.__flowView;
@@ -205,8 +209,6 @@
       root,
       canvas,
       ctx,
-      hoverControl: null,
-      dropControl: null,
       dragState: null,
       pendingMergeDrag: null,
       mergeDragState: null,
@@ -214,17 +216,24 @@
       tooltipEl,
       menuEl,
       menuNodeId: null,
+      menuEdge: null,
+      drawFrameId: null,
       animationFrameId: null,
       animationNow: 0,
       hasRunningAnimation: false,
       requestDraw: null,
+      canvasRect: null,
       stickyNoteMode: false,
       stickyNoteSelectedId: "",
       stickyNotePreview: null,
       stickyNoteDragState: null,
       stickyToolbar: null,
       stickyEditorEl: null,
-      stickyEditorNoteId: ""
+      stickyEditorNoteId: "",
+      rangeSelectionRect: null,
+      pendingRangeSelection: null,
+      menuSelectionIds: null,
+      stickyToolbarResizeObserver: null
     };
     root.__flowView = view;
 
@@ -246,7 +255,7 @@
         <div class="flow-sticky-toolbar__colors" data-role="sticky-colors"></div>
       </div>
     `;
-    root.appendChild(stickyToolbar);
+    document.body.appendChild(stickyToolbar);
     view.stickyToolbar = stickyToolbar;
     const stickyEditor = document.createElement("textarea");
     stickyEditor.className = "flow-sticky-note-editor";
@@ -263,6 +272,50 @@
       deleteBtn: stickyToolbar.querySelector('[data-role="sticky-delete"]'),
       colors: stickyToolbar.querySelector('[data-role="sticky-colors"]'),
     };
+
+    function isElementVisible(element) {
+      if (!element) return false;
+      if (element.hidden) return false;
+      if (!element.isConnected) return false;
+      if (element.getClientRects().length === 0) return false;
+      const style = window.getComputedStyle(element);
+      return style.display !== "none" && style.visibility !== "hidden";
+    }
+
+    function positionStickyToolbar() {
+      if (root.__flowView !== view) return;
+      if (!view.stickyToolbar || !view.stickyToolbar.isConnected) return;
+      const rootRect = root.getBoundingClientRect();
+      const toolbarRect = view.stickyToolbar.getBoundingClientRect();
+      const toolbarWidth = Math.max(36, Math.round(toolbarRect.width || view.stickyToolbar.offsetWidth || 36));
+      const toolbarHeight = Math.max(36, Math.round(toolbarRect.height || view.stickyToolbar.offsetHeight || 36));
+      const rootVisible = rootRect.width > 0 && rootRect.height > 0;
+
+      const rightSidebar = document.getElementById("rightSidebar");
+      const rightRail = document.getElementById("rightSidebarRail");
+      const anchorRect = isElementVisible(rightSidebar)
+        ? rightSidebar.getBoundingClientRect()
+        : (isElementVisible(rightRail) ? rightRail.getBoundingClientRect() : null);
+
+      const minX = Math.round(rootRect.left + STICKY_TOOLBAR_MARGIN);
+      const maxX = Math.max(minX, Math.round(rootRect.right - toolbarWidth - STICKY_TOOLBAR_MARGIN));
+      let nextX = anchorRect
+        ? Math.round(anchorRect.left - toolbarWidth - STICKY_TOOLBAR_MARGIN)
+        : maxX;
+      if (!Number.isFinite(nextX)) nextX = maxX;
+      nextX = Math.max(minX, Math.min(maxX, nextX));
+
+      const minY = Math.max(6, Math.round(rootRect.top + STICKY_TOOLBAR_MARGIN));
+      const maxY = Math.max(minY, Math.round(rootRect.bottom - toolbarHeight - STICKY_TOOLBAR_MARGIN));
+      let nextY = minY;
+      if (!Number.isFinite(nextY)) nextY = minY;
+      nextY = Math.max(minY, Math.min(maxY, nextY));
+
+      view.stickyToolbar.style.position = "fixed";
+      view.stickyToolbar.style.left = `${nextX}px`;
+      view.stickyToolbar.style.top = `${nextY}px`;
+      view.stickyToolbar.style.visibility = rootVisible ? "visible" : "hidden";
+    }
 
     if (stickyControls.colors) {
       stickyControls.colors.innerHTML = STICKY_NOTE_COLORS.map((color) => (
@@ -287,17 +340,154 @@
       view.animationFrameId = null;
     }
 
-    function requestDraw() {
+    function invalidateCanvasRect() {
+      view.canvasRect = null;
+    }
+
+    function getCanvasRect() {
+      if (view.canvasRect) return view.canvasRect;
+      view.canvasRect = canvas.getBoundingClientRect();
+      return view.canvasRect;
+    }
+
+    function flushDraw() {
+      if (root.__flowView !== view) return;
       drawFlowCanvas(view);
       syncStickyInlineEditor();
+      positionStickyToolbar();
+      invalidateCanvasRect();
       if (view.hasRunningAnimation) scheduleAnimation();
       else stopAnimation();
+    }
+
+    function requestDraw() {
+      if (view.drawFrameId) return;
+      view.drawFrameId = window.requestAnimationFrame(() => {
+        view.drawFrameId = null;
+        flushDraw();
+      });
     }
 
     view.requestDraw = requestDraw;
 
     function getRuntime() {
       return root.__flowRuntime || null;
+    }
+
+    function getNormalizedSelectedNodeIds(state) {
+      if (!state || typeof state !== "object") return [];
+      if (typeof getSelectedNodeIds === "function") {
+        return getSelectedNodeIds(state);
+      }
+      const nodeIdSet = new Set((Array.isArray(state.nodes) ? state.nodes : []).map((node) => String(node?.id || "")));
+      const selected = Array.isArray(state.selectedNodeIds)
+        ? state.selectedNodeIds.map((nodeId) => String(nodeId || "").trim()).filter(Boolean)
+        : (state.selectedNodeId ? [String(state.selectedNodeId)] : []);
+      const deduped = [];
+      const seen = new Set();
+      selected.forEach((nodeId) => {
+        if (!nodeId || seen.has(nodeId) || !nodeIdSet.has(nodeId)) return;
+        seen.add(nodeId);
+        deduped.push(nodeId);
+      });
+      if (!deduped.length && Array.isArray(state.nodes) && state.nodes.length) {
+        const fallbackId = String(state.nodes[0]?.id || "");
+        if (fallbackId) deduped.push(fallbackId);
+      }
+      state.selectedNodeIds = deduped;
+      state.selectedNodeId = deduped[0] || null;
+      return deduped;
+    }
+
+    function applySelectedNodeIds(state, nodeIds) {
+      if (!state || typeof state !== "object") return [];
+      if (typeof setSelectedNodes === "function") {
+        setSelectedNodes(state, nodeIds);
+        return getNormalizedSelectedNodeIds(state);
+      }
+      const deduped = Array.from(new Set((Array.isArray(nodeIds) ? nodeIds : []).map((nodeId) => String(nodeId || "").trim()).filter(Boolean)));
+      state.selectedNodeIds = deduped;
+      state.selectedNodeId = deduped[0] || null;
+      return getNormalizedSelectedNodeIds(state);
+    }
+
+    function getSelectedDraggableNodeIds(state) {
+      return getNormalizedSelectedNodeIds(state)
+        .map((nodeId) => state.nodes.find((node) => node.id === nodeId))
+        .filter((node) => !!node && isDraggableNode(node))
+        .map((node) => node.id);
+    }
+
+    function getCopiedNodeIds() {
+      return Array.isArray(copiedNodeSnapshot?.nodeIds)
+        ? copiedNodeSnapshot.nodeIds.map((nodeId) => String(nodeId || "").trim()).filter(Boolean)
+        : [];
+    }
+
+    function setCopiedNodeIds(state, nodeIds) {
+      const sourceIds = Array.isArray(nodeIds) ? nodeIds : [];
+      const deduped = [];
+      const seen = new Set();
+      sourceIds.forEach((nodeId) => {
+        const normalized = String(nodeId || "").trim();
+        if (!normalized || seen.has(normalized)) return;
+        const node = state?.nodes?.find?.((item) => item?.id === normalized);
+        if (!node || !isDraggableNode(node)) return;
+        seen.add(normalized);
+        deduped.push(normalized);
+      });
+      copiedNodeSnapshot = deduped.length ? { nodeIds: deduped } : null;
+      return deduped;
+    }
+
+    function pasteCopiedNodes(runtime, options = {}) {
+      const copiedIds = getCopiedNodeIds();
+      if (!copiedIds.length) return [];
+      const requestedAnchorId = String(options.anchorId || "").trim();
+      const anchorId = requestedAnchorId && !copiedIds.includes(requestedAnchorId)
+        ? requestedAnchorId
+        : null;
+      return duplicateNodesByIds?.(runtime.state, copiedIds, {
+        offsetX: 64,
+        offsetY: 64,
+        anchorId
+      }) || [];
+    }
+
+    function getNodeById(state, nodeId) {
+      return (Array.isArray(state?.nodes) ? state.nodes : []).find((node) => String(node?.id || "") === String(nodeId || "")) || null;
+    }
+
+    function getNodeRectById(model, nodeId) {
+      const target = model?.nodeMap?.get?.(String(nodeId || ""));
+      if (!target) return null;
+      return {
+        x: Number(target.x) || 0,
+        y: Number(target.y) || 0,
+        w: NODE_W,
+        h: NODE_H
+      };
+    }
+
+    function collectNodeIdsInRect(model, rect, state) {
+      const x1 = Math.min(rect.startX, rect.endX);
+      const y1 = Math.min(rect.startY, rect.endY);
+      const x2 = Math.max(rect.startX, rect.endX);
+      const y2 = Math.max(rect.startY, rect.endY);
+      if ((x2 - x1) < 2 || (y2 - y1) < 2) return [];
+      return (Array.isArray(model?.taskViews) ? model.taskViews : [])
+        .filter((viewNode) => {
+          const node = getNodeById(state, viewNode.id);
+          return !!node && isDraggableNode(node);
+        })
+        .filter((viewNode) => {
+          const nx1 = viewNode.x;
+          const ny1 = viewNode.y;
+          const nx2 = viewNode.x + NODE_W;
+          const ny2 = viewNode.y + NODE_H;
+          return !(nx2 < x1 || nx1 > x2 || ny2 < y1 || ny1 > y2);
+        })
+        .map((viewNode) => viewNode.id);
     }
 
     function resolveEditableStickyNote(noteId = "") {
@@ -391,6 +581,7 @@
           button.disabled = !hasSelection;
         });
       }
+      positionStickyToolbar();
     }
 
     function setStickyMode(enabled) {
@@ -527,6 +718,19 @@
     view.syncStickyToolbar = syncStickyToolbar;
     view.ensureStickySelection = ensureStickySelection;
     view.syncStickyInlineEditor = syncStickyInlineEditor;
+    if (typeof window.ResizeObserver === "function") {
+      const resizeObserver = new window.ResizeObserver(() => {
+        positionStickyToolbar();
+      });
+      try { resizeObserver.observe(root); } catch (_) {}
+      try {
+        const rightSidebar = document.getElementById("rightSidebar");
+        const rightRail = document.getElementById("rightSidebarRail");
+        if (rightSidebar) resizeObserver.observe(rightSidebar);
+        if (rightRail) resizeObserver.observe(rightRail);
+      } catch (_) {}
+      view.stickyToolbarResizeObserver = resizeObserver;
+    }
     syncStickyToolbar();
 
     function hideTooltip() {
@@ -536,41 +740,57 @@
       tooltipEl.textContent = "";
     }
 
-    function showTooltip(ctrl, clientX, clientY) {
-      const text = getControlTooltip(ctrl, view.dragState);
-      if (!text) {
-        hideTooltip();
-        return;
-      }
-      tooltipEl.textContent = text;
-      tooltipEl.style.left = `${clientX + 12}px`;
-      tooltipEl.style.top = `${clientY + 12}px`;
-      tooltipEl.style.opacity = "1";
-    }
-
     function hideContextMenu() {
       view.menuNodeId = null;
+      view.menuEdge = null;
+      view.menuSelectionIds = null;
       menuEl.classList.remove("is-open");
       menuEl.style.left = "-9999px";
       menuEl.style.top = "-9999px";
       menuEl.setAttribute("aria-hidden", "true");
     }
 
-    function showContextMenu(target, clientX, clientY) {
+    function showContextMenu(target, clientX, clientY, options = {}) {
       view.menuNodeId = target?.nodeId || null;
+      view.menuEdge = options.edge || null;
+      view.menuSelectionIds = Array.isArray(options.selectionIds) ? options.selectionIds.slice() : null;
       const runtime = root.__flowRuntime;
       const items = [];
-      if (runtime && view.menuNodeId) {
-        const mergeMenuState = getNodeMergeMenuState(runtime.state, view.menuNodeId);
-        if (mergeMenuState.incomingSources.length) {
-          items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="remove-merge-incoming" role="menuitem">合流を解除</button>');
+      const hasCopiedNodes = getCopiedNodeIds().length > 0;
+      if (runtime && view.menuEdge && view.menuEdge.from && view.menuEdge.to) {
+        items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="delete-edge" role="menuitem">フローリレーションを削除</button>');
+      }
+      if (runtime && Array.isArray(view.menuSelectionIds) && view.menuSelectionIds.length > 1) {
+        items.push('<button class="flow-context-menu__item" type="button" data-action="copy-selected" role="menuitem">コピー</button>');
+        if (hasCopiedNodes) {
+          items.push('<button class="flow-context-menu__item" type="button" data-action="paste" role="menuitem">貼り付け</button>');
         }
-        if (mergeMenuState.outgoingTargets.length) {
-          items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="remove-merge-outgoing" role="menuitem">合流を解除</button>');
+        items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="delete-selected" role="menuitem">削除</button>');
+      } else {
+        view.menuSelectionIds = null;
+      }
+      if (!items.length) {
+        if (runtime && view.menuNodeId) {
+          items.push('<button class="flow-context-menu__item" type="button" data-action="copy-node" role="menuitem">コピー</button>');
+          if (hasCopiedNodes) {
+            items.push('<button class="flow-context-menu__item" type="button" data-action="paste" role="menuitem">貼り付け</button>');
+          }
+          const mergeMenuState = getNodeMergeMenuState(runtime.state, view.menuNodeId);
+          if (mergeMenuState.incomingSources.length) {
+            items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="remove-merge-incoming" role="menuitem">合流を解除</button>');
+          }
+          if (mergeMenuState.outgoingTargets.length) {
+            items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="remove-merge-outgoing" role="menuitem">合流を解除</button>');
+          }
+        } else if (runtime && hasCopiedNodes) {
+          items.push('<button class="flow-context-menu__item" type="button" data-action="paste" role="menuitem">貼り付け</button>');
+        }
+        if (runtime && view.menuNodeId) {
+          items.push('<button class="flow-context-menu__item" type="button" data-action="run" role="menuitem">実行</button>');
+          items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="delete" role="menuitem">削除</button>');
         }
       }
-      items.push('<button class="flow-context-menu__item" type="button" data-action="run" role="menuitem">実行</button>');
-      items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="delete" role="menuitem">削除</button>');
+      if (!items.length) return;
       menuEl.innerHTML = items.join("");
       menuEl.style.left = `${clientX}px`;
       menuEl.style.top = `${clientY}px`;
@@ -588,37 +808,33 @@
     let lastPanAt = 0;
 
     canvas.addEventListener("mousemove", (e) => {
-      if (view.dragState || pendingDrag || isPanning || view.stickyNoteDragState) return;
+      if (view.dragState || pendingDrag || isPanning || view.stickyNoteDragState || view.pendingRangeSelection || view.mergeDragState || view.pendingMergeDrag) return;
       const runtime = root.__flowRuntime;
       if (!runtime) return;
-      const rect = canvas.getBoundingClientRect();
+      const rect = getCanvasRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       if (view.stickyNoteMode) {
         const hitNote = hitStickyNote(runtime.model, x, y, { handleSize: STICKY_NOTE_HANDLE_SIZE });
-        view.hoverControl = null;
-        view.dropControl = null;
+        const nextCursor = hitNote?.onResizeHandle ? "nwse-resize" : hitNote?.note ? "move" : "default";
+        const currentCursor = canvas.style.cursor || "default";
+        const cursorChanged = currentCursor !== nextCursor;
         hideTooltip();
-        if (hitNote?.onResizeHandle) canvas.style.cursor = "nwse-resize";
-        else if (hitNote?.note) canvas.style.cursor = "move";
-        else canvas.style.cursor = "default";
+        if (cursorChanged) canvas.style.cursor = nextCursor;
         return;
       }
-      view.hoverControl = hitControl(runtime.model, x, y);
-      view.dropControl = null;
-      showTooltip(view.hoverControl, e.clientX, e.clientY);
       const hoverNode = hitSelectableNode(runtime.model, x, y);
-      canvas.style.cursor = view.hoverControl || hoverNode ? "pointer" : "default";
-      requestDraw();
+      const nextCursor = hoverNode ? "pointer" : "default";
+      const currentCursor = canvas.style.cursor || "default";
+      const cursorChanged = currentCursor !== nextCursor;
+      if (!cursorChanged) return;
+      if (cursorChanged) canvas.style.cursor = nextCursor;
     });
 
     canvas.addEventListener("mouseleave", () => {
       if (view.dragState || pendingDrag || view.stickyNoteDragState) return;
-      view.hoverControl = null;
-      view.dropControl = null;
       hideTooltip();
       canvas.style.cursor = "default";
-      requestDraw();
     });
 
     root.addEventListener("wheel", (e) => {
@@ -627,8 +843,13 @@
       const delta = e.deltaX !== 0 ? e.deltaX : e.deltaY;
       if (delta === 0) return;
       root.scrollLeft += delta;
+      invalidateCanvasRect();
       e.preventDefault();
     }, { passive: false });
+    root.addEventListener("scroll", () => {
+      invalidateCanvasRect();
+      positionStickyToolbar();
+    }, { passive: true });
 
     canvas.addEventListener("contextmenu", (e) => {
       const runtime = root.__flowRuntime;
@@ -644,19 +865,41 @@
         hideContextMenu();
         return;
       }
-      const rect = canvas.getBoundingClientRect();
+      const rect = getCanvasRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const task = hitTask(runtime.model, x, y);
-      if (!task) {
-        hideContextMenu();
+      const selectedIds = getNormalizedSelectedNodeIds(runtime.state);
+      if (task) {
+        e.preventDefault();
+        hideTooltip();
+        if (runtime.state.selectedNodeId !== task.id) {
+          setSelectedNode(runtime.state, task.id);
+          runtime.onStateChanged({ history: false });
+        }
+        showContextMenu({ nodeId: task.id }, e.clientX, e.clientY);
         return;
       }
-      e.preventDefault();
-      hideTooltip();
-      setSelectedNode(runtime.state, task.id);
-      runtime.onStateChanged();
-      showContextMenu({ nodeId: task.id }, e.clientX, e.clientY);
+      const edge = hitEdge(runtime.model, x, y, { threshold: 8 });
+      if (edge) {
+        e.preventDefault();
+        hideTooltip();
+        showContextMenu(null, e.clientX, e.clientY, { edge: { from: edge.from, to: edge.to, kind: edge.kind } });
+        return;
+      }
+      if (selectedIds.length > 1) {
+        e.preventDefault();
+        hideTooltip();
+        showContextMenu(null, e.clientX, e.clientY, { selectionIds: selectedIds });
+        return;
+      }
+      if (getCopiedNodeIds().length) {
+        e.preventDefault();
+        hideTooltip();
+        showContextMenu(null, e.clientX, e.clientY);
+        return;
+      }
+      hideContextMenu();
     });
 
     canvas.addEventListener("mousedown", (e) => {
@@ -668,7 +911,7 @@
       hideContextMenu();
       const runtime = root.__flowRuntime;
       if (!runtime) return;
-      const rect = canvas.getBoundingClientRect();
+      const rect = getCanvasRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const task = hitTask(runtime.model, x, y);
@@ -677,15 +920,24 @@
         : null;
       if (e.button === 2) {
         if (view.stickyNoteMode) return;
-        if (!task || !isMergeableNode(task.nodeRef)) return;
-        view.pendingMergeDrag = {
-          sourceId: task.id,
-          startClientX: e.clientX,
-          startClientY: e.clientY,
-          canvasX: x,
-          canvasY: y,
-          started: false
-        };
+        if (task && isMergeableNode(task.nodeRef)) {
+          view.pendingMergeDrag = {
+            sourceId: task.id,
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            canvasX: x,
+            canvasY: y,
+            started: false
+          };
+        } else {
+          view.pendingRangeSelection = {
+            startClientX: e.clientX,
+            startClientY: e.clientY,
+            startX: x,
+            startY: y
+          };
+          view.rangeSelectionRect = null;
+        }
         return;
       }
       if (e.button !== 0) return;
@@ -703,8 +955,6 @@
           originH: stickyHit.note.h,
           moved: false
         };
-        view.hoverControl = null;
-        view.dropControl = null;
         hideTooltip();
         canvas.style.cursor = stickyHit.onResizeHandle ? "nwse-resize" : "move";
         document.body.style.userSelect = "none";
@@ -727,15 +977,29 @@
         return;
       }
       if (task && isDraggableNode(task.nodeRef)) {
+        const selectedIds = getNormalizedSelectedNodeIds(runtime.state);
+        const selectedIdSet = new Set(selectedIds);
+        const dragNodeIds = selectedIdSet.has(task.id) && selectedIds.length > 1
+          ? getSelectedDraggableNodeIds(runtime.state)
+          : [task.id];
+        const originById = {};
+        dragNodeIds.forEach((nodeId) => {
+          const rectInfo = getNodeRectById(runtime.model, nodeId);
+          if (!rectInfo) return;
+          originById[nodeId] = { x: rectInfo.x, y: rectInfo.y };
+        });
+        if (!Object.keys(originById).length) return;
         pendingDrag = {
           nodeId: task.id,
+          nodeIds: dragNodeIds,
+          originById,
+          primaryOriginX: task.x,
+          primaryOriginY: task.y,
           startClientX: e.clientX,
           startClientY: e.clientY,
           pointerOffsetX: x - task.x,
           pointerOffsetY: y - task.y
         };
-        view.hoverControl = null;
-        view.dropControl = null;
         hideTooltip();
         document.body.style.userSelect = "none";
         e.preventDefault();
@@ -787,6 +1051,30 @@
         requestDraw();
         return;
       }
+      if (view.pendingRangeSelection) {
+        const runtime = root.__flowRuntime;
+        if (!runtime) return;
+        const dx = e.clientX - view.pendingRangeSelection.startClientX;
+        const dy = e.clientY - view.pendingRangeSelection.startClientY;
+        const rect = getCanvasRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        if (!view.rangeSelectionRect && Math.hypot(dx, dy) < DRAG_THRESHOLD) return;
+        if (!view.rangeSelectionRect) {
+          view.suppressContextMenuOnce = true;
+        }
+        view.rangeSelectionRect = view.rangeSelectionRect || {
+          startX: view.pendingRangeSelection.startX,
+          startY: view.pendingRangeSelection.startY,
+          endX: x,
+          endY: y
+        };
+        view.rangeSelectionRect.endX = x;
+        view.rangeSelectionRect.endY = y;
+        canvas.style.cursor = "crosshair";
+        requestDraw();
+        return;
+      }
       if (view.pendingMergeDrag && !view.mergeDragState) {
         const moveDx = e.clientX - view.pendingMergeDrag.startClientX;
         const moveDy = e.clientY - view.pendingMergeDrag.startClientY;
@@ -805,13 +1093,13 @@
           view.suppressContextMenuOnce = true;
           canvas.style.cursor = "crosshair";
           document.body.style.userSelect = "none";
-          runtime.onStateChanged();
+          runtime.onStateChanged({ history: false });
         }
       }
       if (view.mergeDragState) {
         const runtime = root.__flowRuntime;
         if (!runtime) return;
-        const rect = canvas.getBoundingClientRect();
+        const rect = getCanvasRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
         const hoveredTask = hitTask(runtime.model, x, y);
@@ -831,24 +1119,39 @@
 
         const runtime = root.__flowRuntime;
         if (!runtime) return;
-        const rect = canvas.getBoundingClientRect();
+        const rect = getCanvasRect();
         const pointerX = e.clientX - rect.left;
         const pointerY = e.clientY - rect.top;
         const rawNodeX = pointerX - pendingDrag.pointerOffsetX;
         const rawNodeY = pointerY - pendingDrag.pointerOffsetY;
-        const snappedX = clampCanvasCoordinate(snapToGrid(rawNodeX, START_X, GRID_SIZE));
-        const snappedY = clampCanvasCoordinate(snapToGrid(rawNodeY, START_Y, GRID_SIZE));
+        const snappedPrimaryX = clampCanvasCoordinate(snapToGrid(rawNodeX, START_X, GRID_SIZE));
+        const snappedPrimaryY = clampCanvasCoordinate(snapToGrid(rawNodeY, START_Y, GRID_SIZE));
+        const deltaX = snappedPrimaryX - (Number(pendingDrag.primaryOriginX) || 0);
+        const deltaY = snappedPrimaryY - (Number(pendingDrag.primaryOriginY) || 0);
+        const previewNodes = (Array.isArray(pendingDrag.nodeIds) ? pendingDrag.nodeIds : [pendingDrag.nodeId])
+          .map((nodeId) => {
+            const origin = pendingDrag.originById?.[nodeId];
+            if (!origin) return null;
+            return {
+              nodeId,
+              x: clampCanvasCoordinate(origin.x + deltaX),
+              y: clampCanvasCoordinate(origin.y + deltaY)
+            };
+          })
+          .filter(Boolean);
+        if (!previewNodes.length) return;
+        const primaryPreview = previewNodes.find((node) => node.nodeId === pendingDrag.nodeId) || previewNodes[0];
 
         view.dragState = {
           nodeId: pendingDrag.nodeId,
+          nodeIds: previewNodes.map((node) => node.nodeId),
           started: true,
-          canvasX: snappedX + NODE_W / 2,
-          canvasY: snappedY + NODE_H / 2,
-          snappedX,
-          snappedY
+          canvasX: primaryPreview.x + NODE_W / 2,
+          canvasY: primaryPreview.y + NODE_H / 2,
+          snappedX: primaryPreview.x,
+          snappedY: primaryPreview.y,
+          previewNodes
         };
-        view.hoverControl = null;
-        view.dropControl = null;
         canvas.style.cursor = "grabbing";
         hideTooltip();
         requestDraw();
@@ -860,6 +1163,7 @@
       if (Math.abs(dx) > 2 || Math.abs(dy) > 2) panMoved = true;
       root.scrollLeft = panStartScrollLeft - dx;
       root.scrollTop = panStartScrollTop - dy;
+      invalidateCanvasRect();
     });
 
     window.addEventListener("mouseup", () => {
@@ -915,6 +1219,23 @@
         requestDraw();
         return;
       }
+      if (view.pendingRangeSelection) {
+        const runtime = root.__flowRuntime;
+        const selectionRect = view.rangeSelectionRect;
+        view.pendingRangeSelection = null;
+        view.rangeSelectionRect = null;
+        canvas.style.cursor = "default";
+        if (runtime && selectionRect) {
+          const selectedIds = collectNodeIdsInRect(runtime.model, selectionRect, runtime.state);
+          if (selectedIds.length) {
+            applySelectedNodeIds(runtime.state, selectedIds);
+            runtime.onStateChanged({ history: false });
+            return;
+          }
+        }
+        requestDraw();
+        return;
+      }
       if (view.pendingMergeDrag) {
         view.pendingMergeDrag = null;
         return;
@@ -923,19 +1244,68 @@
         const runtime = root.__flowRuntime;
         const sourceId = view.mergeDragState.sourceId;
         const targetNodeId = view.mergeDragState.targetNodeId;
+        const dropPosition = {
+          x: view.mergeDragState.canvasX,
+          y: view.mergeDragState.canvasY
+        };
         view.mergeDragState = null;
         canvas.style.cursor = "default";
         document.body.style.userSelect = "";
         if (runtime) {
+          let changed = false;
           if (sourceId && targetNodeId) {
-            const result = addMergeParent(runtime.state, sourceId, targetNodeId);
-            if (!result?.ok) {
-              if (dialogApi?.show) dialogApi.show(getMergeErrorMessage(result), { kind: "warning", title: "合流" });
-              else alert(getMergeErrorMessage(result));
+            if (hasDirectedEdge?.(runtime.state, sourceId, targetNodeId)) {
+              const targetNode = getNodeById(runtime.state, targetNodeId);
+              const isPrimaryEdge = !!targetNode && (targetNode.parentId ?? null) === sourceId;
+              if (isPrimaryEdge) {
+                const created = createNodeAtAnchor?.(runtime.state, sourceId, { rightId: targetNodeId, position: dropPosition });
+                changed = !!created;
+              } else {
+                removeDirectedEdge?.(runtime.state, sourceId, targetNodeId);
+                let created = null;
+                if (hasSuccessorNode?.(runtime.state, sourceId)) {
+                  created = createParallelNodeAtAnchor?.(runtime.state, sourceId, { position: dropPosition })
+                    || createNodeAtAnchor?.(runtime.state, sourceId, { position: dropPosition });
+                } else {
+                  created = createNodeAtAnchor?.(runtime.state, sourceId, { position: dropPosition });
+                }
+                if (created?.id) {
+                  const result = addMergeParent(runtime.state, created.id, targetNodeId);
+                  if (!result?.ok) {
+                    addMergeParent(runtime.state, sourceId, targetNodeId);
+                    if (dialogApi?.show) dialogApi.show(getMergeErrorMessage(result), { kind: "warning", title: "合流" });
+                    else alert(getMergeErrorMessage(result));
+                  } else {
+                    changed = true;
+                  }
+                }
+              }
+            } else {
+              const result = addMergeParent(runtime.state, sourceId, targetNodeId);
+              if (!result?.ok) {
+                if (dialogApi?.show) dialogApi.show(getMergeErrorMessage(result), { kind: "warning", title: "合流" });
+                else alert(getMergeErrorMessage(result));
+              } else {
+                changed = true;
+              }
             }
+          } else if (sourceId) {
+            const shouldCreateParallel = !!hasSuccessorNode?.(runtime.state, sourceId);
+            let created = null;
+            if (shouldCreateParallel) {
+              created = createParallelNodeAtAnchor?.(runtime.state, sourceId, { position: dropPosition })
+                || createNodeAtAnchor?.(runtime.state, sourceId, { position: dropPosition });
+            } else {
+              created = createNodeAtAnchor?.(runtime.state, sourceId, { position: dropPosition });
+            }
+            changed = !!created;
           }
           clearPendingMergeSource(runtime.state);
-          runtime.onStateChanged();
+          if (changed) {
+            runtime.onStateChanged();
+          } else {
+            runtime.onStateChanged({ history: false });
+          }
         } else {
           requestDraw();
         }
@@ -943,7 +1313,6 @@
       }
       if (pendingDrag) {
         const runtime = root.__flowRuntime;
-        const draggingNodeId = pendingDrag.nodeId;
         const activeDragState = view.dragState;
         const didDrag = !!activeDragState;
 
@@ -952,30 +1321,31 @@
         hideTooltip();
         canvas.style.cursor = "default";
         view.dragState = null;
-        view.hoverControl = null;
-        view.dropControl = null;
 
         if (didDrag) {
           lastPanAt = Date.now();
           if (runtime) {
-            const targetNode = runtime.state.nodes.find((node) => node.id === draggingNodeId);
-            if (targetNode) {
+            const previewNodes = Array.isArray(activeDragState?.previewNodes) ? activeDragState.previewNodes : [];
+            let applied = false;
+            previewNodes.forEach((preview) => {
+              const targetNode = runtime.state.nodes.find((node) => node.id === preview.nodeId);
+              if (!targetNode) return;
               targetNode.canvasPosition = {
-                x: clampCanvasCoordinate(activeDragState?.snappedX),
-                y: clampCanvasCoordinate(activeDragState?.snappedY)
+                x: clampCanvasCoordinate(preview.x),
+                y: clampCanvasCoordinate(preview.y)
               };
               targetNode.canvasGridPosition = {
                 x: toGridCoordinate(targetNode.canvasPosition.x, START_X, GRID_SIZE),
                 y: toGridCoordinate(targetNode.canvasPosition.y, START_Y, GRID_SIZE)
               };
-              setSelectedNode(runtime.state, draggingNodeId);
+              applied = true;
+            });
+            if (applied) {
+              const nodeIds = Array.isArray(activeDragState?.nodeIds) ? activeDragState.nodeIds : [activeDragState?.nodeId].filter(Boolean);
+              applySelectedNodeIds(runtime.state, nodeIds);
               runtime.onStateChanged();
               return;
             }
-          }
-          if (runtime) {
-            runtime.onStateChanged();
-            return;
           }
           requestDraw();
         }
@@ -994,8 +1364,38 @@
       if (!btn) return;
       const runtime = root.__flowRuntime;
       const nodeId = view.menuNodeId;
+      const menuEdge = view.menuEdge ? { ...view.menuEdge } : null;
+      const selectionIds = Array.isArray(view.menuSelectionIds) ? view.menuSelectionIds.slice() : [];
       hideContextMenu();
-      if (!runtime || !nodeId) return;
+      if (!runtime) return;
+      if (btn.dataset.action === "copy-node") {
+        setCopiedNodeIds(runtime.state, nodeId ? [nodeId] : []);
+        return;
+      }
+      if (btn.dataset.action === "copy-selected") {
+        setCopiedNodeIds(runtime.state, selectionIds);
+        return;
+      }
+      if (btn.dataset.action === "paste") {
+        const anchorId = nodeId || (selectionIds.length === 1 ? selectionIds[0] : null);
+        const duplicatedIds = pasteCopiedNodes(runtime, { anchorId });
+        if (duplicatedIds.length) runtime.onStateChanged();
+        return;
+      }
+      if (btn.dataset.action === "delete-edge") {
+        const result = (menuEdge?.from && menuEdge?.to)
+          ? removeDirectedEdge?.(runtime.state, menuEdge.from, menuEdge.to)
+          : null;
+        const changed = !!(result && (result.removedPrimary || result.removedMerge));
+        if (changed) runtime.onStateChanged();
+        return;
+      }
+      if (btn.dataset.action === "delete-selected") {
+        const changed = removeNodesByIds?.(runtime.state, selectionIds);
+        if (changed) runtime.onStateChanged();
+        return;
+      }
+      if (!nodeId) return;
       if (btn.dataset.action === "remove-merge-incoming") {
         const node = runtime.state.nodes.find((item) => item.id === nodeId);
         const incomingSources = node ? getMergeParentIds(node) : [];
@@ -1025,7 +1425,7 @@
       hideTooltip();
       const runtime = root.__flowRuntime;
       if (!runtime) return;
-      const rect = canvas.getBoundingClientRect();
+      const rect = getCanvasRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
 
@@ -1045,71 +1445,18 @@
         return;
       }
 
-      const control = hitControl(runtime.model, x, y);
-      if (control) {
-        if (control.mode === "loop-root" || control.mode === "loop-internal") {
-          if (control.kind === "insert") {
-            const created = insertLoopInternalAtAnchor(
-              runtime.state,
-              control.loopRootId || control.anchorId,
-              control.anchorId
-            );
-            if (created) runtime.onStateChanged();
-          }
-          return;
-        }
-
-        if (control.mode === "loop-end") {
-          if (control.kind === "insert") {
-            const created = insertAfterLoopEnd(runtime.state, control.loopRootId, control.rightId || null);
-            if (created) runtime.onStateChanged();
-            return;
-          }
-          if (control.kind === "parallel") {
-            const created = addParallelAfterLoopEnd(runtime.state, control.loopRootId, control.rightId || null);
-            if (created) runtime.onStateChanged();
-            return;
-          }
-        }
-
-        const rightIndex = control.rightId
-          ? runtime.state.nodes.findIndex((n) => n.id === control.rightId)
-          : -1;
-        const anchorIndex = control.anchorId && control.anchorId !== "__start__"
-          ? runtime.state.nodes.findIndex((n) => n.id === control.anchorId)
-          : -1;
-
-        if (control.kind === "insert") {
-          if (control.rightId === null) {
-            if (anchorIndex >= 0) addNodeAfter(runtime.state, anchorIndex);
-            else insertNodeAt(runtime.state, 0);
-          } else if (anchorIndex >= 0) {
-            addNodeAfter(runtime.state, anchorIndex);
-          } else if (rightIndex >= 0) {
-            insertNodeAt(runtime.state, rightIndex);
-          }
-          runtime.onStateChanged();
-          return;
-        }
-
-        if (control.kind === "parallel" && rightIndex >= 0) {
-          addParallelAfter(runtime.state, rightIndex, { parentId: control.anchorId });
-          runtime.onStateChanged();
-          return;
-        }
-      }
-
       const targetNode = hitSelectableNode(runtime.model, x, y);
       if (targetNode) {
-        setSelectedNode(runtime.state, targetNode.id);
-        runtime.onStateChanged();
+        applySelectedNodeIds(runtime.state, [targetNode.id]);
+        runtime.onStateChanged({ history: false });
+        return;
       }
     });
 
     canvas.addEventListener("dblclick", (e) => {
       const runtime = root.__flowRuntime;
       if (!runtime || !view.stickyNoteMode) return;
-      const rect = canvas.getBoundingClientRect();
+      const rect = getCanvasRect();
       const x = e.clientX - rect.left;
       const y = e.clientY - rect.top;
       const stickyHit = hitStickyNote(runtime.model, x, y, { handleSize: STICKY_NOTE_HANDLE_SIZE });
@@ -1149,23 +1496,37 @@
           return;
         }
       }
+      if (!view.stickyNoteMode && !isEditingShortcutTarget(e.target) && (e.key === "Delete" || e.key === "Backspace")) {
+        const selectedIds = getSelectedDraggableNodeIds(runtime.state);
+        if (selectedIds.length > 1) {
+          const changed = removeNodesByIds?.(runtime.state, selectedIds);
+          if (changed) {
+            e.preventDefault();
+            runtime.onStateChanged();
+          }
+        }
+        return;
+      }
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       if (isEditingShortcutTarget(e.target)) return;
 
       const key = String(e.key || "").toLowerCase();
       if (view.stickyNoteMode) return;
       if (key === "c") {
-        const selectedNode = runtime.state.nodes.find((node) => node.id === runtime.state.selectedNodeId);
-        copiedNodeSnapshot = buildNodeClipboardSnapshot(selectedNode);
-        if (copiedNodeSnapshot) e.preventDefault();
+        const selectedNodeIds = getSelectedDraggableNodeIds(runtime.state);
+        const copiedIds = setCopiedNodeIds(runtime.state, selectedNodeIds);
+        if (copiedIds.length) e.preventDefault();
         return;
       }
       if (key === "v") {
-        if (!copiedNodeSnapshot) return;
-        const selectedNode = runtime.state.nodes.find((node) => node.id === runtime.state.selectedNodeId);
-        if (!selectedNode || isLoopRootNode(selectedNode) || selectedNode.loopOwnerId) return;
-        const duplicated = duplicateNodeAfter?.(runtime.state, selectedNode.id, copiedNodeSnapshot);
-        if (duplicated) {
+        const copiedIds = getCopiedNodeIds();
+        if (!copiedIds.length) return;
+        const pasteTargetIds = getSelectedDraggableNodeIds(runtime.state);
+        const pasteAnchorId = (pasteTargetIds.length === 1 && !copiedIds.includes(pasteTargetIds[0]))
+          ? pasteTargetIds[0]
+          : null;
+        const duplicatedIds = pasteCopiedNodes(runtime, { anchorId: pasteAnchorId });
+        if (duplicatedIds.length) {
           e.preventDefault();
           runtime.onStateChanged();
         }
@@ -1173,9 +1534,15 @@
     });
 
     window.addEventListener("resize", () => {
+      invalidateCanvasRect();
       hideContextMenu();
+      positionStickyToolbar();
       requestDraw();
     });
+
+    window.addEventListener("scroll", () => {
+      positionStickyToolbar();
+    }, { passive: true, capture: true });
 
     return view;
   }

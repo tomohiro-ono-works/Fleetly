@@ -10,6 +10,8 @@
   const dialogApi = corePkg.dialog || null;
   const shellApi = window.zizShell || {};
   const createDefaultState = stateOps.createDefaultState;
+  const getSelectedNodeIds = stateOps.getSelectedNodeIds;
+  const setSelectedNodes = stateOps.setSelectedNodes;
   const renderApp = renderer.renderApp;
   const getFormSchema = utils.getFormSchema || ((config, connector, action) => (config.forms && config.forms[`${connector}.${action}`]) || []);
 
@@ -443,6 +445,73 @@
     };
   }
 
+  function getBottomSchemaEditorWrap() {
+    if (!splitDetailLayout || !detailBottomRoot || detailBottomRoot === detailRoot) return null;
+    return detailBottomRoot.querySelector(".node-data-wrap.node-data-wrap--schema-editor");
+  }
+
+  function captureBottomSchemaEditorViewState() {
+    const wrap = getBottomSchemaEditorWrap();
+    if (!wrap) return null;
+    const snapshot = {
+      selectedNodeId: String(state?.selectedNodeId || "").trim(),
+      scrollTop: Number(wrap.scrollTop) || 0,
+      scrollLeft: Number(wrap.scrollLeft) || 0
+    };
+    const activeEl = document.activeElement;
+    if (!(activeEl instanceof HTMLElement) || !wrap.contains(activeEl)) return snapshot;
+    const fieldKey = String(activeEl.getAttribute("data-schema-key") || "").trim();
+    if (!fieldKey) return snapshot;
+    const rowEl = activeEl.closest(".schema-form-row");
+    if (!rowEl) return snapshot;
+    const rowEls = Array.from(wrap.querySelectorAll(".schema-form-row"));
+    const rowIndex = rowEls.indexOf(rowEl);
+    if (rowIndex < 0) return snapshot;
+    snapshot.focus = {
+      rowIndex,
+      fieldKey
+    };
+    if (typeof activeEl.selectionStart === "number" && typeof activeEl.selectionEnd === "number") {
+      snapshot.focus.selectionStart = activeEl.selectionStart;
+      snapshot.focus.selectionEnd = activeEl.selectionEnd;
+    }
+    return snapshot;
+  }
+
+  function restoreBottomSchemaEditorViewState(snapshot) {
+    if (!snapshot || typeof snapshot !== "object") return;
+    const selectedNodeId = String(state?.selectedNodeId || "").trim();
+    if (selectedNodeId !== String(snapshot.selectedNodeId || "").trim()) return;
+    const wrap = getBottomSchemaEditorWrap();
+    if (!wrap) return;
+    wrap.scrollTop = Number(snapshot.scrollTop) || 0;
+    wrap.scrollLeft = Number(snapshot.scrollLeft) || 0;
+    const focus = snapshot.focus;
+    if (!focus || typeof focus !== "object") return;
+    const rowIndex = Number(focus.rowIndex);
+    const fieldKey = String(focus.fieldKey || "").trim();
+    if (!Number.isInteger(rowIndex) || rowIndex < 0 || !fieldKey) return;
+    const rowEls = wrap.querySelectorAll(".schema-form-row");
+    const rowEl = rowEls[rowIndex];
+    if (!rowEl) return;
+    const target = rowEl.querySelector(`[data-schema-key='${fieldKey}']`);
+    if (!(target instanceof HTMLElement)) return;
+    try {
+      target.focus({ preventScroll: true });
+    } catch (_) {
+      target.focus();
+    }
+    if (
+      typeof focus.selectionStart === "number" &&
+      typeof focus.selectionEnd === "number" &&
+      typeof target.setSelectionRange === "function"
+    ) {
+      try {
+        target.setSelectionRange(focus.selectionStart, focus.selectionEnd);
+      } catch (_) {}
+    }
+  }
+
   function runOnStateChanged(options = {}) {
     const startedAt = getPerfNow();
     try {
@@ -453,9 +522,23 @@
         state.flowName = getModeMeta(state.appMode).defaultFlowName;
       }
       const nodeIds = new Set((Array.isArray(state.nodes) ? state.nodes : []).map((node) => String(node?.id || "")));
-      const selectedNodeId = String(state.selectedNodeId || "");
-      if (!selectedNodeId || !nodeIds.has(selectedNodeId)) {
-        state.selectedNodeId = state.nodes?.[0]?.id || null;
+      if (typeof getSelectedNodeIds === "function") {
+        getSelectedNodeIds(state);
+      } else {
+        const selectedNodeIds = Array.isArray(state.selectedNodeIds)
+          ? state.selectedNodeIds.map((nodeId) => String(nodeId || "").trim()).filter(Boolean)
+          : [];
+        const validSelectedNodeIds = selectedNodeIds.filter((nodeId, index, arr) => nodeIds.has(nodeId) && arr.indexOf(nodeId) === index);
+        const fallbackId = state.nodes?.[0]?.id || null;
+        const normalizedSelectedNodeIds = validSelectedNodeIds.length
+          ? validSelectedNodeIds
+          : (fallbackId ? [String(fallbackId)] : []);
+        if (typeof setSelectedNodes === "function") {
+          setSelectedNodes(state, normalizedSelectedNodeIds);
+        } else {
+          state.selectedNodeIds = normalizedSelectedNodeIds;
+          state.selectedNodeId = normalizedSelectedNodeIds[0] || null;
+        }
       }
       const pendingMergeSourceId = String(state.pendingMergeSourceId || "");
       if (pendingMergeSourceId && !nodeIds.has(pendingMergeSourceId)) {
@@ -491,6 +574,7 @@
         lastRightPanelSyncKey = activeRightPanel;
         shellApi.setActiveRightPanel?.(activeRightPanel);
       }
+      const schemaEditorViewState = captureBottomSchemaEditorViewState();
       renderApp({
         flowRoot,
         detailRoot,
@@ -503,6 +587,7 @@
         onHomeAction: handleHomeAction
       });
       applyFlowViewportHeight();
+      restoreBottomSchemaEditorViewState(schemaEditorViewState);
       schedulePersistModeStates();
     } catch (err) {
       showFatal("???????????", err);
@@ -691,6 +776,10 @@
       ? savedState.nodes
       : baseState.nodes;
     const selectedNodeId = String(savedState.selectedNodeId || "").trim();
+    const restoredNodeIdSet = new Set(restoredNodes.map((node) => String(node?.id || "")));
+    const selectedNodeIds = (Array.isArray(savedState.selectedNodeIds) ? savedState.selectedNodeIds : [])
+      .map((nodeId) => String(nodeId || "").trim())
+      .filter((nodeId, index, arr) => nodeId && restoredNodeIdSet.has(nodeId) && arr.indexOf(nodeId) === index);
     const hasSelectedNode = restoredNodes.some((node) => String(node?.id || "") === selectedNodeId);
     const pendingMergeSourceId = String(savedState.pendingMergeSourceId || "").trim();
     const hasPendingMergeNode = restoredNodes.some((node) => String(node?.id || "") === pendingMergeSourceId);
@@ -704,7 +793,10 @@
       nodes: restoredNodes,
       stickyNotes: normalizeStickyNotes(savedState.stickyNotes),
       startParameters: Array.isArray(savedState.startParameters) ? savedState.startParameters : baseState.startParameters,
-      selectedNodeId: hasSelectedNode ? selectedNodeId : (restoredNodes[0]?.id || baseState.selectedNodeId || null),
+      selectedNodeId: selectedNodeIds[0] || (hasSelectedNode ? selectedNodeId : (restoredNodes[0]?.id || baseState.selectedNodeId || null)),
+      selectedNodeIds: selectedNodeIds.length
+        ? selectedNodeIds
+        : [hasSelectedNode ? selectedNodeId : (restoredNodes[0]?.id || baseState.selectedNodeId || null)].filter(Boolean),
       pendingMergeSourceId: hasPendingMergeNode ? pendingMergeSourceId : null,
       nextStepSeq: Number.isFinite(Number(savedState.nextStepSeq)) && Number(savedState.nextStepSeq) > 0
         ? Number(savedState.nextStepSeq)
@@ -1086,6 +1178,7 @@
         stickyNotes,
         startParameters,
         selectedNodeId: nodes[0]?.id || null,
+        selectedNodeIds: nodes[0]?.id ? [nodes[0].id] : [],
         pendingMergeSourceId: null,
         nextStepSeq: inferNextStepSeq(nodes)
       }
@@ -1862,6 +1955,9 @@
     let dragging = false;
     let startY = 0;
     let startH = 0;
+    let dragFrameId = 0;
+    let pendingHeight = null;
+    let resizeTimer = 0;
 
     const beginDrag = (e) => {
       if (detailPanelResizer) {
@@ -1878,6 +1974,13 @@
       e.preventDefault();
     };
 
+    const flushDragHeight = () => {
+      dragFrameId = 0;
+      if (!dragging || pendingHeight === null) return;
+      applyDetailPanelHeight(pendingHeight);
+      pendingHeight = null;
+    };
+
     detailPanel.addEventListener("mousedown", beginDrag);
     if (detailPanelResizer) {
       detailPanelResizer.addEventListener("mousedown", beginDrag);
@@ -1886,19 +1989,35 @@
     window.addEventListener("mousemove", (e) => {
       if (!dragging) return;
       const delta = startY - e.clientY;
-      applyDetailPanelHeight(startH + delta);
+      pendingHeight = startH + delta;
+      if (dragFrameId) return;
+      dragFrameId = window.requestAnimationFrame(flushDragHeight);
     });
 
     window.addEventListener("mouseup", () => {
       if (!dragging) return;
+      if (dragFrameId) {
+        window.cancelAnimationFrame(dragFrameId);
+        dragFrameId = 0;
+      }
+      if (pendingHeight !== null) {
+        applyDetailPanelHeight(pendingHeight);
+        pendingHeight = null;
+      }
       dragging = false;
       document.body.style.userSelect = "";
     });
 
     window.addEventListener("resize", () => {
-      const current = detailPanel.getBoundingClientRect().height || 300;
-      applyDetailPanelHeight(current);
-      applyFlowViewportHeight();
+      if (resizeTimer) {
+        window.clearTimeout(resizeTimer);
+      }
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = 0;
+        const current = detailPanel.getBoundingClientRect().height || 300;
+        applyDetailPanelHeight(current);
+        applyFlowViewportHeight();
+      }, 120);
     });
 
     const dblclickTarget = detailPanelResizer || detailPanel;
@@ -1998,6 +2117,9 @@
       let dragging = false;
       let startX = 0;
       let startWidth = 0;
+      let dragFrameId = 0;
+      let pendingWidth = null;
+      let resizeTimer = 0;
 
       rightSidebarResizer.addEventListener("mousedown", (event) => {
         if (shellApi.isRightSidebarCollapsed?.()) {
@@ -2010,27 +2132,57 @@
         event.preventDefault();
       });
 
-      window.addEventListener("mousemove", (event) => {
-        if (!dragging) return;
-        const delta = startX - event.clientX;
-        const nextWidth = startWidth + delta;
+      const flushRightSidebarDrag = () => {
+        dragFrameId = 0;
+        if (!dragging || pendingWidth === null) return;
+        const nextWidth = pendingWidth;
+        pendingWidth = null;
         const { bounds } = applyRightSidebarWidth(nextWidth);
         if (nextWidth < bounds.min) {
           dragging = false;
           document.body.style.userSelect = "";
           closeRightSidebar();
         }
+      };
+
+      window.addEventListener("mousemove", (event) => {
+        if (!dragging) return;
+        const delta = startX - event.clientX;
+        pendingWidth = startWidth + delta;
+        if (dragFrameId) return;
+        dragFrameId = window.requestAnimationFrame(flushRightSidebarDrag);
       });
 
       window.addEventListener("mouseup", () => {
         if (!dragging) return;
+        if (dragFrameId) {
+          window.cancelAnimationFrame(dragFrameId);
+          dragFrameId = 0;
+        }
+        if (pendingWidth !== null) {
+          const { bounds } = applyRightSidebarWidth(pendingWidth);
+          const shouldClose = pendingWidth < bounds.min;
+          pendingWidth = null;
+          if (shouldClose) {
+            dragging = false;
+            document.body.style.userSelect = "";
+            closeRightSidebar();
+            return;
+          }
+        }
         dragging = false;
         document.body.style.userSelect = "";
       });
 
       window.addEventListener("resize", () => {
-        if (shellApi.isRightSidebarCollapsed?.()) return;
-        applyRightSidebarWidth(currentWidth || getRightSidebarWidthBounds().initial);
+        if (resizeTimer) {
+          window.clearTimeout(resizeTimer);
+        }
+        resizeTimer = window.setTimeout(() => {
+          resizeTimer = 0;
+          if (shellApi.isRightSidebarCollapsed?.()) return;
+          applyRightSidebarWidth(currentWidth || getRightSidebarWidthBounds().initial);
+        }, 120);
       });
     }
 

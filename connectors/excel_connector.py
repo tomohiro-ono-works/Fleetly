@@ -26,9 +26,18 @@ class ExcelConnector(BaseConnector):
         header_row: int,
         data_start_row: int,
         schema: Any = None,
+        date_field_mode: str = "speed",
+        keep_raw_date_field=False,
+        date_serial_system: str = "excel_1900",
     ) -> pd.DataFrame:
         if not rows:
-            return self.attach_dataframe_schema(pd.DataFrame(), schema_override=schema)
+            return self.attach_dataframe_schema(
+                pd.DataFrame(),
+                schema_override=schema,
+                date_field_mode=date_field_mode,
+                keep_raw_date_field=keep_raw_date_field,
+                date_serial_system=date_serial_system,
+            )
         if header_row < 1:
             raise ValueError("header_row は 1 以上で指定してください。")
         if data_start_row < header_row:
@@ -49,7 +58,13 @@ class ExcelConnector(BaseConnector):
             normalized_row = [self._normalize_excel_value(value) for value in raw_row]
             if any(value is not None and value != "" for value in normalized_row):
                 records.append(dict(zip(headers, normalized_row)))
-        return self.attach_dataframe_schema(pd.DataFrame(records), schema_override=schema)
+        return self.attach_dataframe_schema(
+            pd.DataFrame(records),
+            schema_override=schema,
+            date_field_mode=date_field_mode,
+            keep_raw_date_field=keep_raw_date_field,
+            date_serial_system=date_serial_system,
+        )
 
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
         if action == "read_excel":
@@ -62,6 +77,8 @@ class ExcelConnector(BaseConnector):
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
                 schema=params.get('schema'),
+                date_field_mode=params.get("date_field_mode", "speed"),
+                keep_raw_date_field=params.get("keep_raw_date_field", False),
             )
         elif action == "read_excel_range":
             file_path = params.get('file_path')
@@ -77,6 +94,8 @@ class ExcelConnector(BaseConnector):
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
                 schema=params.get('schema'),
+                date_field_mode=params.get("date_field_mode", "speed"),
+                keep_raw_date_field=params.get("keep_raw_date_field", False),
             )
         elif action == "write_excel":
             input_data = params.get('input_data')
@@ -110,6 +129,22 @@ class ExcelConnector(BaseConnector):
 
     # --- 内部ロジック ---
 
+    @staticmethod
+    def _resolve_excel_serial_system_from_workbook(workbook) -> str:
+        epoch_text = str(getattr(workbook, "epoch", "")).lower()
+        if "1904" in epoch_text:
+            return "excel_1904"
+        if bool(getattr(getattr(workbook, "properties", None), "date1904", False)):
+            return "excel_1904"
+        return "excel_1900"
+
+    def _resolve_excel_serial_system(self, path: str) -> str:
+        workbook = load_workbook(path, read_only=True, data_only=True)
+        try:
+            return self._resolve_excel_serial_system_from_workbook(workbook)
+        finally:
+            workbook.close()
+
     def read_excel(
         self,
         path: str,
@@ -117,6 +152,8 @@ class ExcelConnector(BaseConnector):
         header_row: int,
         data_start_row: int,
         schema: Any = None,
+        date_field_mode: str = "speed",
+        keep_raw_date_field=False,
     ) -> pd.DataFrame:
         normalized_path = self.normalize_file_path(path)
         if normalized_path is None or not os.path.exists(normalized_path):
@@ -149,7 +186,16 @@ class ExcelConnector(BaseConnector):
             for index, column in enumerate(df.columns)
         ]
         normalized_df = df.apply(lambda col: col.map(self._normalize_excel_value))
-        return self.attach_dataframe_schema(normalized_df, schema_override=schema)
+        date_serial_system = self._resolve_excel_serial_system(normalized_path)
+        result = self.attach_dataframe_schema(
+            normalized_df,
+            schema_override=schema,
+            date_field_mode=date_field_mode,
+            keep_raw_date_field=keep_raw_date_field,
+            date_serial_system=date_serial_system,
+        )
+        self.log_date_parse_metrics(result)
+        return result
 
     def read_excel_range(
         self,
@@ -159,6 +205,8 @@ class ExcelConnector(BaseConnector):
         header_row: int,
         data_start_row: int,
         schema: Any = None,
+        date_field_mode: str = "speed",
+        keep_raw_date_field=False,
     ) -> pd.DataFrame:
         normalized_path = self.normalize_file_path(path)
         if normalized_path is None or not os.path.exists(normalized_path):
@@ -171,6 +219,7 @@ class ExcelConnector(BaseConnector):
             workbook.close()
             raise ValueError(f"シートが見つかりませんでした: {sheet_name}") from exc
 
+        date_serial_system = self._resolve_excel_serial_system_from_workbook(workbook)
         try:
             range_values = worksheet[cell_range]
         except ValueError as exc:
@@ -188,12 +237,17 @@ class ExcelConnector(BaseConnector):
                 range_rows.append(normalized_row)
 
         workbook.close()
-        return self._build_dataframe_from_worksheet_rows(
+        result = self._build_dataframe_from_worksheet_rows(
             rows=range_rows,
             header_row=header_row,
             data_start_row=data_start_row,
             schema=schema,
+            date_field_mode=date_field_mode,
+            keep_raw_date_field=keep_raw_date_field,
+            date_serial_system=date_serial_system,
         )
+        self.log_date_parse_metrics(result)
+        return result
 
     def write_excel(self, input_var: str, output_path: str, sheet_name: str, context: dict[str, Any], mode: str = 'create_or_replace', schema: Any = None):
         """

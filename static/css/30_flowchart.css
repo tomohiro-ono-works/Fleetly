@@ -224,10 +224,10 @@
 }
 
 .flow-sticky-toolbar {
-  position: absolute;
-  top: 10px;
-  right: 10px;
-  z-index: 30;
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 90;
   display: flex;
   align-items: flex-start;
   gap: 8px;

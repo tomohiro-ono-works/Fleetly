@@ -50,3 +50,5 @@ tests/playwright/reports/
 tests/playwright/results/
 tests/playwright/.cache/
 tests/playwright/.auth/
+
+config/recent_flows.json

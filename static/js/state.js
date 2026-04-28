@@ -14,21 +14,22 @@ const stateOps = {
       stickyNotes: [],
       startParameters: [],
       selectedNodeId: first.id,
+      selectedNodeIds: [first.id],
       pendingMergeSourceId: null,
       nextStepSeq: 2
     };
   },
 
-  addNodeAfter(state, index) {
+  addNodeAfter(state, index, options = {}) {
     const anchor = state.nodes[index];
     if (!anchor) return;
-    insertAtAnchor(state, anchor.id);
+    insertAtAnchor(state, anchor.id, options);
     refreshParallelOfForParent(state, anchor.id);
   },
 
-  insertNodeAt(state) {
+  insertNodeAt(state, _index, options = {}) {
     // Insert from "開始"
-    insertAtAnchor(state, null);
+    insertAtAnchor(state, null, options);
     refreshParallelOfForParent(state, null);
   },
 
@@ -38,7 +39,7 @@ const stateOps = {
 
     const anchorId = normalizeAnchorId(options.parentId, source.parentId);
     if (anchorId === undefined) return;
-    addParallelAtAnchor(state, anchorId);
+    addParallelAtAnchor(state, anchorId, options);
     refreshParallelOfForParent(state, anchorId);
   },
 
@@ -60,7 +61,10 @@ const stateOps = {
     newNode.action = String(payload.action || newNode.action || "");
     newNode.description = typeof payload.description === "string" ? payload.description : "";
     newNode.descriptionAuto = payload.descriptionAuto !== undefined ? !!payload.descriptionAuto : true;
-    newNode.form = cloneStateValue(payload.form) || {};
+    const sourceForm = cloneStateValue(payload.form) || {};
+    const hiddenRefMap = buildHiddenRefReplacements(state, sourceForm, String(newNode.stepName || "global"));
+    newNode.form = applyHiddenRefReplacements(sourceForm, hiddenRefMap);
+    applyHiddenBindingMetaCopies(state, hiddenRefMap);
     return true;
   },
 
@@ -73,7 +77,7 @@ const stateOps = {
     if (!movingNode) return false;
 
     insertExistingNodeAtAnchor(state, movingNode, anchorId, rightId);
-    state.selectedNodeId = movingNode.id;
+    setSelectedNodeIdsInternal(state, [movingNode.id]);
     return true;
   },
 
@@ -86,7 +90,7 @@ const stateOps = {
     if (!movingNode) return false;
 
     addExistingParallelAtAnchor(state, movingNode, anchorId, rightId);
-    state.selectedNodeId = movingNode.id;
+    setSelectedNodeIdsInternal(state, [movingNode.id]);
     return true;
   },
 
@@ -136,12 +140,157 @@ const stateOps = {
 
     if (state.selectedNodeId === target.id) {
       const fallback = state.nodes[Math.min(index, state.nodes.length - 1)];
-      state.selectedNodeId = fallback ? fallback.id : null;
+      setSelectedNodeIdsInternal(state, fallback ? [fallback.id] : []);
+      return;
     }
+    sanitizeSelectedNodeIdsInternal(state);
   },
 
   setSelectedNode(state, nodeId) {
-    state.selectedNodeId = nodeId;
+    setSelectedNodeIdsInternal(state, nodeId ? [nodeId] : []);
+  },
+
+  setSelectedNodes(state, nodeIds) {
+    setSelectedNodeIdsInternal(state, nodeIds);
+  },
+
+  getSelectedNodeIds(state) {
+    return sanitizeSelectedNodeIdsInternal(state);
+  },
+
+  removeNodesByIds(state, nodeIds) {
+    const ids = new Set((Array.isArray(nodeIds) ? nodeIds : []).map((id) => String(id || "").trim()).filter(Boolean));
+    if (!ids.size) return false;
+    let changed = false;
+    while (true) {
+      const targetIndex = state.nodes.findIndex((node) => ids.has(String(node?.id || "")));
+      if (targetIndex < 0) break;
+      const beforeLength = state.nodes.length;
+      stateOps.removeNode(state, targetIndex);
+      if (state.nodes.length === beforeLength) break;
+      changed = true;
+    }
+    sanitizeSelectedNodeIdsInternal(state);
+    return changed;
+  },
+
+  duplicateNodesByIds(state, nodeIds, options = {}) {
+    const selectedIds = sanitizeNodeIdsForOperation(state, nodeIds);
+    if (!selectedIds.length) return [];
+    const selectedSet = new Set(selectedIds);
+    const orderedSources = state.nodes.filter((node) => selectedSet.has(String(node?.id || "")));
+    const requestedAnchorId = String(options.anchorId || "").trim();
+    const anchorNode = requestedAnchorId
+      ? state.nodes.find((node) => String(node?.id || "") === requestedAnchorId)
+      : null;
+    const anchorId = anchorNode ? String(anchorNode.id || "") : null;
+    const offsetX = Number.isFinite(Number(options.offsetX)) ? Number(options.offsetX) : 64;
+    const offsetY = Number.isFinite(Number(options.offsetY)) ? Number(options.offsetY) : 64;
+    const cloned = [];
+    const idMap = new Map();
+
+    orderedSources.forEach((source) => {
+      const next = cloneStateValue(source);
+      const oldId = String(source.id || "");
+      next.id = createId();
+      next.stepName = allocateStepName(state);
+      const sourceForm = cloneStateValue(source.form) || {};
+      const hiddenRefMap = buildHiddenRefReplacements(state, sourceForm, String(next.stepName || "global"));
+      next.form = applyHiddenRefReplacements(sourceForm, hiddenRefMap);
+      applyHiddenBindingMetaCopies(state, hiddenRefMap);
+      delete next.loopOwnerId;
+      next.parentId = null;
+      next.parallelOf = null;
+      next.parallelOrder = Number(source.parallelOrder) || 1;
+      next.mergeParentIds = [];
+      const sourcePosition = resolveNodeCanvasPosition(source);
+      if (sourcePosition) {
+        applyNodeCanvasPosition(next, {
+          x: sourcePosition.x + offsetX,
+          y: sourcePosition.y + offsetY
+        }, { snap: true });
+      }
+      idMap.set(oldId, next.id);
+      cloned.push(next);
+    });
+
+    cloned.forEach((node, index) => {
+      const source = orderedSources[index];
+      const sourceId = String(source.id || "").trim();
+      const sourceParentId = source.parentId ? String(source.parentId) : null;
+      const mappedParentId = sourceParentId && idMap.has(sourceParentId) ? idMap.get(sourceParentId) : null;
+      node.parentId = mappedParentId || anchorId || sourceId || null;
+      node.mergeParentIds = getMergeParentIds(source)
+        .filter((id) => idMap.has(id))
+        .map((id) => idMap.get(id));
+    });
+
+    state.nodes.push(...cloned);
+    const affectedParents = new Set(cloned.map((node) => node.parentId ?? null));
+    affectedParents.forEach((parentId) => refreshParallelOfForParent(state, parentId));
+    const newIds = cloned.map((node) => node.id);
+    setSelectedNodeIdsInternal(state, newIds);
+    return newIds;
+  },
+
+  hasDirectedEdge(state, sourceId, targetId) {
+    const source = String(sourceId || "").trim();
+    const target = String(targetId || "").trim();
+    if (!source || !target) return false;
+    const targetNode = state.nodes.find((node) => String(node?.id || "") === target);
+    if (!targetNode) return false;
+    if ((targetNode.parentId ?? null) === source) return true;
+    return getMergeParentIds(targetNode).includes(source);
+  },
+
+  hasSuccessorNode(state, sourceId) {
+    const source = String(sourceId || "").trim();
+    if (!source) return false;
+    return state.nodes.some((node) => {
+      if (String(node?.id || "") === source) return false;
+      if ((node.parentId ?? null) === source) return true;
+      return getMergeParentIds(node).includes(source);
+    });
+  },
+
+  removeDirectedEdge(state, sourceId, targetId) {
+    const source = String(sourceId || "").trim();
+    const target = String(targetId || "").trim();
+    if (!source || !target) return { removedPrimary: false, removedMerge: false };
+    const targetNode = state.nodes.find((node) => String(node?.id || "") === target);
+    if (!targetNode) return { removedPrimary: false, removedMerge: false };
+    let removedPrimary = false;
+    let removedMerge = false;
+    if ((targetNode.parentId ?? null) === source) {
+      targetNode.parentId = null;
+      targetNode.parallelOrder = getNextChildOrder(state, null);
+      targetNode.parallelOf = null;
+      refreshParallelOfForParent(state, source);
+      refreshParallelOfForParent(state, null);
+      removedPrimary = true;
+    }
+    const mergeParents = getMergeParentIds(targetNode);
+    if (mergeParents.includes(source)) {
+      targetNode.mergeParentIds = mergeParents.filter((id) => id !== source);
+      removedMerge = true;
+    }
+    return { removedPrimary, removedMerge };
+  },
+
+  createNodeAtAnchor(state, anchorId, options = {}) {
+    const normalizedAnchorId = normalizeAnchorId(anchorId, null);
+    const created = insertAtAnchor(state, normalizedAnchorId, options);
+    refreshParallelOfForParent(state, normalizedAnchorId);
+    if (created?.id) setSelectedNodeIdsInternal(state, [created.id]);
+    return created;
+  },
+
+  createParallelNodeAtAnchor(state, anchorId, options = {}) {
+    const normalizedAnchorId = normalizeAnchorId(anchorId, null);
+    const created = addParallelAtAnchor(state, normalizedAnchorId, options);
+    refreshParallelOfForParent(state, normalizedAnchorId);
+    if (created?.id) setSelectedNodeIdsInternal(state, [created.id]);
+    return created || null;
   },
 
   setPendingMergeSource(state, nodeId) {
@@ -193,6 +342,47 @@ __zizCoreState.stateOps = stateOps;
 
 function isLoopRootStateNode(node) {
   return !!node && node.action === "loop_tasks" && !node.loopOwnerId;
+}
+
+function normalizeNodeIdValue(nodeId) {
+  return String(nodeId || "").trim();
+}
+
+function setSelectedNodeIdsInternal(state, nodeIds, options = {}) {
+  if (!state || typeof state !== "object") return [];
+  const allowEmpty = !!options.allowEmpty;
+  const nodeIdSet = new Set((Array.isArray(state.nodes) ? state.nodes : []).map((node) => normalizeNodeIdValue(node?.id)));
+  const selected = [];
+  const seen = new Set();
+  (Array.isArray(nodeIds) ? nodeIds : []).forEach((id) => {
+    const normalized = normalizeNodeIdValue(id);
+    if (!normalized || seen.has(normalized) || !nodeIdSet.has(normalized)) return;
+    seen.add(normalized);
+    selected.push(normalized);
+  });
+  if (!selected.length && !allowEmpty && Array.isArray(state.nodes) && state.nodes.length) {
+    const fallbackId = normalizeNodeIdValue(state.nodes[0]?.id);
+    if (fallbackId) selected.push(fallbackId);
+  }
+  state.selectedNodeIds = selected;
+  state.selectedNodeId = selected[0] || null;
+  return selected;
+}
+
+function sanitizeSelectedNodeIdsInternal(state) {
+  if (!state || typeof state !== "object") return [];
+  const rawSelected = Array.isArray(state.selectedNodeIds)
+    ? state.selectedNodeIds
+    : (state.selectedNodeId ? [state.selectedNodeId] : []);
+  return setSelectedNodeIdsInternal(state, rawSelected, { allowEmpty: !(Array.isArray(state.nodes) && state.nodes.length) });
+}
+
+function sanitizeNodeIdsForOperation(state, nodeIds) {
+  const nodeSet = new Set((Array.isArray(nodeIds) ? nodeIds : []).map((id) => normalizeNodeIdValue(id)).filter(Boolean));
+  return (Array.isArray(state?.nodes) ? state.nodes : [])
+    .filter((node) => nodeSet.has(normalizeNodeIdValue(node?.id)))
+    .filter((node) => !isLoopRootStateNode(node) && !node?.loopOwnerId)
+    .map((node) => normalizeNodeIdValue(node.id));
 }
 
 const CANVAS_COORD_RULES = {
@@ -403,28 +593,35 @@ function removeLoopRootNode(state, target, index) {
 
   if (!state.selectedNodeId || !state.nodes.some((node) => node.id === state.selectedNodeId)) {
     const fallback = state.nodes[Math.min(index, state.nodes.length - 1)] || state.nodes[0] || null;
-    state.selectedNodeId = fallback ? fallback.id : null;
+    setSelectedNodeIdsInternal(state, fallback ? [fallback.id] : []);
+    return;
   }
+  sanitizeSelectedNodeIdsInternal(state);
 }
 
-function insertAtAnchor(state, anchorId) {
-  const right = getFirstChild(state, anchorId);
+function insertAtAnchor(state, anchorId, options = {}) {
+  const right = resolveRightNode(state, anchorId, options.rightId ?? null);
   const newNode = createNewNode(allocateStepName(state), state.appMode);
   newNode.parentId = anchorId;
-  const anchorPosition = getAnchorBasePosition(state, anchorId);
-  const insertPosition = {
-    x: anchorPosition.x + CANVAS_COORD_RULES.INSERT_DX,
-    y: anchorPosition.y + CANVAS_COORD_RULES.INSERT_DY
-  };
-  applyNodeCanvasPosition(newNode, insertPosition, { snap: true });
+  const requestedPosition = normalizeCanvasPositionValue(options.position);
+  if (requestedPosition) {
+    applyNodeCanvasPosition(newNode, requestedPosition, { snap: true });
+  } else {
+    const anchorPosition = getAnchorBasePosition(state, anchorId);
+    const insertPosition = {
+      x: anchorPosition.x + CANVAS_COORD_RULES.INSERT_DX,
+      y: anchorPosition.y + CANVAS_COORD_RULES.INSERT_DY
+    };
+    applyNodeCanvasPosition(newNode, insertPosition, { snap: true });
+  }
 
   if (!right) {
     const nextOrder = getNextChildOrder(state, anchorId);
     newNode.parallelOrder = nextOrder;
     newNode.parallelOf = null;
     state.nodes.push(newNode);
-    state.selectedNodeId = newNode.id;
-    return;
+    setSelectedNodeIdsInternal(state, [newNode.id]);
+    return newNode;
   }
 
   // Insert between anchor -> right  => anchor -> new -> right
@@ -455,20 +652,22 @@ function insertAtAnchor(state, anchorId) {
   });
 
   state.nodes.push(newNode);
-  state.selectedNodeId = newNode.id;
+  setSelectedNodeIdsInternal(state, [newNode.id]);
   refreshParallelOfForParent(state, anchorId);
   refreshParallelOfForParent(state, newNode.id);
+  return newNode;
 }
 
-function addParallelAtAnchor(state, anchorId) {
+function addParallelAtAnchor(state, anchorId, options = {}) {
   const right = getFirstChild(state, anchorId);
-  if (!right) return;
+  if (!right) return null;
 
   const newNode = createNewNode(allocateStepName(state), state.appMode);
   newNode.parentId = anchorId;
   newNode.parallelOrder = getNextChildOrder(state, anchorId);
   newNode.parallelOf = right.id;
-  const insertPosition = resolveParallelInsertPosition(state, anchorId);
+  const requestedPosition = normalizeCanvasPositionValue(options.position);
+  const insertPosition = requestedPosition || resolveParallelInsertPosition(state, anchorId);
   applyNodeCanvasPosition(
     newNode,
     {
@@ -479,8 +678,9 @@ function addParallelAtAnchor(state, anchorId) {
   );
 
   state.nodes.push(newNode);
-  state.selectedNodeId = newNode.id;
+  setSelectedNodeIdsInternal(state, [newNode.id]);
   refreshParallelOfForParent(state, anchorId);
+  return newNode;
 }
 
 function insertExistingNodeAtAnchor(state, movingNode, anchorId, rightId) {
@@ -724,6 +924,20 @@ function getDefaultConnectorId(appMode) {
   return connectors[0]?.id || "";
 }
 
+function getPreferredConnectorId(appMode, preferredConnectorId) {
+  const preferred = String(preferredConnectorId || "").trim();
+  if (!preferred) return getDefaultConnectorId(appMode);
+  const cfg = getConfigObject();
+  const connectors = Array.isArray(cfg.connectors) ? cfg.connectors : [];
+  const connectorExists = connectors.some((connector) => String(connector?.id || "") === preferred);
+  if (!connectorExists) return getDefaultConnectorId(appMode);
+  const allowedConnectorIds = getModeConnectorIds(appMode);
+  if (allowedConnectorIds.length && !allowedConnectorIds.includes(preferred)) {
+    return getDefaultConnectorId(appMode);
+  }
+  return preferred;
+}
+
 function getDefaultActionId(connectorId) {
   const cfg = getConfigObject();
   const byConnector = (cfg.actions && connectorId) ? cfg.actions[connectorId] : null;
@@ -731,9 +945,19 @@ function getDefaultActionId(connectorId) {
   return actions[0]?.id || "";
 }
 
+function getPreferredActionId(connectorId, preferredActionId) {
+  const preferred = String(preferredActionId || "").trim();
+  if (!preferred) return getDefaultActionId(connectorId);
+  const cfg = getConfigObject();
+  const byConnector = (cfg.actions && connectorId) ? cfg.actions[connectorId] : null;
+  const actions = Array.isArray(byConnector) ? byConnector : [];
+  const matched = actions.find((action) => String(action?.id || "") === preferred);
+  return matched?.id || getDefaultActionId(connectorId);
+}
+
 function createDefaultNode(appMode) {
-  const connectorId = getDefaultConnectorId(appMode);
-  const actionId = getDefaultActionId(connectorId);
+  const connectorId = getPreferredConnectorId(appMode, "OperationConnector");
+  const actionId = getPreferredActionId(connectorId, "define_values");
   return {
     id: createId(),
     connector: connectorId,
@@ -750,8 +974,8 @@ function createDefaultNode(appMode) {
 }
 
 function createNewNode(stepName, appMode) {
-  const connectorId = getDefaultConnectorId(appMode);
-  const actionId = getDefaultActionId(connectorId);
+  const connectorId = getPreferredConnectorId(appMode, "BQConnector");
+  const actionId = getPreferredActionId(connectorId, "execute_sql");
   return {
     id: createId(),
     stepName: stepName || "",
@@ -794,4 +1018,93 @@ function cloneStateValue(value) {
     }
   }
   return JSON.parse(JSON.stringify(value ?? null));
+}
+
+const HIDDEN_REF_PATTERN = /^\{\{hidden\.([a-zA-Z0-9_]+)\.var(\d+)\}\}$/;
+
+function sanitizeHiddenScope(scope) {
+  const normalized = String(scope || "").trim().replace(/[^a-zA-Z0-9_]/g, "_");
+  return normalized || "global";
+}
+
+function collectHiddenRefs(value, outSet) {
+  if (typeof value === "string") {
+    if (HIDDEN_REF_PATTERN.test(value)) outSet.add(value);
+    return;
+  }
+  if (Array.isArray(value)) {
+    value.forEach((item) => collectHiddenRefs(item, outSet));
+    return;
+  }
+  if (value && typeof value === "object") {
+    Object.values(value).forEach((item) => collectHiddenRefs(item, outSet));
+  }
+}
+
+function getHiddenBindingsObject(state) {
+  if (!state || typeof state !== "object") return {};
+  if (!state.hiddenBindings || typeof state.hiddenBindings !== "object" || Array.isArray(state.hiddenBindings)) {
+    state.hiddenBindings = {};
+  }
+  return state.hiddenBindings;
+}
+
+function getNextHiddenVarIndex(hiddenBindings, scope) {
+  const targetScope = sanitizeHiddenScope(scope);
+  let maxIndex = 0;
+  Object.keys(hiddenBindings || {}).forEach((key) => {
+    const match = String(key || "").match(HIDDEN_REF_PATTERN);
+    if (!match) return;
+    if (match[1] !== targetScope) return;
+    const index = Number(match[2]);
+    if (Number.isFinite(index) && index > maxIndex) maxIndex = index;
+  });
+  return maxIndex + 1;
+}
+
+function buildHiddenRefReplacements(state, formValue, stepName) {
+  const refs = new Set();
+  collectHiddenRefs(formValue, refs);
+  if (!refs.size) return new Map();
+
+  const hiddenBindings = getHiddenBindingsObject(state);
+  const scope = sanitizeHiddenScope(stepName);
+  let nextIndex = getNextHiddenVarIndex(hiddenBindings, scope);
+  const replacements = new Map();
+
+  refs.forEach((ref) => {
+    if (replacements.has(ref)) return;
+    const nextRef = `{{hidden.${scope}.var${nextIndex}}}`;
+    nextIndex += 1;
+    replacements.set(ref, nextRef);
+  });
+  return replacements;
+}
+
+function applyHiddenRefReplacements(value, replacements) {
+  if (!replacements || !replacements.size) return value;
+  if (typeof value === "string") {
+    return replacements.get(value) || value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => applyHiddenRefReplacements(item, replacements));
+  }
+  if (value && typeof value === "object") {
+    const out = {};
+    Object.entries(value).forEach(([key, item]) => {
+      out[key] = applyHiddenRefReplacements(item, replacements);
+    });
+    return out;
+  }
+  return value;
+}
+
+function applyHiddenBindingMetaCopies(state, replacements) {
+  if (!replacements || !replacements.size) return;
+  const hiddenBindings = getHiddenBindingsObject(state);
+  replacements.forEach((newRef, oldRef) => {
+    if (hiddenBindings[newRef]) return;
+    if (!Object.prototype.hasOwnProperty.call(hiddenBindings, oldRef)) return;
+    hiddenBindings[newRef] = cloneStateValue(hiddenBindings[oldRef]) || {};
+  });
 }

@@ -262,6 +262,14 @@
     }
 
     if (typeof uiNode.renderNodeDetail === "function") {
+      const selectedNodeIds = Array.isArray(state?.selectedNodeIds)
+        ? state.selectedNodeIds.map((nodeId) => String(nodeId || "").trim()).filter(Boolean)
+        : (state?.selectedNodeId ? [String(state.selectedNodeId)] : []);
+      if (selectedNodeIds.length > 1) {
+        if (detailRoot) detailRoot.innerHTML = "";
+        if (detailBottomRoot && detailBottomRoot !== detailRoot) detailBottomRoot.innerHTML = "";
+        return;
+      }
       const splitDetail = !!detailRoot && !!detailBottomRoot && detailBottomRoot !== detailRoot;
       if (splitDetail) {
         const activeRightPanel = ["detail", "yaml", "variables", "log"].includes(String(rightPanelTab || ""))

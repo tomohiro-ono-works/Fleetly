@@ -10,6 +10,10 @@ csv_delimiter_options=[
   { value:";", label:"セミコロン (;)" },
   { value:"|", label:"パイプ (|)" }
 ]
+date_field_mode_options=[
+  { value:"speed", label:"スピード優先" },
+  { value:"cleansing", label:"クレンジング優先" }
+]
 const CONFIG = {
   version: 3,
 
@@ -170,6 +174,8 @@ const CONFIG = {
     ],
     WebConnector: [
       { id: "open_chrome_page", label: "Chromeで開く" , rpaType: "Transform"},
+      { id: "easy_get_element", label: "イージー要素取得" , rpaType: "Extract"},
+      { id: "easy_click_element", label: "イージークリック" , rpaType: "Transform"},
       { id: "lookat_pages", label: "ページを開く" , rpaType: "Transform"},
       { id: "lookat_page", label: "要素の取得" , rpaType: "Transform"},
       { id: "click_to_web_object", label: "クリック" , rpaType: "Transform"},
@@ -266,6 +272,8 @@ const CONFIG = {
       },
       { key:"header_row", label:"ヘッダ行", kind:"number", required:true, default:1 },
       { key:"data_start_row", label:"データ開始行", kind:"number", required:true, default:2 },
+      { key:"date_field_mode", label:"日付フィールドの取得モード", kind:"combo", required:true, default:"speed", allowCustom:false, options:date_field_mode_options },
+      { key:"keep_raw_date_field", label:"オプション", kind:"checkbox", required:false, default:false },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
@@ -291,6 +299,8 @@ const CONFIG = {
       { key:"sheet_name", label:"シート名", kind:"text", required:true, default:"シート1", allowVars:true },
       { key:"header_row", label:"ヘッダ行", kind:"number", required:true, default:1 },
       { key:"data_start_row", label:"データ開始行", kind:"number", required:true, default:2 },
+      { key:"date_field_mode", label:"日付フィールドの取得モード", kind:"combo", required:true, default:"speed", allowCustom:false, options:date_field_mode_options },
+      { key:"keep_raw_date_field", label:"オプション", kind:"checkbox", required:false, default:false },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
@@ -309,6 +319,8 @@ const CONFIG = {
       { key:"cell_range", label:"読込範囲", kind:"text", required:true, allowVars:true, placeholder:"例: A1:D100" },
       { key:"header_row", label:"ヘッダ行(範囲内)", kind:"number", required:true, default:1 },
       { key:"data_start_row", label:"データ開始行(範囲内)", kind:"number", required:true, default:2 },
+      { key:"date_field_mode", label:"日付フィールドの取得モード", kind:"combo", required:true, default:"speed", allowCustom:false, options:date_field_mode_options },
+      { key:"keep_raw_date_field", label:"オプション", kind:"checkbox", required:false, default:false },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
 
@@ -366,6 +378,10 @@ const CONFIG = {
     "OperationConnector.execute_rename": [
       { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" }, // optionsは renderer で上流から注入
       { key:"input_data_rename", label:"フィールド名を変更", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}"  }
+    ],
+
+    "OperationConnector.define_values": [
+      { key:"define_values", label:"パラメータ", kind:"define-values-editor", required:false }
     ],
 
     "OperationConnector.loop_tasks": [
@@ -474,6 +490,16 @@ const CONFIG = {
       ],
       "WebConnector.lookat_page": [
         { key:"url", label:"URL", kind:"text", required:true, allowVars:true, placeholder:"例: https://example.com/detail" }
+      ],
+      "WebConnector.easy_get_element": [
+        { key:"url", label:"URL（任意）", kind:"text", required:false, allowVars:true, placeholder:"例: https://example.com （未指定時は開いているページを対象）" },
+        { key:"text", label:"完全一致文字列", kind:"text", required:true, allowVars:true, placeholder:"例: aaaaa" },
+        { key:"occurrence", label:"対象番号（1始まり）", kind:"number", required:true, default:1, min:1 }
+      ],
+      "WebConnector.easy_click_element": [
+        { key:"url", label:"URL（任意）", kind:"text", required:false, allowVars:true, placeholder:"例: https://example.com （未指定時は開いているページを対象）" },
+        { key:"text", label:"完全一致文字列", kind:"text", required:true, allowVars:true, placeholder:"例: aaaaa" },
+        { key:"occurrence", label:"対象番号（1始まり）", kind:"number", required:true, default:1, min:1 }
       ],
       "APIConnector.run_api": [
         { key:"api_profile", label:"API Profile", kind:"text", required:true, allowVars:true, placeholder:"例: sales_orders_api" },

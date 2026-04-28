@@ -488,42 +488,45 @@
   function drawDraggedNodePreview(ctx, view, model) {
     const dragState = view.dragState;
     if (!dragState || !dragState.started) return;
-
-    const draggedView = model.nodeMap.get(dragState.nodeId);
-    if (!draggedView || !draggedView.nodeRef) return;
     const rootStyles = getComputedStyle(document.documentElement);
     const surfacePage = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
     const surfaceStrong = rootStyles.getPropertyValue("--surface-strong").trim() || "#4b4e63";
     const dragPreviewStroke = rootStyles.getPropertyValue("--flow-drag-preview-stroke").trim() || "#4b4e63";
     const shadowSoft = rootStyles.getPropertyValue("--alpha-shadow-12").trim() || "rgba(0, 0, 0, 0.12)";
+    const previewNodes = Array.isArray(dragState.previewNodes) && dragState.previewNodes.length
+      ? dragState.previewNodes
+      : [{ nodeId: dragState.nodeId, x: Math.round(dragState.canvasX - NODE_W / 2), y: Math.round(dragState.canvasY - NODE_H / 2) }];
 
-    const x = Math.round(dragState.canvasX - NODE_W / 2);
-    const y = Math.round(dragState.canvasY - NODE_H / 2);
-
-    ctx.save();
-    ctx.globalAlpha = 0.88;
-    ctx.fillStyle = surfacePage;
-    ctx.strokeStyle = dragPreviewStroke;
-    ctx.lineWidth = 2;
-    ctx.setLineDash([4, 3]);
-    ctx.shadowColor = shadowSoft;
-    ctx.shadowBlur = 8;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 3;
-    drawRoundedRect(ctx, x, y, NODE_W, NODE_H, 8);
-    ctx.fill();
-    ctx.stroke();
-    ctx.setLineDash([]);
-    ctx.shadowColor = "transparent";
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetX = 0;
-    ctx.shadowOffsetY = 0;
-    ctx.fillStyle = surfaceStrong;
-    ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(String(draggedView.nodeRef.stepName || ""), x + NODE_W / 2, y + NODE_H / 2);
-    ctx.restore();
+    previewNodes.forEach((preview) => {
+      const draggedView = model.nodeMap.get(preview.nodeId);
+      if (!draggedView || !draggedView.nodeRef) return;
+      const x = Math.round(preview.x);
+      const y = Math.round(preview.y);
+      ctx.save();
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = surfacePage;
+      ctx.strokeStyle = dragPreviewStroke;
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 3]);
+      ctx.shadowColor = shadowSoft;
+      ctx.shadowBlur = 8;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 3;
+      drawRoundedRect(ctx, x, y, NODE_W, NODE_H, 8);
+      ctx.fill();
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.shadowColor = "transparent";
+      ctx.shadowBlur = 0;
+      ctx.shadowOffsetX = 0;
+      ctx.shadowOffsetY = 0;
+      ctx.fillStyle = surfaceStrong;
+      ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(String(draggedView.nodeRef.stepName || ""), x + NODE_W / 2, y + NODE_H / 2);
+      ctx.restore();
+    });
   }
 
   function drawFlowCanvas(view) {
@@ -573,6 +576,10 @@
     const stickyNoteMode = !!view.stickyNoteMode;
     const stickyNotes = resolveRenderedStickyNotes(view, model);
     const stickyNoteSelectedId = String(view.stickyNoteSelectedId || "");
+    const selectedNodeIds = Array.isArray(state?.selectedNodeIds)
+      ? state.selectedNodeIds.map((nodeId) => String(nodeId || "").trim()).filter(Boolean)
+      : (state?.selectedNodeId ? [String(state.selectedNodeId)] : []);
+    const selectedNodeIdSet = new Set(selectedNodeIds);
 
     if (!stickyNoteMode) {
       drawStickyNotes(ctx, stickyNotes, { mode: "normal", selectedId: "", editable: false });
@@ -584,14 +591,14 @@
         color: isSelectedEdge ? flowSelectedEdgeAccent : flowEdgeUnified,
         width: flowEdgeWidthUnified,
         dash: [],
-        mode: edge.kind === "merge" ? "merge_orthogonal" : edge.kind === "parallel" ? "parallel_branch" : "horizontal",
-        sigmoidBias: edge.kind === "parallel" ? 0.88 : edge.kind === "merge" ? 0.84 : 0.92,
-        sigmoidK: edge.kind === "parallel" ? 10 : edge.kind === "merge" ? 9 : 12,
+        mode: edge.kind === "parallel" ? "parallel_branch" : "horizontal",
+        sigmoidBias: edge.kind === "parallel" ? 0.88 : 0.92,
+        sigmoidK: edge.kind === "parallel" ? 10 : 12,
         arrow: true,
-        arrowSize: edge.kind === "parallel" || edge.kind === "merge" ? 6 : edge.kind === "to-end" ? 6 : 7,
-        turnOffset: edge.kind === "merge" ? 28 : 56,
-        targetInset: edge.kind === "merge" ? 18 : 0,
-        detourDepth: edge.kind === "merge" ? 64 : 0,
+        arrowSize: edge.kind === "parallel" ? 6 : edge.kind === "to-end" ? 6 : 7,
+        turnOffset: 56,
+        targetInset: 0,
+        detourDepth: 0,
         backwardCornerRadius: 10
       });
     };
@@ -601,7 +608,7 @@
       const from = model.nodeMap.get(edge.from);
       const to = model.nodeMap.get(edge.to);
       if (!from || !to) return;
-      const isSelectedEdge = !!state.selectedNodeId && (edge.from === state.selectedNodeId || edge.to === state.selectedNodeId);
+      const isSelectedEdge = selectedNodeIdSet.has(edge.from) || selectedNodeIdSet.has(edge.to);
       edgeDrawList.push({ edge, from, to, isSelectedEdge });
     });
 
@@ -611,7 +618,7 @@
     if (view.mergeDragState?.sourceId) {
       const sourceNode = model.nodeMap.get(view.mergeDragState.sourceId);
       if (sourceNode) {
-        const isSelectedEdge = !!state.selectedNodeId && state.selectedNodeId === view.mergeDragState.sourceId;
+        const isSelectedEdge = selectedNodeIdSet.has(view.mergeDragState.sourceId);
         const targetNode = view.mergeDragState.targetNodeId ? model.nodeMap.get(view.mergeDragState.targetNodeId) : null;
         const previewTo = targetNode || {
           x: Math.max(sourceNode.x + NODE_W + 18, view.mergeDragState.canvasX || sourceNode.x + NODE_W + 18),
@@ -621,11 +628,11 @@
           color: isSelectedEdge ? flowSelectedEdgeAccent : flowEdgeUnified,
           width: flowEdgeWidthUnified,
           dash: [],
-          mode: "merge_orthogonal",
+          mode: "horizontal",
           arrow: false,
-          turnOffset: 28,
-          targetInset: 18,
-          detourDepth: 64
+          turnOffset: 56,
+          targetInset: 0,
+          detourDepth: 0
         });
       }
     }
@@ -641,13 +648,16 @@
 
     const nodesToDraw = [model.start, ...model.taskViews, ...(model.loopEndViews || [])];
     let hasRunningAnimation = false;
+    const draggingNodeIdSet = new Set((view.dragState && Array.isArray(view.dragState.nodeIds))
+      ? view.dragState.nodeIds
+      : (view.dragState?.nodeId ? [view.dragState.nodeId] : []));
     nodesToDraw.forEach((node) => {
       const isStart = node.kind === "start";
       const isEnd = node.kind === "end";
       const isTask = node.kind === "task";
       const isLoopEnd = node.kind === "loop-end";
-      const isSelected = (isTask || isStart) && state.selectedNodeId === node.id;
-      const isDraggingNode = !!(view.dragState && view.dragState.started && view.dragState.nodeId === node.id);
+      const isSelected = (isTask || isStart) && selectedNodeIdSet.has(node.id);
+      const isDraggingNode = !!(view.dragState && view.dragState.started && draggingNodeIdSet.has(node.id));
       const hasAlert = isTask && alertNodeIds.has(node.id);
       const stepStatus = isTask ? String((state.stepStatuses && state.stepStatuses[node.nodeRef.stepName]) || "") : "";
       if (stepStatus === "running") hasRunningAnimation = true;
@@ -794,21 +804,23 @@
 
     drawDraggedNodePreview(ctx, view, model);
 
-    model.controls.forEach((ctrl) => {
-      const isDropTarget = view.dropControl === ctrl;
-      const isHover = view.hoverControl === ctrl || isDropTarget;
-      ctx.fillStyle = isDropTarget ? flowControlFillActive : surfacePage;
-      ctx.strokeStyle = isHover ? flowControlStrokeActive : flowControlStroke;
-      ctx.lineWidth = isHover ? 2 : 1;
-      ctx.beginPath();
-      ctx.arc(ctrl.x, ctrl.y, ctrl.r, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.stroke();
-      ctx.fillStyle = isDropTarget ? flowControlTextActive : (isHover ? flowControlStrokeActive : flowControlText);
-      ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
-      ctx.textAlign = "center";
-      ctx.fillText(ctrl.label, ctrl.x, ctrl.y + 3);
-    });
+    const selectionRect = view.rangeSelectionRect;
+    if (selectionRect) {
+      const x = Math.min(selectionRect.startX, selectionRect.endX);
+      const y = Math.min(selectionRect.startY, selectionRect.endY);
+      const w = Math.abs(selectionRect.endX - selectionRect.startX);
+      const h = Math.abs(selectionRect.endY - selectionRect.startY);
+      if (w > 0 && h > 0) {
+        ctx.save();
+        ctx.setLineDash([6, 4]);
+        ctx.lineWidth = 1.5;
+        ctx.strokeStyle = flowSelectedNodeAccent;
+        ctx.fillStyle = "rgba(83,50,247,0.12)";
+        ctx.fillRect(x, y, w, h);
+        ctx.strokeRect(x, y, w, h);
+        ctx.restore();
+      }
+    }
 
     view.hasRunningAnimation = hasRunningAnimation;
   }

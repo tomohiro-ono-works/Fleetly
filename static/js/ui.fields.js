@@ -7,6 +7,80 @@
   const codeEditors = corePkg.codeEditors || null;
   const { el } = (corePkg.utils || {});
   const { wrapWithVarSuggest } = (uiPkg.suggest || {});
+  const VARIABLE_NAME_PATTERN = /^[a-zA-Z0-9_]+$/;
+  const FUNCTION_REF_NAME_PATTERN = /^[a-zA-Z0-9_\.]+(?:\(\))?$/;
+  const DEFINE_VALUE_SYSTEM_DEFAULTS = Object.freeze([
+    { name: "current_date" },
+    { name: "user_name" }
+  ]);
+  const DEFINE_VALUE_SYSTEM_DEFAULT_MAP = Object.freeze(
+    DEFINE_VALUE_SYSTEM_DEFAULTS.reduce((acc, item) => {
+      acc[item.name] = item;
+      return acc;
+    }, {})
+  );
+  let runtimeContextDefaultsCache = null;
+  let runtimeContextDefaultsPromise = null;
+
+  function toYmdDateText(dateLike) {
+    const date = dateLike instanceof Date ? dateLike : new Date(dateLike);
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+    const y = String(date.getFullYear()).padStart(4, "0");
+    const m = String(date.getMonth() + 1).padStart(2, "0");
+    const d = String(date.getDate()).padStart(2, "0");
+    return `${y}-${m}-${d}`;
+  }
+
+  function getFallbackRuntimeContextDefaults() {
+    return {
+      current_date: toYmdDateText(new Date()) || "",
+      user_name: "unknown"
+    };
+  }
+
+  function normalizeRuntimeContextDefaults(value) {
+    if (!value || typeof value !== "object") return null;
+    const currentDate = String(value.current_date || value.currentDate || "").trim();
+    const userName = String(value.user_name || value.userName || "").trim();
+    return {
+      current_date: currentDate || "",
+      user_name: userName || ""
+    };
+  }
+
+  function getRuntimeContextDefaults(defaults) {
+    const fallback = getFallbackRuntimeContextDefaults();
+    const explicit = normalizeRuntimeContextDefaults(defaults);
+    const cached = normalizeRuntimeContextDefaults(runtimeContextDefaultsCache);
+    return {
+      ...fallback,
+      ...(cached || {}),
+      ...(explicit || {})
+    };
+  }
+
+  async function ensureRuntimeContextDefaults() {
+    if (runtimeContextDefaultsCache) return getRuntimeContextDefaults();
+    const statusDefaults = normalizeRuntimeContextDefaults(window.__zizBridgeStatus?.runtime_context_defaults);
+    if (statusDefaults) {
+      runtimeContextDefaultsCache = statusDefaults;
+      return getRuntimeContextDefaults();
+    }
+    if (!bridgeApi?.available?.()) return getRuntimeContextDefaults();
+    if (runtimeContextDefaultsPromise) return runtimeContextDefaultsPromise;
+    runtimeContextDefaultsPromise = bridgeApi.call("app.getStatus", {})
+      .then((status) => {
+        const nextDefaults = normalizeRuntimeContextDefaults(status?.runtime_context_defaults);
+        if (nextDefaults) runtimeContextDefaultsCache = nextDefaults;
+        if (status) window.__zizBridgeStatus = status;
+        return getRuntimeContextDefaults();
+      })
+      .catch(() => getRuntimeContextDefaults())
+      .finally(() => {
+        runtimeContextDefaultsPromise = null;
+      });
+    return runtimeContextDefaultsPromise;
+  }
 
   /* =========================================================
      combo input (free input + full dropdown list)
@@ -271,6 +345,32 @@
     return JSON.stringify(normalizeSimpleSchemaItems(items), null, 2);
   }
 
+  function findDuplicateSchemaNames(values) {
+    const counts = new Map();
+    (Array.isArray(values) ? values : []).forEach((value) => {
+      const name = String(value || "").trim();
+      if (!name) return;
+      counts.set(name, (counts.get(name) || 0) + 1);
+    });
+    return Array.from(counts.entries())
+      .filter(([, count]) => count > 1)
+      .map(([name]) => name);
+  }
+
+  function collectSchemaDuplicateMessages(items) {
+    const normalizedItems = normalizeSimpleSchemaItems(items);
+    const originDuplicates = findDuplicateSchemaNames(normalizedItems.map((item) => item.origin_name));
+    const newNameDuplicates = findDuplicateSchemaNames(normalizedItems.map((item) => item.new_name));
+    const messages = [];
+    if (originDuplicates.length) {
+      messages.push(`元フィールド名が重複しています: ${originDuplicates.join(", ")}`);
+    }
+    if (newNameDuplicates.length) {
+      messages.push(`新フィールド名が重複しています: ${newNameDuplicates.join(", ")}`);
+    }
+    return messages;
+  }
+
   function normalizeChecklistValues(value) {
     if (Array.isArray(value)) {
       return value.map((item) => String(item || "").trim()).filter(Boolean);
@@ -338,6 +438,71 @@
     return JSON.stringify(normalizeFilterConditions(items), null, 2);
   }
 
+  function getInvalidVariableNameMessage(name) {
+    const text = String(name || "").trim();
+    if (!text) return "";
+    if (VARIABLE_NAME_PATTERN.test(text)) return "";
+    return "変数名には英数字と _ のみ使用できます。日本語や記号は使えません。";
+  }
+
+  function normalizeDefineValueRows(value) {
+    const normalizeRow = (item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      return {
+        name: String(item.name || item.key || ""),
+        value: String(item.value ?? item.val ?? "")
+      };
+    };
+
+    if (Array.isArray(value)) {
+      return value
+        .map((item) => normalizeRow(item))
+        .filter(Boolean);
+    }
+
+    if (value && typeof value === "object") {
+      return Object.entries(value).map(([name, rawValue]) => ({
+        name: String(name || ""),
+        value: String(rawValue ?? "")
+      }));
+    }
+
+    const text = String(value || "").trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      return normalizeDefineValueRows(parsed);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function isDefineValueSystemDefaultName(name) {
+    return Object.prototype.hasOwnProperty.call(DEFINE_VALUE_SYSTEM_DEFAULT_MAP, String(name || "").trim());
+  }
+
+  function withDefineValueSystemDefaults(rows, defaults = null) {
+    const resolvedDefaults = getRuntimeContextDefaults(defaults);
+    const normalizedRows = normalizeDefineValueRows(rows);
+    const customRows = normalizedRows
+      .filter((item) => !isDefineValueSystemDefaultName(item?.name))
+      .map((item) => ({ name: String(item?.name || ""), value: String(item?.value ?? "") }));
+    const fixedRows = DEFINE_VALUE_SYSTEM_DEFAULTS.map((item) => ({
+      name: item.name,
+      value: String(resolvedDefaults[item.name] ?? ""),
+      fixed: true
+    }));
+    return [...fixedRows, ...customRows];
+  }
+
+  function stringifyDefineValueRows(rows) {
+    const normalized = normalizeDefineValueRows(rows).map((item) => ({
+      name: String(item?.name || ""),
+      value: String(item?.value ?? "")
+    }));
+    return JSON.stringify(normalized, null, 2);
+  }
+
   function extractSchemaFieldNames(schemaValue) {
     const parsed = Array.isArray(schemaValue)
       ? { items: schemaValue, invalid: false }
@@ -376,6 +541,138 @@
       console.warn("filter field options resolve failed", error);
       return [];
     }
+  }
+
+  function renderDefineValuesEditor({ node, field, current, onInputChanged, onCommitChanged }) {
+    const wrapper = el("div", { class: "start-param-editor" }, []);
+    const paramsList = el("div", { class: "start-param-list" }, []);
+    const addBtn = el("button", { type: "button", class: "start-param-add" }, [document.createTextNode("+ 変数を追加")]);
+    const hiddenValue = el("textarea", {
+      class: "start-param-value",
+      hidden: "hidden",
+      tabindex: "-1",
+      "aria-hidden": "true"
+    });
+
+    let rows = withDefineValueSystemDefaults(current);
+
+    function syncNodeForm(committed) {
+      const value = stringifyDefineValueRows(rows);
+      hiddenValue.value = value;
+      node.form[field.key] = value;
+      if (committed) {
+        if (onCommitChanged) onCommitChanged();
+      } else if (onInputChanged) {
+        onInputChanged();
+      }
+    }
+
+    function renderRows() {
+      paramsList.innerHTML = "";
+      rows.forEach((item, index) => {
+        const isSystemDefault = !!item.fixed || isDefineValueSystemDefaultName(item?.name);
+        const nameWarning = el("div", { class: "field-warning", hidden: "hidden" }, []);
+        const nameInput = el("input", {
+          type: "text",
+          value: item.name,
+          placeholder: "変数名",
+          "aria-label": "変数名",
+          oninput: (e) => {
+            if (isSystemDefault) return;
+            rows[index].name = e.target.value;
+            updateNameWarning();
+            syncNodeForm(false);
+          },
+          onchange: (e) => {
+            if (isSystemDefault) return;
+            rows[index].name = e.target.value;
+            updateNameWarning();
+            syncNodeForm(true);
+          }
+        });
+        if (isSystemDefault) {
+          nameInput.readOnly = true;
+          nameInput.classList.add("start-param-input--readonly");
+        }
+        const updateNameWarning = () => {
+          if (isSystemDefault) {
+            nameWarning.textContent = "";
+            nameWarning.hidden = true;
+            return;
+          }
+          const message = getInvalidVariableNameMessage(rows[index]?.name);
+          nameWarning.textContent = message;
+          nameWarning.hidden = !message;
+        };
+        updateNameWarning();
+        const valueInput = el("input", {
+          type: "text",
+          value: item.value,
+          placeholder: "値",
+          "aria-label": "値",
+          oninput: (e) => {
+            if (isSystemDefault) return;
+            rows[index].value = e.target.value;
+            syncNodeForm(false);
+          },
+          onchange: (e) => {
+            if (isSystemDefault) return;
+            rows[index].value = e.target.value;
+            syncNodeForm(true);
+          }
+        });
+        if (isSystemDefault) {
+          valueInput.readOnly = true;
+          valueInput.classList.add("start-param-input--readonly");
+        }
+        const removeBtn = el(
+          "button",
+          {
+            type: "button",
+            class: "start-param-remove",
+            onclick: () => {
+              if (isSystemDefault) return;
+              rows = rows.filter((_, rowIndex) => rowIndex !== index);
+              renderRows();
+              syncNodeForm(true);
+            }
+          },
+          [document.createTextNode("削除")]
+        );
+        if (isSystemDefault) {
+          removeBtn.disabled = true;
+        }
+
+        paramsList.appendChild(
+          el("div", { class: "start-param-fields define-values-fields" }, [nameInput, valueInput, removeBtn, nameWarning])
+        );
+      });
+    }
+
+    addBtn.addEventListener("click", () => {
+      rows.push({ name: "", value: "" });
+      renderRows();
+      syncNodeForm(true);
+    });
+
+    rows = withDefineValueSystemDefaults(rows);
+    hiddenValue.value = stringifyDefineValueRows(rows);
+    wrapper.appendChild(paramsList);
+    wrapper.appendChild(addBtn);
+    wrapper.appendChild(hiddenValue);
+    renderRows();
+    void ensureRuntimeContextDefaults().then((defaults) => {
+      const before = stringifyDefineValueRows(rows);
+      rows = withDefineValueSystemDefaults(rows, defaults);
+      const after = stringifyDefineValueRows(rows);
+      if (before === after) return;
+      hiddenValue.value = after;
+      node.form[field.key] = after;
+      renderRows();
+      if (onCommitChanged) onCommitChanged();
+    });
+
+    return { input: hiddenValue, wrapper, skipVarSuggest: true };
   }
 
   function renderFilterBuilder({ node, field, current, state, onInputChanged, onCommitChanged }) {
@@ -600,6 +897,7 @@
     const outputPane = el("div", { class: "schema-output-pane" }, []);
     const addRowBtn = el("button", { type: "button", class: "schema-add-row-btn" }, [document.createTextNode("+ カラム追加")]);
     const outputStatusNote = el("div", { class: "schema-output-note node-data-note" }, []);
+    const validationNote = el("div", { class: "schema-validation-note node-data-note", hidden: "hidden" }, []);
     const outputPreviewHead = el("thead", {}, []);
     const outputPreviewBody = el("tbody", {}, []);
     const outputPreviewTable = el("table", { class: "node-data-table" }, [outputPreviewHead, outputPreviewBody]);
@@ -635,6 +933,7 @@
     function syncNodeForm(value, committed) {
       textarea.value = value;
       node.form[field.key] = value;
+      syncSchemaValidation();
       if (committed) {
         if (onCommitChanged) onCommitChanged();
       } else if (onInputChanged) {
@@ -849,6 +1148,23 @@
       hint.className = "schema-editor-hint";
     }
 
+    function syncSchemaValidation() {
+      const parsedSchema = parseSchemaText(textarea.value);
+      if (parsedSchema.invalid) {
+        validationNote.textContent = "";
+        validationNote.hidden = true;
+        return;
+      }
+      const messages = collectSchemaDuplicateMessages(parsedSchema.items);
+      if (!messages.length) {
+        validationNote.textContent = "";
+        validationNote.hidden = true;
+        return;
+      }
+      validationNote.textContent = messages.join("\n");
+      validationNote.hidden = false;
+    }
+
     function setMode(nextMode) {
       if (nextMode === "input") {
         const currentParsed = parseSchemaText(textarea.value);
@@ -907,10 +1223,12 @@
     body.appendChild(outputPane);
     wrapper.appendChild(toolbar);
     wrapper.appendChild(hint);
+    wrapper.appendChild(validationNote);
     wrapper.appendChild(body);
 
     renderFormRows();
     setMode(mode);
+    syncSchemaValidation();
     return { input: textarea, wrapper, skipVarSuggest: true };
   }
 
@@ -985,8 +1303,8 @@
     const text = String(value || "");
     const refs = new Set();
     const patterns = [
-      /\{\{\s*([a-zA-Z0-9_\.]+)\s*\}\}/g,
-      /\$\{([a-zA-Z0-9_\.]+)(?:[^}]*)\}/g
+      /\{\{\s*([a-zA-Z0-9_\.]+(?:\(\))?)\s*\}\}/g,
+      /\$\{([a-zA-Z0-9_\.]+(?:\(\))?)(?:[^}]*)\}/g
     ];
     patterns.forEach((re) => {
       let match = re.exec(text);
@@ -1005,7 +1323,7 @@
       /\{\{\s*([^}]+?)\s*\}\}/g,
       /\$\{([^}]+?)\}/g
     ];
-    const validNamePattern = /^[a-zA-Z0-9_\.]+$/;
+    const validNamePattern = FUNCTION_REF_NAME_PATTERN;
     patterns.forEach((re) => {
       let match = re.exec(text);
       while (match) {
@@ -1017,6 +1335,32 @@
       }
     });
     return Array.from(refs);
+  }
+
+  function normalizeFunctionReferenceName(ref) {
+    const text = String(ref || "").trim();
+    if (text.endsWith("()")) return text.slice(0, -2);
+    return text;
+  }
+
+  function getDefineValuesValidationErrors(value) {
+    const rows = normalizeDefineValueRows(value);
+    const errors = [];
+    const seen = new Set();
+    rows.forEach((row) => {
+      const name = String(row?.name || "").trim();
+      if (!name) return;
+      if (!VARIABLE_NAME_PATTERN.test(name)) {
+        errors.push(`変数名 ${name} は無効です。英数字と _ のみ使用できます。`);
+        return;
+      }
+      if (seen.has(name)) {
+        errors.push(`同一ステップ内で変数名 ${name} が重複しています。`);
+        return;
+      }
+      seen.add(name);
+    });
+    return errors;
   }
 
   function normalizeInputDataReference(value) {
@@ -1086,6 +1430,10 @@
     const supportsVars = !!field.allowVars || field.kind === "combo";
     if (value === undefined || value === null || String(value).trim() === "") return [];
 
+    if (field.kind === "define-values-editor") {
+      return getDefineValuesValidationErrors(value);
+    }
+
     if (field.key === "input_data") {
       const ref = normalizeInputDataReference(value);
       if (!ref) return [];
@@ -1100,9 +1448,10 @@
 
     const isHiddenRefName = (ref) => String(ref || "").startsWith("hidden.");
     const invalidRefs = extractInvalidTemplateReferenceNames(value)
-      .map((ref) => `変数名 ${ref} は無効です。英数字、_、. のみ使用できます。`);
+      .map((ref) => `変数名 ${ref} は無効です。英数字、_、.（末尾の ()）のみ使用できます。`);
     const missingRefs = extractReferencedVariableNames(value)
       .filter((ref) => !isHiddenRefName(ref))
+      .map((ref) => normalizeFunctionReferenceName(ref))
       .filter((ref) => !variableSet.has(ref))
       .map((ref) => `変数 ${ref} は定義されていません。`);
     return [...invalidRefs, ...missingRefs];
@@ -1112,12 +1461,20 @@
     const row = el("div", { class: "row" }, []);
     if (field.kind === "textarea") {
       row.classList.add("row--textarea");
+      if (getCodeLanguageClass(field)) {
+        row.classList.add("row--code-editor");
+      }
     }
-    const labelChildren = [document.createTextNode(field.label)];
-    if (field.required) {
-      labelChildren.push(el("span", { class: "label-required" }, [document.createTextNode("（必須）")]));
+    const hideFieldLabel = field.kind === "define-values-editor";
+    if (!hideFieldLabel) {
+      const labelChildren = [document.createTextNode(field.label)];
+      if (field.required) {
+        labelChildren.push(el("span", { class: "label-required" }, [document.createTextNode("（必須）")]));
+      }
+      row.appendChild(el("label", {}, labelChildren));
+    } else {
+      row.classList.add("row--label-hidden");
     }
-    row.appendChild(el("label", {}, labelChildren));
 
     const current = getFieldCurrentValue(node, field);
 
@@ -1156,7 +1513,18 @@
       if (onStateChanged) onStateChanged();
     }
 
-    if (field.kind === "textarea" && field.key === "schema") {
+    if (field.kind === "define-values-editor") {
+      const rendered = renderDefineValuesEditor({
+        node,
+        field,
+        current,
+        onInputChanged: notifyLocalChanged,
+        onCommitChanged: notifyCommitted
+      });
+      inputEl = rendered.input;
+      wrapper = rendered.wrapper;
+      field.__skipVarSuggest = !!rendered.skipVarSuggest;
+    } else if (field.kind === "textarea" && field.key === "schema") {
       const rendered = renderSchemaEditor({
         node,
         field,
