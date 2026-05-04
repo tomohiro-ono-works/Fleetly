@@ -160,9 +160,10 @@
     const upstreamSteps = getUpstreamSteps(state, node.id);
     const availableVariables = getAvailableVariables(state, node);
     const schema = getFormSchema(config, node.connector, node.action);
-    const schemaField = schema.find((field) => String(field?.key || "") === "schema") || null;
-    const detailFields = schema.filter((field) => String(field?.key || "") !== "schema");
+    const schemaField = schema.find((field) => ["schema", "schema_add_description"].includes(String(field?.key || ""))) || null;
+    const detailFields = schema.filter((field) => !["schema", "schema_add_description"].includes(String(field?.key || "")));
     const hasSchemaField = !!schemaField;
+    const runAllLocked = !!state?.__runAllRunning;
     const dataViewNodeKey = [
       String(node?.id || "").trim(),
       String(node?.stepName || "").trim(),
@@ -229,7 +230,10 @@
               type: "button",
               title: "ステップ実行",
               "aria-label": "ステップ実行",
-              onclick: () => requestNodeRun(node, "single", onStateChanged)
+              onclick: () => {
+                if (runAllLocked) return;
+                requestNodeRun(node, "single", onStateChanged);
+              }
             },
             [
               el("img", {
@@ -250,7 +254,10 @@
               type: "button",
               title: "削除",
               "aria-label": "削除",
-              onclick: () => removeNodeById(state, node.id, onStateChanged)
+              onclick: () => {
+                if (runAllLocked) return;
+                removeNodeById(state, node.id, onStateChanged);
+              }
             },
             [
               el("img", {
@@ -262,7 +269,17 @@
           )
         );
       }
-      return el("div", { class: className }, headActionItems);
+      const actionsRoot = el("div", { class: className }, headActionItems);
+      if (runAllLocked) {
+        const lockButtons = actionsRoot.querySelectorAll(".run-btn, .danger");
+        lockButtons.forEach((button) => {
+          if (button instanceof HTMLButtonElement) {
+            button.disabled = true;
+            button.setAttribute("aria-disabled", "true");
+          }
+        });
+      }
+      return actionsRoot;
     }
 
     const body = el("div", { class: "node-body" }, []);
@@ -316,7 +333,10 @@
               class: "node-tab-run-btn",
               title: "ステップ実行",
               "aria-label": "ステップ実行",
-              onclick: () => requestNodeRun(node, "single", onStateChanged)
+              onclick: () => {
+                if (runAllLocked) return;
+                requestNodeRun(node, "single", onStateChanged);
+              }
             },
             [
               el("img", {
@@ -330,6 +350,13 @@
     }
     const tabsHeadClass = compactTopRow ? "node-tabs-head node-tabs-head--compact" : "node-tabs-head";
     const tabsHead = el("div", { class: tabsHeadClass }, tabsHeadChildren);
+    if (runAllLocked) {
+      const runButton = tabsHead.querySelector(".node-tab-run-btn");
+      if (runButton instanceof HTMLButtonElement) {
+        runButton.disabled = true;
+        runButton.setAttribute("aria-disabled", "true");
+      }
+    }
 
     const detailPane = el("div", { class: "node-tab-pane", "data-tab-key": "detail" }, [body]);
     const yamlText = el("textarea", {
@@ -340,6 +367,7 @@
     });
     const yamlPane = el("div", { class: "node-tab-pane", "data-tab-key": "yaml" }, [yamlText]);
     const dataStatusNote = el("div", { class: "node-data-note" }, []);
+    const dataStatusSlot = el("div", { class: "node-data-status-slot" }, [dataStatusNote]);
     const dataSchemaEditorHost = el("div", { class: "node-data-schema-editor" }, []);
     const dataSchemaWrap = el("div", { class: "node-data-wrap node-data-wrap--schema-editor" }, [dataSchemaEditorHost]);
     const dataPreviewHead = el("thead", {}, []);
@@ -354,7 +382,7 @@
     ]);
     const dataPane = el("div", { class: "node-tab-pane", "data-tab-key": "data" }, [
       dataUnsupportedNote,
-      dataStatusNote,
+      dataStatusSlot,
       dataSchemaWrap,
       dataPreviewWrap
     ]);
@@ -377,6 +405,7 @@
 
     const connectorSelect = renderConnectorSelect({
       config,
+      state,
       node,
       onStateChanged,
       disabled: loopRootSelected
@@ -388,10 +417,26 @@
     );
     const connectorIconSrcFor = (connectorId) => (
       typeof getConnectorImageSrc === "function"
-        ? getConnectorImageSrc(connectorId)
+        ? getConnectorImageSrc(connectorId, config)
         : "./img/noimage.jpg"
     );
     connectorSelect.classList.add("node-topbar-connector-flyout");
+    if (runAllLocked) {
+      connectorSelect.classList.add("is-disabled");
+      const selectorControls = connectorSelect.querySelectorAll("button, input, select, textarea");
+      selectorControls.forEach((control) => {
+        if (!(control instanceof HTMLElement)) return;
+        if (control.tagName === "TEXTAREA") {
+          control.readOnly = true;
+          return;
+        }
+        if (control.tagName === "INPUT") {
+          const input = control;
+          input.readOnly = true;
+        }
+        control.disabled = true;
+      });
+    }
     const connectorFlyoutTrigger = connectorSelect.querySelector(".connector-flyout-trigger");
     const connectorFlyoutController = connectorSelect.__connectorFlyoutController || null;
     const openConnectorFlyoutFromIcon = () => {
@@ -420,16 +465,22 @@
       title: connectorLabelFor(node.connector) || "コネクタ",
       "aria-label": connectorLabelFor(node.connector) || "コネクタ",
       onclick: (event) => {
+        if (runAllLocked) return;
         event.preventDefault();
         event.stopPropagation();
         openConnectorFlyoutFromIcon();
       },
       onkeydown: (event) => {
+        if (runAllLocked) return;
         if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
         openConnectorFlyoutFromIcon();
       }
     }, [connectorIconImage]);
+    if (runAllLocked) {
+      connectorIcon.disabled = true;
+      connectorIcon.setAttribute("aria-disabled", "true");
+    }
     if ((!connectorFlyoutController && !connectorFlyoutTrigger) || connectorFlyoutTrigger?.disabled) {
       connectorIcon.classList.add("is-disabled");
       connectorIcon.setAttribute("aria-disabled", "true");
@@ -441,15 +492,21 @@
       placeholder: getNodeDescriptionSeed(config, node.connector, node.action),
       "aria-label": "ノード説明",
       oninput: (e) => {
+        if (runAllLocked) return;
         node.description = e.target.value;
         node.descriptionAuto = false;
       },
       onchange: (e) => {
+        if (runAllLocked) return;
         node.description = e.target.value;
         node.descriptionAuto = false;
         onStateChanged();
       }
     });
+    if (runAllLocked) {
+      descriptionInput.readOnly = true;
+      descriptionInput.disabled = true;
+    }
     const isRightSidebarTopRow = compactTopRow && hideTabHeader;
     let headSelects = null;
     if (!isRightSidebarTopRow) {
@@ -563,6 +620,11 @@
         if (schemaLabel) schemaLabel.remove();
       }
       dataSchemaEditorHost.appendChild(schemaRow);
+      const schemaToolbarMain = dataSchemaEditorHost.querySelector(".schema-editor-toolbar-main");
+      if (schemaToolbarMain) {
+        schemaToolbarMain.appendChild(dataStatusSlot);
+        dataStatusSlot.classList.add("is-inline");
+      }
     }
 
     function syncYamlView() {
@@ -628,8 +690,11 @@
     }
 
     function setDataStatus(message = "") {
-      dataStatusNote.textContent = String(message || "");
-      dataStatusNote.hidden = !String(message || "").trim();
+      const text = String(message || "");
+      const visible = !!text.trim();
+      dataStatusNote.textContent = text;
+      dataStatusNote.hidden = !visible;
+      dataStatusSlot.hidden = !visible;
     }
 
     function buildStepStatusLabel() {
@@ -782,7 +847,7 @@
         if (requestSeq !== dataRequestSeq) return;
         const code = String(error?.code || "").trim();
         if (code === "E_NOT_FOUND") {
-          setDataStatus(buildDataStatusMessage("まだ実行結果がありません。"));
+          setDataStatus(buildDataStatusMessage("データ取得エラー: 実行結果が見つかりません。"));
           setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : "preview"));
           return;
         }
@@ -966,3 +1031,4 @@
   const uiOut = packagesOut.ui = packagesOut.ui || {};
   uiOut.nodeDetail = nodeDetail;
 })();
+

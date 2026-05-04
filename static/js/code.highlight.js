@@ -25,6 +25,13 @@
     return `<span class="cm-token ${className}">${escaped}</span>`;
   }
 
+  function findTemplateTokenEnd(text, startIndex) {
+    if (text.slice(startIndex, startIndex + 2) !== "{{") return -1;
+    const endIndex = text.indexOf("}}", startIndex + 2);
+    if (endIndex < 0) return -1;
+    return endIndex + 2;
+  }
+
   function tokenizePython(text) {
     const out = [];
     let index = 0;
@@ -69,6 +76,15 @@
         out.push(wrapToken(text.slice(index, end), "cm-string"));
         index = end;
         continue;
+      }
+
+      if (ch === "{" && text[index + 1] === "{") {
+        const end = findTemplateTokenEnd(text, index);
+        if (end > index) {
+          out.push(wrapToken(text.slice(index, end), "cm-variable-template"));
+          index = end;
+          continue;
+        }
       }
 
       if (/\d/.test(ch)) {
@@ -146,6 +162,15 @@
         out.push(wrapToken(text.slice(index, end), "cm-string"));
         index = end;
         continue;
+      }
+
+      if (ch === "{" && text[index + 1] === "{") {
+        const end = findTemplateTokenEnd(text, index);
+        if (end > index) {
+          out.push(wrapToken(text.slice(index, end), "cm-variable-template"));
+          index = end;
+          continue;
+        }
       }
 
       if (/\d/.test(ch)) {

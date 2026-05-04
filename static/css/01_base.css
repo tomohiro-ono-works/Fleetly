@@ -73,6 +73,7 @@ body.right-sidebar-collapsed .app-shell--with-right-sidebar {
 .app-main > main {
   flex: 1 1 auto;
   min-height: 0;
+  background: #f7f5ff;
 }
 
 .flow-layout-page .app-main > main {
@@ -169,6 +170,7 @@ main {
 }
 
 .flow-layout-page main {
+  padding: 0;
   padding-bottom: 0;
 }
 

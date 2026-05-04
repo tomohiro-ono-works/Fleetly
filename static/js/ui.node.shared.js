@@ -73,7 +73,7 @@
   }
 
   function buildNodeClipboardSnapshot(node) {
-    if (!node || isLoopRootNode(node) || node.loopOwnerId) return null;
+    if (!node) return null;
     return {
       connector: String(node.connector || ""),
       action: String(node.action || ""),
@@ -237,6 +237,7 @@
   }
 
   function ensureNodeDefaults(config, node) {
+    if (!String(node.nodeType || "").trim()) node.nodeType = "task";
     if (!node.connector) node.connector = config.connectors?.[0]?.id || "";
     if (!node.action) {
       const actions = config.actions?.[node.connector] || [];
@@ -316,11 +317,11 @@
   }
 
   function isLoopRootNode(node) {
-    return !!node && node.action === "loop_tasks" && !node.loopOwnerId;
+    return !!node && String(node.nodeType || "").trim() === "loop" && !node.loopOwnerId;
   }
 
   function isDraggableNode(node) {
-    return !!node && !isLoopRootNode(node) && !node.loopOwnerId;
+    return !!node;
   }
 
   function collectNodeAndDescendantIds(state, nodeId) {
@@ -623,13 +624,6 @@
     { id: "Transform", label: "加工" }
   ];
   const NOIMAGE_SRC = "./img/noimage.jpg";
-  const CONNECTOR_ICON_SRC = {
-    DataflowConnector: "./icons/dataflow.svg",
-    DummyConnector: "./icons/chess_pawn.svg",
-    DataintegrationConnector: "./icons/brick.svg",
-    VectorConnector: "./icons/vectordb.svg",
-    WebConnector: "./icons/web.svg"
-  };
 
   function isDataConnector(connectorId, config) {
     const connectors = config?.connectors || [];
@@ -667,9 +661,13 @@
     return connectors;
   }
 
-  function getConnectorImageSrc(connectorId) {
+  function getConnectorImageSrc(connectorId, config) {
     if (!connectorId) return NOIMAGE_SRC;
-    return CONNECTOR_ICON_SRC[connectorId] || `./img/${connectorId}.jpg`;
+    const connectors = Array.isArray(config?.connectors) ? config.connectors : [];
+    const connector = connectors.find((item) => String(item?.id || "") === String(connectorId || "")) || null;
+    const iconPath = String(connector?.icon || connector?.iconSrc || "").trim();
+    if (iconPath) return iconPath;
+    return `./img/${connectorId}.jpg`;
   }
 
   function getActionTypeItems(config, connectorId, actionType) {
@@ -677,7 +675,7 @@
     return actions.filter((action) => normalizeActionType(action.rpaType) === normalizeActionType(actionType));
   }
 
-  function renderConnectorSelect({ config, node, onStateChanged, disabled = false }) {
+  function renderConnectorSelect({ config, state, node, onStateChanged, disabled = false }) {
     const connectors = buildConnectorChoices(config, node.connector);
     let activeConnectorId = node.connector || (connectors[0]?.id || "");
     let activeActionType = normalizeActionType(getActionConfig(config, node.connector, node.action)?.rpaType);
@@ -768,7 +766,7 @@
       connectors.forEach((connector) => {
         const img = el("img", {
           class: "connector-image-thumb",
-          src: getConnectorImageSrc(connector.id),
+          src: getConnectorImageSrc(connector.id, config),
           alt: connectorDisplayLabel(connector),
           loading: "lazy"
         });
@@ -798,12 +796,101 @@
       });
     }
 
+    function showLoopConvertWarning(message) {
+      if (dialogApi?.show) {
+        dialogApi.show(message, { kind: "warning", title: "ループ変換" });
+      } else {
+        alert(message);
+      }
+    }
+
+    function hasMergeRelationsForNode(nodeId) {
+      if (!state || !Array.isArray(state.nodes) || !nodeId) return false;
+      const currentNode = state.nodes.find((item) => item.id === nodeId);
+      if (!currentNode) return false;
+      if (getMergeParentIds(currentNode).length) return true;
+      return state.nodes.some((candidate) => getMergeParentIds(candidate).includes(nodeId));
+    }
+
+    function hasLoopInternalNodes(loopRootId) {
+      if (!state || !Array.isArray(state.nodes) || !loopRootId) return false;
+      return state.nodes.some((candidate) => String(candidate?.loopOwnerId || "") === String(loopRootId || ""));
+    }
+
+    function normalizeLoopFormDefaults(targetNode) {
+      if (!targetNode || typeof targetNode !== "object") return;
+      if (!targetNode.form || typeof targetNode.form !== "object") targetNode.form = {};
+      if (targetNode.form.max_iterations === undefined || targetNode.form.max_iterations === null || targetNode.form.max_iterations === "") {
+        targetNode.form.max_iterations = 30;
+      }
+      if (targetNode.form.source_step_id === undefined || targetNode.form.source_step_id === null) {
+        targetNode.form.source_step_id = "";
+      }
+    }
+
+    function convertTaskNodeToLoop(targetNode) {
+      if (!state || !Array.isArray(state.nodes)) {
+        showLoopConvertWarning("ループ変換に必要な状態を取得できませんでした。");
+        return false;
+      }
+      if (!targetNode || !targetNode.id) {
+        showLoopConvertWarning("ループ変換対象のノードが見つかりません。");
+        return false;
+      }
+      if (targetNode.loopOwnerId) {
+        showLoopConvertWarning("ループ内ノードはループノードに変換できません。");
+        return false;
+      }
+      if (hasMergeRelationsForNode(targetNode.id)) {
+        showLoopConvertWarning("合流設定があるノードはループに変換できません。");
+        return false;
+      }
+
+      const snapshot = {
+        nodes: cloneUiValue(state.nodes || []),
+        selectedNodeId: state.selectedNodeId || null,
+        selectedNodeIds: cloneUiValue(state.selectedNodeIds || []),
+        nextStepSeq: state.nextStepSeq
+      };
+      targetNode.nodeType = "loop";
+      delete targetNode.loopOwnerId;
+      normalizeLoopFormDefaults(targetNode);
+
+      if (!hasLoopInternalNodes(targetNode.id)) {
+        const created = insertLoopInternalAtAnchor(state, targetNode.id, targetNode.id);
+        if (!created) {
+          state.nodes = snapshot.nodes;
+          state.selectedNodeId = snapshot.selectedNodeId;
+          state.selectedNodeIds = snapshot.selectedNodeIds;
+          state.nextStepSeq = snapshot.nextStepSeq;
+          showLoopConvertWarning("ループ内ノードの自動作成に失敗したため、変換を中止しました。");
+          return false;
+        }
+      }
+      return true;
+    }
+
     function selectConnectorAction(connectorId, actionId) {
       if (disabled) return;
+      const nextAction = getActionConfig(config, connectorId, actionId);
+      const nextNodeType = String(nextAction?.nodeType || "").trim();
+      const currentNodeType = String(node.nodeType || "task").trim() || "task";
+      const needsLoopConversion = nextNodeType === "loop" && currentNodeType !== "loop";
+      if (needsLoopConversion && !convertTaskNodeToLoop(node)) {
+        return;
+      }
       const changed = node.connector !== connectorId || node.action !== actionId;
       node.connector = connectorId;
       node.action = actionId || "";
-      if (changed) node.form = {};
+      if (nextNodeType) {
+        node.nodeType = nextNodeType;
+      } else if (!String(node.nodeType || "").trim()) {
+        node.nodeType = "task";
+      }
+      if (changed) {
+        node.form = {};
+        if (nextNodeType === "loop") normalizeLoopFormDefaults(node);
+      }
       if (node.descriptionAuto) {
         node.description = getNodeDescriptionSeed(config, node.connector, node.action);
       }
@@ -842,7 +929,16 @@
 
     function renderActionList() {
       actionList.innerHTML = "";
-      const actions = getActionTypeItems(config, activeConnectorId, activeActionType);
+      const currentNodeType = String(node.nodeType || "task").trim() || "task";
+      const actions = getActionTypeItems(config, activeConnectorId, activeActionType)
+        .filter((action) => {
+          const actionNodeType = String(action?.nodeType || "").trim();
+          if (!actionNodeType) return true;
+          if (actionNodeType === "loop" && currentNodeType === "task") {
+            return !node.loopOwnerId;
+          }
+          return actionNodeType === currentNodeType;
+        });
       if (!actions.length) {
         actionList.appendChild(
           el("div", { class: "connector-action-empty" }, [document.createTextNode("この種別のアクションがありません")])

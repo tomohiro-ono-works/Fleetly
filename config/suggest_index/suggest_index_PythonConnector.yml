@@ -1,0 +1,16 @@
+﻿entries:
+  - index: def
+    suggest_word: |
+      def main():
+          output = None
+          return output
+
+  - index: imp
+    suggest_word:
+      - import pandas as pd
+      - import os
+
+  - index: for
+    suggest_word: |
+      for item in items:
+          pass

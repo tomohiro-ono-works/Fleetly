@@ -227,7 +227,7 @@
     const noteOpacity = mode === "sticky" ? 0.95 : 0.75;
     const textColor = "#2b2f3d";
     const borderColor = "#b9bfd3";
-    const selectedColor = "#5332f7";
+    const selectedColor = "#352480";
     const handleSize = 14;
     notes.forEach((note) => {
       if (!note) return;
@@ -275,10 +275,10 @@
     });
   }
 
-  function getConnectorIconSrc(nodeRef) {
+  function getConnectorIconSrc(nodeRef, config) {
     const explicitConnectorId = String(nodeRef?.form?.selected_connector_icon || "").trim();
-    if (explicitConnectorId) return getConnectorImageSrc(explicitConnectorId);
-    return getConnectorImageSrc(nodeRef?.connector);
+    if (explicitConnectorId) return getConnectorImageSrc(explicitConnectorId, config);
+    return getConnectorImageSrc(nodeRef?.connector, config);
   }
 
   function ensureConnectorIcon(view, src) {
@@ -553,10 +553,10 @@
     const warningText = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
     const flowEdgeUnified = "#d4dae4";
     const flowEdgeWidthUnified = 2;
-    const flowSelectedNodeAccent = "#5332f7";
+    const flowSelectedNodeAccent = "#352480";
     const flowSelectedEdgeAccent = "#4c4f64";
     const flowNodeBorder = rootStyles.getPropertyValue("--flow-node-border").trim() || "#9aa5b6";
-    const flowNodeStatusRunning = "#5332f7";
+    const flowNodeStatusRunning = "#352480";
     const flowNodeStatusError = "#ef475a";
     const flowNodeShadow = rootStyles.getPropertyValue("--flow-node-shadow").trim()
       || rootStyles.getPropertyValue("--alpha-shadow-10").trim()
@@ -740,7 +740,7 @@
         ctx.textBaseline = "alphabetic";
       }
 
-      const iconSrc = isTask ? getConnectorIconSrc(node.nodeRef) : null;
+      const iconSrc = isTask ? getConnectorIconSrc(node.nodeRef, config) : null;
       const icon = iconSrc ? ensureConnectorIcon(view, iconSrc) : null;
       const hasIcon = !!(icon && !icon.__failed && icon.complete && icon.naturalWidth > 0);
 

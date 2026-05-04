@@ -13,6 +13,7 @@
   const detailRoot = document.getElementById("nodeDetail");
   const bodyRoot = document.body;
   const bodyDataset = bodyRoot?.dataset || {};
+  const runtimeVersion = new URLSearchParams(window.location.search).get("v") || "";
   const btnReset = document.getElementById("btnReset");
   const btnRun = document.getElementById("btnRun");
   const btnSave = document.getElementById("btnSave");
@@ -56,7 +57,11 @@
 
   function toAbsolutePageUrl(relativeUrl) {
     try {
-      return new URL(String(relativeUrl || ""), window.location.href).toString();
+      const target = new URL(String(relativeUrl || ""), window.location.href);
+      if (runtimeVersion && !target.searchParams.has("v")) {
+        target.searchParams.set("v", runtimeVersion);
+      }
+      return target.toString();
     } catch (_) {
       return String(relativeUrl || "");
     }
@@ -68,6 +73,9 @@
       return toAbsolutePageUrl(bodyDataset.queryBuilderUrl || "./query-builder.html");
     }
     const dataflowUrl = new URL(bodyDataset.dataflowUrl || "./dataflow.html", window.location.href);
+    if (runtimeVersion && !dataflowUrl.searchParams.has("v")) {
+      dataflowUrl.searchParams.set("v", runtimeVersion);
+    }
     if (normalized === "dataflow") {
       dataflowUrl.searchParams.set("mode", "dataflow");
     } else {

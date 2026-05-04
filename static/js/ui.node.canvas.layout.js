@@ -245,8 +245,6 @@
 
     const loopMetaByRootId = new Map();
     const loopOwnerByNodeId = new Map();
-    const loopRootIdByLoopEndId = new Map();
-
     normalizedNodes.filter((n) => isLoopRootNode(n)).forEach((rootNode) => {
       const chainIds = [];
       const seen = new Set([rootNode.id]);
@@ -263,17 +261,13 @@
       const outsideIds = getChildren(rootNode.id)
         .filter((c) => c.loopOwnerId !== rootNode.id)
         .map((c) => c.id);
-      const loopEndId = `__loop_end__${rootNode.id}`;
       const meta = {
         rootId: rootNode.id,
-        loopEndId,
         chainIds,
         chainSet: new Set(chainIds),
         outsideIds
       };
       loopMetaByRootId.set(rootNode.id, meta);
-      loopRootIdByLoopEndId.set(loopEndId, rootNode.id);
-      viewById.set(loopEndId, createPseudoNode(loopEndId, "繰り返し終了", "loop-end"));
     });
 
     const displayChildren = new Map();
@@ -285,8 +279,10 @@
       if (isLoopRootNode(node) && loopMetaByRootId.has(node.id)) {
         const meta = loopMetaByRootId.get(node.id);
         const firstInner = meta.chainIds[0] || null;
-        setDisplayChildren(node.id, [firstInner || meta.loopEndId]);
-        setDisplayChildren(meta.loopEndId, meta.outsideIds.slice());
+        const childIds = [];
+        if (firstInner) childIds.push(firstInner);
+        childIds.push(...meta.outsideIds);
+        setDisplayChildren(node.id, childIds);
         return;
       }
 
@@ -298,17 +294,14 @@
         const nextInChain = idx >= 0 ? chain[idx + 1] : null;
         const realChildren = getChildren(node.id).map((c) => c.id);
         const extraChildren = realChildren.filter((id) => id !== nextInChain);
-        setDisplayChildren(node.id, [nextInChain || meta.loopEndId, ...extraChildren]);
+        const nextIds = [];
+        if (nextInChain) nextIds.push(nextInChain);
+        nextIds.push(...extraChildren);
+        setDisplayChildren(node.id, nextIds);
         return;
       }
 
       setDisplayChildren(node.id, getChildren(node.id).map((n) => n.id));
-    });
-
-    loopMetaByRootId.forEach((meta) => {
-      if (!displayChildren.has(meta.loopEndId)) {
-        setDisplayChildren(meta.loopEndId, meta.outsideIds.slice());
-      }
     });
 
     start.x = START_X;
@@ -349,9 +342,7 @@
     applyStoredNodePositions(normalizedNodes, viewById, rawById);
 
     const taskViews = normalizedNodes.map((node) => viewById.get(node.id)).filter(Boolean);
-    const loopEndViews = Array.from(loopMetaByRootId.values())
-      .map((meta) => viewById.get(meta.loopEndId))
-      .filter(Boolean);
+    const loopEndViews = [];
     const stickyNotes = (Array.isArray(state.stickyNotes) ? state.stickyNotes : [])
       .map((note) => normalizeStickyNote(note))
       .filter(Boolean);
@@ -371,6 +362,12 @@
         const edgeKind = idx === 0 ? "tree" : "parallel";
         pushEdge(parentId, childId, edgeKind);
       });
+    });
+
+    loopMetaByRootId.forEach((meta) => {
+      const tailId = meta.chainIds.length ? meta.chainIds[meta.chainIds.length - 1] : null;
+      if (!tailId) return;
+      pushEdge(tailId, meta.rootId, "loop-back");
     });
 
     normalizedNodes.forEach((node) => {
@@ -401,7 +398,7 @@
 
     const loopFrames = [];
     loopMetaByRootId.forEach((meta) => {
-      const ids = [meta.rootId, ...meta.chainIds, meta.loopEndId];
+      const ids = [meta.rootId, ...meta.chainIds];
       const views = ids.map((id) => nodeMap.get(id)).filter(Boolean);
       if (!views.length) return;
       let minX = Infinity;

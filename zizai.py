@@ -4,6 +4,7 @@ from pathlib import Path
 from app.gui.host import run_webview_app
 from app.main import run_cli
 from core.flow_locator import has_flow_extension, resolve_flow_path
+from core.logger import setup_logger
 
 BASE_DIR = Path(__file__).resolve().parent
 HOME_HTML_PATH = BASE_DIR / "static" / "home.html"
@@ -32,6 +33,7 @@ def run_headless(flow_path: str) -> int:
 
 
 def main():
+    setup_logger()
     args = parse_args()
     if args.flow_path:
         return run_headless(args.flow_path)

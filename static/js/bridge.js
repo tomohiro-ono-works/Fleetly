@@ -1,9 +1,14 @@
 (function () {
+  const NOT_READY_TIMEOUT_MS = 10000;
+  const RESPONSE_TIMEOUT_MS = 45000;
+  const MAX_QUEUE_SIZE = 256;
+
   const state = {
     version: "1.0",
     ready: false,
     backend: null,
     pending: new Map(),
+    queue: [],
   };
 
   function nextId() {
@@ -18,11 +23,50 @@
     const pending = state.pending.get(id);
     if (!pending) return;
     state.pending.delete(id);
+    if (pending.timeoutId) {
+      window.clearTimeout(pending.timeoutId);
+    }
     if (result && result.error) {
       pending.reject(result.error);
       return;
     }
     pending.resolve(result ? result.payload : undefined);
+  }
+
+  function removeQueuedById(id) {
+    const idx = state.queue.findIndex((item) => item.id === id);
+    if (idx >= 0) state.queue.splice(idx, 1);
+  }
+
+  function rejectPending(id, error) {
+    const pending = state.pending.get(id);
+    if (!pending) return;
+    state.pending.delete(id);
+    if (pending.timeoutId) {
+      window.clearTimeout(pending.timeoutId);
+    }
+    pending.reject(error);
+  }
+
+  function sendEnvelope(item) {
+    if (!state.backend || typeof state.backend.postMessage !== "function") {
+      rejectPending(item.id, buildError("E_NOT_READY", "ネイティブブリッジが初期化されていません。"));
+      return;
+    }
+    try {
+      state.backend.postMessage(JSON.stringify(item.envelope));
+    } catch (err) {
+      rejectPending(item.id, buildError("E_SEND_FAILED", String(err?.message || err || "送信に失敗しました。")));
+    }
+  }
+
+  function flushQueue() {
+    if (!state.ready || !state.backend) return;
+    while (state.queue.length > 0) {
+      const item = state.queue.shift();
+      if (!state.pending.has(item.id)) continue;
+      sendEnvelope(item);
+    }
   }
 
   function handleIncoming(rawText) {
@@ -48,9 +92,6 @@
         return !!state.ready && !!state.backend;
       },
       call(type, payload = {}) {
-        if (!state.ready || !state.backend) {
-          return Promise.reject(buildError("E_NOT_READY", "ネイティブブリッジが初期化されていません。"));
-        }
         const id = nextId();
         const envelope = {
           v: state.version,
@@ -61,8 +102,34 @@
           payload,
         };
         return new Promise((resolve, reject) => {
-          state.pending.set(id, { resolve, reject });
-          state.backend.postMessage(JSON.stringify(envelope));
+          const timeoutId = window.setTimeout(() => {
+            removeQueuedById(id);
+            rejectPending(
+              id,
+              buildError(
+                state.ready ? "E_RESPONSE_TIMEOUT" : "E_NOT_READY_TIMEOUT",
+                state.ready
+                  ? "ネイティブ応答がタイムアウトしました。"
+                  : "ネイティブブリッジの初期化待機がタイムアウトしました。"
+              )
+            );
+          }, state.ready ? RESPONSE_TIMEOUT_MS : NOT_READY_TIMEOUT_MS);
+
+          state.pending.set(id, { resolve, reject, timeoutId });
+          const item = { id, envelope };
+
+          if (state.ready && state.backend) {
+            sendEnvelope(item);
+            return;
+          }
+
+          state.queue.push(item);
+          if (state.queue.length > MAX_QUEUE_SIZE) {
+            const dropped = state.queue.shift();
+            if (dropped) {
+              rejectPending(dropped.id, buildError("E_QUEUE_OVERFLOW", "起動待機キューが上限を超えました。"));
+            }
+          }
         });
       },
     };
@@ -76,6 +143,7 @@
       backend.messageToFrontend.connect(handleIncoming);
     }
     state.ready = true;
+    flushQueue();
     window.dispatchEvent(new CustomEvent("ziz:bridge-ready"));
   }
 

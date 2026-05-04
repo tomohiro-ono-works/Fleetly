@@ -58,7 +58,8 @@
       if (!m) return hide();
 
       const prefix = m[1] || "";
-      const items = Array.from(new Set(variableNames.filter((x) => x.startsWith(prefix))));
+      const loweredPrefix = prefix.toLowerCase();
+      const items = Array.from(new Set(variableNames.filter((x) => String(x || "").toLowerCase().startsWith(loweredPrefix))));
 
       show(items, (chosen) => {
         const before = v.slice(0, caret - prefix.length);
@@ -135,7 +136,8 @@
       if (!match) return hide();
 
       const prefix = match[1] || "";
-      const items = Array.from(new Set((variableNames || []).filter((name) => name.startsWith(prefix))));
+      const loweredPrefix = prefix.toLowerCase();
+      const items = Array.from(new Set((variableNames || []).filter((name) => String(name || "").toLowerCase().startsWith(loweredPrefix))));
       show(items, (chosen) => {
         const from = { line: cursor.line, ch: cursor.ch - prefix.length };
         const to = { line: cursor.line, ch: cursor.ch };

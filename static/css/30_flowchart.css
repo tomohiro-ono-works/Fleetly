@@ -153,12 +153,8 @@
   max-width: 100%;
   overflow-x: auto;
   overflow-y: auto;
-  background-color: var(--surface-page2);
-  background-image:
-    radial-gradient(circle, var(--border-grid) 0.9px, transparent 1px),
-    radial-gradient(circle, var(--border-grid) 0.9px, transparent 1px);
-  background-size: 20px 5px, 5px 20px;
-  background-position: 0 0, 0 0;
+  background-color: #ffffff;
+  background-image: none;
   -ms-overflow-style: none;
   scrollbar-width: none;
   min-height: 260px;
@@ -167,12 +163,8 @@
 
 .flow-canvas {
   display: block;
-  background-color: var(--surface-page2);
-  background-image:
-    radial-gradient(circle, var(--border-grid) 0.9px, transparent 1px),
-    radial-gradient(circle, var(--border-grid) 0.9px, transparent 1px);
-  background-size: 20px 5px, 5px 20px;
-  background-position: 0 0, 0 0;
+  background-color: #ffffff;
+  background-image: none;
 }
 
 .flow-fallback {
@@ -296,7 +288,7 @@
 }
 
 .flow-sticky-toolbar__btn:hover:not(:disabled) {
-  border-color: #5332f7;
+  border-color: #352480;
 }
 
 .flow-sticky-toolbar__btn.is-danger {
@@ -324,7 +316,7 @@
 }
 
 .flow-sticky-toolbar__color.is-active {
-  border-color: #5332f7;
+  border-color: #352480;
   box-shadow: 0 0 0 2px rgba(83, 50, 247, 0.2);
 }
 
@@ -339,7 +331,7 @@
   margin: 0;
   padding: 8px;
   border-radius: 10px;
-  border: 2px solid #5332f7;
+  border: 2px solid #352480;
   outline: none;
   box-shadow: 0 6px 14px rgba(21, 23, 35, 0.18);
   color: #2b2f3d;

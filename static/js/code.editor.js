@@ -4,18 +4,8 @@
   const CODE_EDITOR_VERTICAL_PADDING = 20;
   const CODE_EDITOR_GUTTER_DIGITS = 3;
   const INDENT_TEXT = "  ";
-  const PYTHON_FALLBACK_HINTS = [
-    "and", "as", "assert", "break", "class", "continue", "def", "del", "elif", "else", "except",
-    "False", "finally", "for", "from", "global", "if", "import", "in", "is", "lambda", "None",
-    "not", "or", "pass", "raise", "return", "True", "try", "while", "with", "yield", "print",
-    "len", "range", "str", "int", "float", "dict", "list", "set", "tuple", "open", "input"
-  ];
-  const SQL_FALLBACK_HINTS = [
-    "SELECT\nFROM\nWHERE\nGROUP BY ALL\nHAVING\nORDER BY 1,2", "HAVING", "LIMIT", "WITH RD AS (\n\n),", "INSERT",
-    "UPDATE", "DELETE FROM WHERE", "JOIN", "LEFT JOIN ON t1. = t2.", "RIGHT JOIN ON t1. = t2.", "INNER JOIN ON t1. = t2.", "AS", "AND",
-    "OR", "NOT", "IN", "LIKE", "IS NULL", "CASE\nWHEN THEN\nELSE\nEND AS ", "COUNT() AS ",
-    "SUM() AS ", "AVG() AS ", "MIN() AS ", "MAX() AS ", "CREATE OR REPALACE TABLE ", "CREATE TEMP TABLE ", "CREATE TEMP FUNCTION "
-  ];
+  const SUGGEST_INDEX_CACHE = new Map();
+  const SUGGEST_INDEX_LOADING = new Map();
 
   function getCodeHighlightApi() {
     return (window.zizPackages && window.zizPackages.core && window.zizPackages.core.codeHighlight)
@@ -46,10 +36,122 @@
     });
   }
 
-  function getLanguageHintWords(language) {
-    if (language === "python") return PYTHON_FALLBACK_HINTS;
-    if (language === "sql") return SQL_FALLBACK_HINTS;
+  function getBridgeApi() {
+    return (window.zizPackages && window.zizPackages.core && window.zizPackages.core.bridge)
+      || window.zizBridge
+      || null;
+  }
+
+  function normalizeSuggestEntries(rawEntries) {
+    const entries = Array.isArray(rawEntries) ? rawEntries : [];
+    const normalized = [];
+    entries.forEach((entry) => {
+      if (!entry || typeof entry !== "object") return;
+      const index = String(entry.index || "").trim();
+      if (!index) return;
+      const rawSuggestWord = entry.suggest_word;
+      const suggestWords = Array.isArray(rawSuggestWord)
+        ? rawSuggestWord.map((item) => String(item || "").trim()).filter(Boolean)
+        : [String(rawSuggestWord || "").trim()].filter(Boolean);
+      if (!suggestWords.length) return;
+      normalized.push({
+        index,
+        suggestWords
+      });
+    });
+    return normalized;
+  }
+
+  function parseSuggestIndexYaml(text) {
+    const parser = window.jsyaml;
+    if (!parser || typeof parser.load !== "function") return [];
+    try {
+      const parsed = parser.load(String(text || "")) || [];
+      if (Array.isArray(parsed)) return normalizeSuggestEntries(parsed);
+      if (parsed && typeof parsed === "object" && Array.isArray(parsed.entries)) {
+        return normalizeSuggestEntries(parsed.entries);
+      }
+    } catch (_) {
+      return [];
+    }
     return [];
+  }
+
+  async function fetchSuggestIndexFromStatic(connectorId) {
+    const fileName = `suggest_index_${connectorId}.yml`;
+    const candidates = [
+      `/config/suggest_index/${fileName}`,
+      `/static/config/suggest_index/${fileName}`,
+      `./config/suggest_index/${fileName}`
+    ];
+    for (const path of candidates) {
+      try {
+        const response = await fetch(path, { cache: "no-store" });
+        if (!response.ok) continue;
+        const text = await response.text();
+        const entries = parseSuggestIndexYaml(text);
+        if (entries.length) return entries;
+      } catch (_) {
+        // try next
+      }
+    }
+    return [];
+  }
+
+  async function loadSuggestEntriesForConnector(connectorId) {
+    const normalizedConnector = String(connectorId || "").trim();
+    if (!normalizedConnector) return [];
+    if (SUGGEST_INDEX_CACHE.has(normalizedConnector)) {
+      return SUGGEST_INDEX_CACHE.get(normalizedConnector) || [];
+    }
+    if (SUGGEST_INDEX_LOADING.has(normalizedConnector)) {
+      return SUGGEST_INDEX_LOADING.get(normalizedConnector);
+    }
+
+    const promise = (async () => {
+      const bridgeApi = getBridgeApi();
+      if (bridgeApi?.available?.()) {
+        try {
+          const payload = await bridgeApi.call("app.getSuggestIndex", { connector: normalizedConnector });
+          const entries = normalizeSuggestEntries(payload?.entries);
+          SUGGEST_INDEX_CACHE.set(normalizedConnector, entries);
+          return entries;
+        } catch (_) {
+          SUGGEST_INDEX_CACHE.set(normalizedConnector, []);
+          return [];
+        }
+      }
+      const entries = await fetchSuggestIndexFromStatic(normalizedConnector);
+      if (entries.length) {
+        SUGGEST_INDEX_CACHE.set(normalizedConnector, entries);
+      }
+      return entries;
+    })();
+
+    SUGGEST_INDEX_LOADING.set(normalizedConnector, promise);
+    try {
+      return await promise;
+    } finally {
+      SUGGEST_INDEX_LOADING.delete(normalizedConnector);
+    }
+  }
+
+  function buildItemsFromSuggestEntries(prefix, entries) {
+    const loweredPrefix = String(prefix || "").toLowerCase();
+    const items = [];
+    const seen = new Set();
+    (entries || []).forEach((entry) => {
+      const index = String(entry?.index || "");
+      if (!index.toLowerCase().startsWith(loweredPrefix)) return;
+      const suggestWords = Array.isArray(entry?.suggestWords) ? entry.suggestWords : [];
+      suggestWords.forEach((word) => {
+        const text = String(word || "").trim();
+        if (!text || seen.has(text)) return;
+        seen.add(text);
+        items.push({ label: text, insertText: text });
+      });
+    });
+    return items;
   }
 
   function replaceRange(input, start, end, nextText) {
@@ -62,7 +164,8 @@
     input.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
-  function getCompletionContext(input, language, variableNames) {
+  function getCompletionContext(input, variableNames, suggestEntries, options = {}) {
+    const includeIndexSuggest = !!options.includeIndexSuggest;
     const text = String(input.value || "");
     const caret = input.selectionStart || 0;
     const left = text.slice(0, caret);
@@ -70,8 +173,9 @@
     const variableMatch = left.match(/\{\{\s*([a-zA-Z0-9_]*)$/);
     if (variableMatch) {
       const prefix = variableMatch[1] || "";
+      const loweredPrefix = prefix.toLowerCase();
       const items = Array.from(new Set((variableNames || []).filter(Boolean)))
-        .filter((name) => name.startsWith(prefix))
+        .filter((name) => String(name || "").toLowerCase().startsWith(loweredPrefix))
         .map((name) => ({ label: `{{${name}}}`, insertText: `{{${name}}}` }));
       return {
         from: variableMatch.index,
@@ -80,14 +184,13 @@
       };
     }
 
+    if (!includeIndexSuggest) return null;
+
     const wordMatch = left.match(/([A-Za-z_][A-Za-z0-9_]*)$/);
     if (!wordMatch) return null;
 
     const prefix = wordMatch[1] || "";
-    const loweredPrefix = prefix.toLowerCase();
-    const items = getLanguageHintWords(language)
-      .filter((word) => String(word).toLowerCase().startsWith(loweredPrefix))
-      .map((word) => ({ label: String(word), insertText: String(word) }));
+    const items = buildItemsFromSuggestEntries(prefix, suggestEntries);
     if (!items.length) return null;
     return {
       from: caret - prefix.length,
@@ -96,7 +199,7 @@
     };
   }
 
-  function createCompletionController({ input, host, language, variableNames }) {
+  function createCompletionController({ input, host, variableNames, connectorId }) {
     const list = document.createElement("div");
     list.className = "suggest-list is-code-editor is-floating";
     document.body.appendChild(list);
@@ -105,6 +208,8 @@
     let currentItems = [];
     let activeIndex = 0;
     let positionFrameId = 0;
+    let connectorSuggestEntries = [];
+    const normalizedConnectorId = String(connectorId || "").trim();
 
     function hide() {
       if (positionFrameId) {
@@ -118,11 +223,77 @@
       list.innerHTML = "";
     }
 
+    function getCaretViewportRect() {
+      const inputRect = input.getBoundingClientRect();
+      const styles = window.getComputedStyle(input);
+      const mirror = document.createElement("div");
+      const mirrorStyle = mirror.style;
+      mirrorStyle.position = "fixed";
+      mirrorStyle.left = `${inputRect.left}px`;
+      mirrorStyle.top = `${inputRect.top}px`;
+      mirrorStyle.visibility = "hidden";
+      mirrorStyle.pointerEvents = "none";
+      mirrorStyle.whiteSpace = "pre-wrap";
+      mirrorStyle.overflowWrap = "break-word";
+      mirrorStyle.wordBreak = "break-word";
+      mirrorStyle.boxSizing = styles.boxSizing;
+      mirrorStyle.width = `${inputRect.width}px`;
+      mirrorStyle.height = `${inputRect.height}px`;
+      mirrorStyle.padding = styles.padding;
+      mirrorStyle.border = styles.border;
+      mirrorStyle.font = styles.font;
+      mirrorStyle.lineHeight = styles.lineHeight;
+      mirrorStyle.letterSpacing = styles.letterSpacing;
+      mirrorStyle.textTransform = styles.textTransform;
+      mirrorStyle.textIndent = styles.textIndent;
+      mirrorStyle.textDecoration = styles.textDecoration;
+      mirrorStyle.tabSize = styles.tabSize;
+      mirrorStyle.MozTabSize = styles.MozTabSize;
+      mirrorStyle.direction = styles.direction;
+      mirrorStyle.textAlign = styles.textAlign;
+
+      const caret = Number(input.selectionStart || 0);
+      const text = String(input.value || "");
+      const before = text.slice(0, caret);
+      const after = text.slice(caret);
+      mirror.textContent = before;
+      const marker = document.createElement("span");
+      marker.textContent = (after && after[0]) || " ";
+      mirror.appendChild(marker);
+      document.body.appendChild(mirror);
+
+      const markerRect = marker.getBoundingClientRect();
+      const lineHeight = Number.parseFloat(styles.lineHeight) || 20;
+      const rect = {
+        left: markerRect.left - input.scrollLeft,
+        top: markerRect.top - input.scrollTop,
+        height: Number.isFinite(markerRect.height) && markerRect.height > 0 ? markerRect.height : lineHeight
+      };
+      mirror.remove();
+      return rect;
+    }
+
     function positionListNow() {
       if (list.style.display !== "block") return;
-      const rect = host.getBoundingClientRect();
-      list.style.left = `${Math.max(12, rect.left + 8)}px`;
-      list.style.top = `${Math.max(12, rect.bottom - 8)}px`;
+      const viewportPadding = 8;
+      const anchor = (() => {
+        try {
+          return getCaretViewportRect();
+        } catch (_) {
+          const rect = host.getBoundingClientRect();
+          return { left: rect.left + 8, top: rect.bottom - 8, height: 20 };
+        }
+      })();
+      const listRect = list.getBoundingClientRect();
+      const maxLeft = Math.max(viewportPadding, window.innerWidth - listRect.width - viewportPadding);
+      const maxTop = Math.max(viewportPadding, window.innerHeight - listRect.height - viewportPadding);
+      const left = Math.min(Math.max(viewportPadding, anchor.left), maxLeft);
+      let top = anchor.top + Math.max(16, anchor.height) + 4;
+      if (top > maxTop) {
+        top = Math.max(viewportPadding, anchor.top - listRect.height - 4);
+      }
+      list.style.left = `${left}px`;
+      list.style.top = `${top}px`;
     }
 
     function positionList() {
@@ -155,8 +326,13 @@
       positionList();
     }
 
-    function refresh() {
-      const nextContext = getCompletionContext(input, language, variableNames);
+    function refresh(options = {}) {
+      const nextContext = getCompletionContext(
+        input,
+        variableNames,
+        connectorSuggestEntries,
+        { includeIndexSuggest: !!options.includeIndexSuggest }
+      );
       if (!nextContext || !Array.isArray(nextContext.items) || !nextContext.items.length) {
         hide();
         return false;
@@ -175,9 +351,8 @@
     }
 
     function scheduleRefresh() {
-      if (!currentItems.length) return;
       window.requestAnimationFrame(() => {
-        refresh();
+        refresh({ includeIndexSuggest: false });
       });
     }
 
@@ -185,12 +360,23 @@
       if (currentItems.length) {
         return applyItem();
       }
-      return refresh();
+      if (
+        !connectorSuggestEntries.length &&
+        normalizedConnectorId &&
+        (SUGGEST_INDEX_LOADING.has(normalizedConnectorId) || !SUGGEST_INDEX_CACHE.has(normalizedConnectorId))
+      ) {
+        reloadSuggestEntries();
+        return true;
+      }
+      return refresh({ includeIndexSuggest: true });
     }
 
     input.addEventListener("input", scheduleRefresh);
     input.addEventListener("scroll", positionList);
+    input.addEventListener("keyup", positionList);
+    input.addEventListener("click", positionList);
     window.addEventListener("resize", positionList);
+    window.addEventListener("scroll", positionList, true);
     input.addEventListener("blur", () => setTimeout(hide, 150));
     input.addEventListener("keydown", (event) => {
       if (event.key === "ArrowDown" && currentItems.length) {
@@ -222,6 +408,20 @@
         }
       }
     });
+
+    const reloadSuggestEntries = () => loadSuggestEntriesForConnector(connectorId).then((entries) => {
+      connectorSuggestEntries = Array.isArray(entries) ? entries : [];
+      scheduleRefresh();
+    }).catch(() => {
+      connectorSuggestEntries = [];
+    });
+    reloadSuggestEntries();
+
+    const onBridgeReady = () => {
+      if (connectorSuggestEntries.length) return;
+      reloadSuggestEntries();
+    };
+    window.addEventListener("ziz:bridge-ready", onBridgeReady);
 
     return { hide };
   }
@@ -289,7 +489,7 @@
     return { gutter, inner, render, syncScroll };
   }
 
-  function mountCodeEditor({ input, value, language, variableNames, suggestionHost, onCommitChanged }) {
+  function mountCodeEditor({ input, value, language, connectorId, variableNames, suggestionHost, onCommitChanged }) {
     if (!input || !suggestionHost) {
       return Promise.reject(new Error("Textarea host is not available"));
     }
@@ -327,7 +527,7 @@
     createCompletionController({
       input,
       host: suggestionHost,
-      language,
+      connectorId,
       variableNames
     });
 

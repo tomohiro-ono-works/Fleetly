@@ -869,6 +869,15 @@ textarea {
   width: 100%;
 }
 
+.node-data-status-slot.is-inline {
+  margin-left: auto;
+}
+
+.node-data-status-slot.is-inline .node-data-note {
+  padding: 0;
+  white-space: nowrap;
+}
+
 .schema-editor-mode {
   display: inline-flex;
   gap: 4px;
@@ -958,11 +967,20 @@ textarea {
   align-items: center;
 }
 
+.schema-form-header.is-compact,
+.schema-form-row.is-compact {
+  grid-template-columns: minmax(90px, 0.95fr) minmax(90px, 0.95fr) minmax(92px, 110px) 64px;
+}
+
 .schema-form-add-row {
   display: grid;
   grid-template-columns: minmax(90px, 0.85fr) minmax(90px, 0.85fr) minmax(120px, 1fr) minmax(92px, 110px) 64px;
   gap: 6px;
   align-items: center;
+}
+
+.schema-form-add-row.is-compact {
+  grid-template-columns: minmax(90px, 0.95fr) minmax(90px, 0.95fr) minmax(92px, 110px) 64px;
 }
 
 .schema-form-add-row.is-hidden {
@@ -995,6 +1013,14 @@ textarea {
   min-width: 0;
 }
 
+.schema-form-row.is-disabled {
+  opacity: 0.56;
+}
+
+.schema-form-row > input[readonly] {
+  cursor: default;
+}
+
 .schema-form-row .schema-remove-row-btn {
   width: 64px;
   min-width: 64px;
@@ -1017,6 +1043,13 @@ textarea {
   display: block;
   pointer-events: none;
   filter: brightness(0) invert(1);
+}
+
+.schema-form-row .schema-remove-row-btn.is-restore {
+  background: #c0392b;
+  border-color: #c0392b;
+  color: #fff;
+  font-weight: 700;
 }
 
 .filter-builder {

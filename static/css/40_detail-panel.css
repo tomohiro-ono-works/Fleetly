@@ -196,7 +196,7 @@ body[data-home-visible="true"] .detail-panel {
   flex-direction: column;
   overflow: auto;
   width: 100%;
-  background: var(--surface-page);
+  background: #f7f5ff;
   padding: 12px 14px 14px;
 }
 
@@ -205,7 +205,7 @@ body[data-home-visible="true"] .detail-panel {
   flex: 1 1 auto;
   width: 100%;
   margin: 0;
-  background: var(--surface-page);
+  background: transparent;
 }
 
 .flow-layout-page .right-sidebar-content .detail-node {
@@ -227,7 +227,7 @@ body[data-home-visible="true"] .detail-panel {
   flex-direction: column;
   width: 100%;
   padding: 0;
-  background: var(--surface-page);
+  background: transparent;
 }
 
 .flow-layout-page #nodeDetailBottom .node-tab-pane.is-active {
@@ -236,7 +236,7 @@ body[data-home-visible="true"] .detail-panel {
   display: flex;
   flex-direction: column;
   width: 100%;
-  background: var(--surface-page);
+  background: transparent;
 }
 
 .flow-layout-page #nodeDetailBottom .node-tab-pane[data-tab-key="data"].is-active {
@@ -293,8 +293,13 @@ body[data-home-visible="true"] .detail-panel {
   position: sticky;
   top: 0;
   z-index: 4;
-  background: var(--surface-page);
+  background: #e3e3f3;
   border-bottom: 1px solid var(--border-divider);
+}
+
+.flow-layout-page #nodeDetailBottom .schema-form-header__cell {
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .flow-layout-page #nodeDetailBottom .node-data-wrap.is-preview .node-data-table thead th {
@@ -346,7 +351,7 @@ body[data-home-visible="true"] .detail-panel {
 
 .flow-layout-page #nodeDetailBottom .schema-mode-btn.is-active,
 .flow-layout-page #nodeDetailBottom .node-tab-btn.is-active {
-  color: #5332f7;
+  color: #352480;
 }
 
 .flow-layout-page #nodeDetailBottom .node-data-note {
@@ -362,8 +367,8 @@ body[data-home-visible="true"] .detail-panel {
 }
 
 .flow-layout-page #nodeDetailBottom .schema-remove-row-btn {
-  background: #20295c;
-  border-color: #20295c;
+  background: #352480;
+  border-color: #352480;
   color: #ffffff;
 }
 
@@ -713,8 +718,8 @@ body[data-home-visible="true"] .detail-panel {
 }
 
 .flow-layout-page .right-sidebar-content .node-topbar-actions .danger {
-  background: #20295c;
-  border-color: #20295c;
+  background: #352480;
+  border-color: #352480;
   color: var(--surface-page);
 }
 
@@ -829,7 +834,7 @@ body[data-home-visible="true"] .detail-panel {
 .flow-layout-page .right-sidebar-content .node-top-unified-frame {
   border: 1px solid var(--border-default);
   border-radius: 12px;
-  background: #f7f5ff;
+  background: #ffffff;
   padding: 8px 10px;
   margin-bottom: 8px;
 }

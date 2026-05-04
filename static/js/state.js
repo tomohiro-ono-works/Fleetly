@@ -102,6 +102,11 @@ const stateOps = {
       removeLoopRootNode(state, target, index);
       return;
     }
+    if (target.loopOwnerId) {
+      const loopRootId = String(target.loopOwnerId || "");
+      const internalCount = state.nodes.filter((node) => String(node?.loopOwnerId || "") === loopRootId).length;
+      if (internalCount <= 1) return;
+    }
 
     const parentId = target.parentId ?? null;
     const children = getChildren(state, target.id);
@@ -189,6 +194,9 @@ const stateOps = {
     const cloned = [];
     const idMap = new Map();
 
+    const anchorLoopRootId = getLoopRootIdForNode(anchorNode);
+    const containsLoopRoot = orderedSources.some((node) => isLoopRootStateNode(node));
+    if (containsLoopRoot && anchorLoopRootId) return [];
     orderedSources.forEach((source) => {
       const next = cloneStateValue(source);
       const oldId = String(source.id || "");
@@ -198,7 +206,7 @@ const stateOps = {
       const hiddenRefMap = buildHiddenRefReplacements(state, sourceForm, String(next.stepName || "global"));
       next.form = applyHiddenRefReplacements(sourceForm, hiddenRefMap);
       applyHiddenBindingMetaCopies(state, hiddenRefMap);
-      delete next.loopOwnerId;
+      if (next.loopOwnerId) delete next.loopOwnerId;
       next.parentId = null;
       next.parallelOf = null;
       next.parallelOrder = Number(source.parallelOrder) || 1;
@@ -223,6 +231,24 @@ const stateOps = {
       node.mergeParentIds = getMergeParentIds(source)
         .filter((id) => idMap.has(id))
         .map((id) => idMap.get(id));
+      const sourceLoopOwnerId = String(source?.loopOwnerId || "").trim();
+      const sourceIsLoopRoot = isLoopRootStateNode(source);
+      if (sourceIsLoopRoot) {
+        delete node.loopOwnerId;
+        node.nodeType = "loop";
+      } else if (sourceLoopOwnerId) {
+        if (idMap.has(sourceLoopOwnerId)) {
+          node.loopOwnerId = idMap.get(sourceLoopOwnerId);
+        } else if (anchorLoopRootId) {
+          node.loopOwnerId = anchorLoopRootId;
+        } else {
+          delete node.loopOwnerId;
+        }
+      } else if (anchorLoopRootId) {
+        node.loopOwnerId = anchorLoopRootId;
+      } else if (node.loopOwnerId) {
+        delete node.loopOwnerId;
+      }
     });
 
     state.nodes.push(...cloned);
@@ -293,6 +319,27 @@ const stateOps = {
     return created || null;
   },
 
+  createLoopNodeAtAnchor(state, anchorId, options = {}) {
+    const normalizedAnchorId = normalizeAnchorId(anchorId, null);
+    const anchorNode = normalizedAnchorId ? state.nodes.find((item) => item.id === normalizedAnchorId) : null;
+    if (anchorNode && getLoopRootIdForNode(anchorNode)) return null;
+    const created = insertAtAnchor(state, normalizedAnchorId, options);
+    if (!created) return null;
+    const loopDefaults = getLoopNodeDefaults(state.appMode);
+    created.nodeType = "loop";
+    created.connector = loopDefaults.connectorId;
+    created.action = loopDefaults.actionId;
+    created.form = {
+      max_iterations: 30,
+      source_step_id: ""
+    };
+    created.description = "";
+    created.descriptionAuto = true;
+    refreshParallelOfForParent(state, normalizedAnchorId);
+    if (created?.id) setSelectedNodeIdsInternal(state, [created.id]);
+    return created;
+  },
+
   setPendingMergeSource(state, nodeId) {
     const node = state.nodes.find((item) => item.id === nodeId);
     if (!node || isLoopRootStateNode(node) || node.loopOwnerId) {
@@ -341,7 +388,7 @@ const __zizCoreState = __zizPackagesState.core = __zizPackagesState.core || {};
 __zizCoreState.stateOps = stateOps;
 
 function isLoopRootStateNode(node) {
-  return !!node && node.action === "loop_tasks" && !node.loopOwnerId;
+  return !!node && String(node.nodeType || "").trim() === "loop" && !node.loopOwnerId;
 }
 
 function normalizeNodeIdValue(nodeId) {
@@ -379,10 +426,20 @@ function sanitizeSelectedNodeIdsInternal(state) {
 
 function sanitizeNodeIdsForOperation(state, nodeIds) {
   const nodeSet = new Set((Array.isArray(nodeIds) ? nodeIds : []).map((id) => normalizeNodeIdValue(id)).filter(Boolean));
-  return (Array.isArray(state?.nodes) ? state.nodes : [])
+  const baseSelected = (Array.isArray(state?.nodes) ? state.nodes : [])
     .filter((node) => nodeSet.has(normalizeNodeIdValue(node?.id)))
-    .filter((node) => !isLoopRootStateNode(node) && !node?.loopOwnerId)
     .map((node) => normalizeNodeIdValue(node.id));
+  const expanded = new Set(baseSelected);
+  baseSelected.forEach((nodeId) => {
+    const node = (Array.isArray(state?.nodes) ? state.nodes : []).find((item) => normalizeNodeIdValue(item?.id) === nodeId);
+    if (!isLoopRootStateNode(node)) return;
+    (Array.isArray(state?.nodes) ? state.nodes : []).forEach((candidate) => {
+      if (normalizeNodeIdValue(candidate?.loopOwnerId) === nodeId) {
+        expanded.add(normalizeNodeIdValue(candidate?.id));
+      }
+    });
+  });
+  return Array.from(expanded).filter(Boolean);
 }
 
 const CANVAS_COORD_RULES = {
@@ -599,10 +656,24 @@ function removeLoopRootNode(state, target, index) {
   sanitizeSelectedNodeIdsInternal(state);
 }
 
+function getLoopRootIdForNode(node) {
+  if (!node) return null;
+  if (node.loopOwnerId) return String(node.loopOwnerId);
+  if (isLoopRootStateNode(node)) return String(node.id || "");
+  return null;
+}
+
 function insertAtAnchor(state, anchorId, options = {}) {
   const right = resolveRightNode(state, anchorId, options.rightId ?? null);
   const newNode = createNewNode(allocateStepName(state), state.appMode);
+  const anchorNode = anchorId ? state.nodes.find((item) => item.id === anchorId) : null;
+  const anchorLoopRootId = getLoopRootIdForNode(anchorNode);
   newNode.parentId = anchorId;
+  if (anchorNode?.loopOwnerId) {
+    newNode.loopOwnerId = anchorLoopRootId;
+  } else {
+    delete newNode.loopOwnerId;
+  }
   const requestedPosition = normalizeCanvasPositionValue(options.position);
   if (requestedPosition) {
     applyNodeCanvasPosition(newNode, requestedPosition, { snap: true });
@@ -663,7 +734,14 @@ function addParallelAtAnchor(state, anchorId, options = {}) {
   if (!right) return null;
 
   const newNode = createNewNode(allocateStepName(state), state.appMode);
+  const anchorNode = anchorId ? state.nodes.find((item) => item.id === anchorId) : null;
+  const anchorLoopRootId = getLoopRootIdForNode(anchorNode);
   newNode.parentId = anchorId;
+  if (anchorNode?.loopOwnerId) {
+    newNode.loopOwnerId = anchorLoopRootId;
+  } else {
+    delete newNode.loopOwnerId;
+  }
   newNode.parallelOrder = getNextChildOrder(state, anchorId);
   newNode.parallelOf = right.id;
   const requestedPosition = normalizeCanvasPositionValue(options.position);
@@ -685,9 +763,16 @@ function addParallelAtAnchor(state, anchorId, options = {}) {
 
 function insertExistingNodeAtAnchor(state, movingNode, anchorId, rightId) {
   const right = resolveRightNode(state, anchorId, rightId);
+  const anchorNode = anchorId ? state.nodes.find((item) => item.id === anchorId) : null;
+  const anchorLoopRootId = getLoopRootIdForNode(anchorNode);
 
   movingNode.parentId = anchorId;
   movingNode.parallelOf = null;
+  if (anchorNode?.loopOwnerId) {
+    movingNode.loopOwnerId = anchorLoopRootId;
+  } else {
+    delete movingNode.loopOwnerId;
+  }
 
   if (!right) {
     movingNode.parallelOrder = getNextChildOrder(state, anchorId);
@@ -718,10 +803,17 @@ function insertExistingNodeAtAnchor(state, movingNode, anchorId, rightId) {
 function addExistingParallelAtAnchor(state, movingNode, anchorId, rightId) {
   const right = resolveRightNode(state, anchorId, rightId);
   if (!right) return false;
+  const anchorNode = anchorId ? state.nodes.find((item) => item.id === anchorId) : null;
+  const anchorLoopRootId = getLoopRootIdForNode(anchorNode);
 
   movingNode.parentId = anchorId;
   movingNode.parallelOrder = getNextChildOrder(state, anchorId);
   movingNode.parallelOf = right.id;
+  if (anchorNode?.loopOwnerId) {
+    movingNode.loopOwnerId = anchorLoopRootId;
+  } else {
+    delete movingNode.loopOwnerId;
+  }
 
   state.nodes.push(movingNode);
   refreshParallelOfForParent(state, anchorId);
@@ -859,6 +951,7 @@ function collectRelatedNodeIds(state, nodeId) {
 function canMoveNodeToTarget(state, nodeId, target) {
   const node = state.nodes.find((item) => item.id === nodeId);
   if (!node) return false;
+  const movingLoopRootId = getLoopRootIdForNode(node);
 
   const relatedIds = collectRelatedNodeIds(state, nodeId);
   if (target.anchorId && relatedIds.has(target.anchorId)) return false;
@@ -873,6 +966,15 @@ function canMoveNodeToTarget(state, nodeId, target) {
   if (target.rightId) {
     const rightExists = state.nodes.some((item) => item.id === target.rightId);
     if (!rightExists) return false;
+  }
+
+  const anchorNode = target.anchorId ? state.nodes.find((item) => item.id === target.anchorId) : null;
+  const targetLoopRootId = getLoopRootIdForNode(anchorNode);
+  if (node.loopOwnerId) {
+    return targetLoopRootId === movingLoopRootId;
+  }
+  if (isLoopRootStateNode(node)) {
+    return !targetLoopRootId;
   }
 
   return true;
@@ -911,6 +1013,20 @@ function getDefaultFlowName(appMode) {
   const cfg = getConfigObject();
   const mode = cfg.modes?.[normalizeAppMode(appMode)] || null;
   return String(mode?.defaultFlowName || "フロー１");
+}
+
+function getModeNodeDefaults(appMode) {
+  const cfg = getConfigObject();
+  const mode = cfg.modes?.[normalizeAppMode(appMode)] || null;
+  const defaults = (mode && typeof mode.nodeDefaults === "object") ? mode.nodeDefaults : {};
+  return {
+    initialConnectorId: String(defaults.initialConnectorId || "").trim(),
+    initialActionId: String(defaults.initialActionId || "").trim(),
+    preferredConnectorId: String(defaults.preferredConnectorId || "").trim(),
+    preferredActionId: String(defaults.preferredActionId || "").trim(),
+    loopConnectorId: String(defaults.loopConnectorId || "").trim(),
+    loopActionId: String(defaults.loopActionId || "").trim(),
+  };
 }
 
 function getDefaultConnectorId(appMode) {
@@ -956,8 +1072,9 @@ function getPreferredActionId(connectorId, preferredActionId) {
 }
 
 function createDefaultNode(appMode) {
-  const connectorId = getPreferredConnectorId(appMode, "OperationConnector");
-  const actionId = getPreferredActionId(connectorId, "define_values");
+  const defaults = getModeNodeDefaults(appMode);
+  const connectorId = getPreferredConnectorId(appMode, defaults.initialConnectorId);
+  const actionId = getPreferredActionId(connectorId, defaults.initialActionId);
   return {
     id: createId(),
     connector: connectorId,
@@ -969,13 +1086,15 @@ function createDefaultNode(appMode) {
     mergeParentIds: [],
     parallelOf: null,
     parallelOrder: 1,
-    outputs: ["step1"]
+    outputs: ["step1"],
+    nodeType: "task"
   };
 }
 
 function createNewNode(stepName, appMode) {
-  const connectorId = getPreferredConnectorId(appMode, "BQConnector");
-  const actionId = getPreferredActionId(connectorId, "execute_sql");
+  const defaults = getModeNodeDefaults(appMode);
+  const connectorId = getPreferredConnectorId(appMode, defaults.preferredConnectorId);
+  const actionId = getPreferredActionId(connectorId, defaults.preferredActionId);
   return {
     id: createId(),
     stepName: stepName || "",
@@ -988,8 +1107,16 @@ function createNewNode(stepName, appMode) {
     mergeParentIds: [],
     parallelOf: null,
     parallelOrder: 1,
-    outputs: []
+    outputs: [],
+    nodeType: "task"
   };
+}
+
+function getLoopNodeDefaults(appMode) {
+  const defaults = getModeNodeDefaults(appMode);
+  const connectorId = getPreferredConnectorId(appMode, defaults.loopConnectorId || "OperationConnector");
+  const actionId = getPreferredActionId(connectorId, defaults.loopActionId || "loop_tasks");
+  return { connectorId, actionId };
 }
 
 function allocateStepName(state) {

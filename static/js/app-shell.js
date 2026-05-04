@@ -14,6 +14,7 @@
     formBuilder: body.dataset.formBuilderUrl || "./form-builder.html",
     settings: body.dataset.settingsUrl || "./settings.html",
   };
+  const runtimeVersion = new URLSearchParams(window.location.search).get("v") || "";
 
   function current(name) {
     const active = name === "dataflow" ? isDataflow : (page === name && !isDataflow);
@@ -143,7 +144,11 @@
 
   function toAbsoluteUrl(url) {
     try {
-      return new URL(String(url || ""), window.location.href).toString();
+      const target = new URL(String(url || ""), window.location.href);
+      if (runtimeVersion && !target.searchParams.has("v")) {
+        target.searchParams.set("v", runtimeVersion);
+      }
+      return target.toString();
     } catch (_) {
       return String(url || "");
     }

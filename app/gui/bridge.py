@@ -172,6 +172,8 @@ class BridgeRuntime:
                 return self._success_response(message_id, message_type, self._handle_app_google_auth_login(payload))
             if message_type == "app.googleAuthStatus":
                 return self._success_response(message_id, message_type, self._handle_app_google_auth_status(payload))
+            if message_type == "app.getSuggestIndex":
+                return self._success_response(message_id, message_type, self._handle_app_get_suggest_index(payload))
             if message_type == "flow.list":
                 return self._success_response(message_id, message_type, self._handle_flow_list(payload))
             if message_type == "flow.load":
@@ -233,6 +235,7 @@ class BridgeRuntime:
                 "app.windowControl",
                 "app.googleAuthLogin",
                 "app.googleAuthStatus",
+                "app.getSuggestIndex",
                 "flow.list",
                 "flow.load",
                 "flow.save",
@@ -255,6 +258,55 @@ class BridgeRuntime:
                 "web_allowlist_count": len(policies.get("web", {}).get("allowlist", [])),
             },
             "runtime_context_defaults": self._build_runtime_context_defaults(),
+        }
+
+    def _handle_app_get_suggest_index(self, payload):
+        connector_name = _safe_text((payload or {}).get("connector"))
+        if not connector_name:
+            raise ValueError("connector は必須です。")
+        if not re.fullmatch(r"[A-Za-z0-9_]+", connector_name):
+            raise ValueError("connector は英数字と _ のみ使用できます。")
+
+        suggest_dir = self.base_dir / "config" / "suggest_index"
+        suggest_path = suggest_dir / f"suggest_index_{connector_name}.yml"
+        if not suggest_path.exists():
+            return {
+                "connector": connector_name,
+                "entries": [],
+                "path": str(suggest_path),
+                "loaded": False,
+            }
+
+        with suggest_path.open("r", encoding="utf-8") as handle:
+            raw = yaml.safe_load(handle) or []
+
+        entries = []
+        rows = raw.get("entries") if isinstance(raw, dict) else raw
+        if not isinstance(rows, list):
+            raise ValueError("suggest index YAML の形式が不正です。")
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            index = _safe_text(row.get("index"))
+            if not index:
+                continue
+            suggest_word = row.get("suggest_word")
+            if isinstance(suggest_word, list):
+                words = [_safe_text(item) for item in suggest_word if _safe_text(item)]
+            else:
+                word = _safe_text(suggest_word)
+                words = [word] if word else []
+            if not words:
+                continue
+            entries.append({
+                "index": index,
+                "suggest_word": words if len(words) > 1 else words[0],
+            })
+        return {
+            "connector": connector_name,
+            "entries": entries,
+            "path": str(suggest_path),
+            "loaded": True,
         }
 
     def _resolve_runtime_user_name(self):

@@ -36,8 +36,8 @@
   --flow-control-text-active: #fffefe;
 
   /* Main */
-  --brand-700: #5332f7;
-  --brand-600: #5332f7;
+  --brand-700: #352480;
+  --brand-600: #352480;
   --brand-100: #ebe6ff;
   --interactive-hover-bg: #f4f1ff;
   --surface-header: #5a41da;
@@ -58,7 +58,7 @@
   /* Neutral UI */
   --border-default: #c8cad8;
   --border-node: #d8dae6;
-  --border-hover: #a6abc2;
+  --border-hover: #ebe6ff;
   --border-divider: #e4e6ef;
   --text-ui: #4b4e63;
   --surface-strong: #4b4e63;

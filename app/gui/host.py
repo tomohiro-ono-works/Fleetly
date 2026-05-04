@@ -47,7 +47,7 @@ def run_webview_app(form_html_path, debug=False):
     _set_windows_app_user_model_id()
     logger.info("[gui-startup] phase=environment_configured elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     try:
-        from PySide6.QtCore import QObject, QEvent, QRect, Qt, QUrl, Signal, Slot
+        from PySide6.QtCore import QObject, QEvent, QRect, Qt, QTimer, QUrl, Signal, Slot
         from PySide6.QtGui import QAction, QIcon, QKeySequence
         from PySide6.QtWebChannel import QWebChannel
         from PySide6.QtWidgets import (
@@ -154,6 +154,7 @@ def run_webview_app(form_html_path, debug=False):
         def __init__(self):
             super().__init__()
             self._resize_handles = []
+            self._overlay_sync_callback = None
 
         def install_resize_handles(self):
             if self._resize_handles:
@@ -175,6 +176,8 @@ def run_webview_app(form_html_path, debug=False):
         def resizeEvent(self, event):
             super().resizeEvent(event)
             self._layout_resize_handles()
+            if callable(self._overlay_sync_callback):
+                self._overlay_sync_callback()
 
         def changeEvent(self, event):
             super().changeEvent(event)
@@ -210,6 +213,96 @@ def run_webview_app(form_html_path, debug=False):
                 if not hidden:
                     handle.raise_()
 
+        def set_overlay_sync_callback(self, callback):
+            self._overlay_sync_callback = callback if callable(callback) else None
+
+    class NativeRetryOverlay(QWidget):
+        def __init__(self, parent, retry_callback):
+            super().__init__(parent)
+            self._retry_callback = retry_callback
+            self._message_label = QLabel("画面の読み込みに失敗しました。", self)
+            self._message_label.setWordWrap(True)
+            self._message_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            self._message_label.setObjectName("nativeRetryMessage")
+            self._retry_button = QPushButton("再試行", self)
+            self._retry_button.setObjectName("nativeRetryButton")
+            self._retry_button.clicked.connect(self._on_retry_clicked)
+            self.setObjectName("nativeRetryOverlay")
+            self._build_ui()
+            self.hide()
+
+        def _build_ui(self):
+            root_layout = QVBoxLayout(self)
+            root_layout.setContentsMargins(24, 24, 24, 24)
+            root_layout.setSpacing(0)
+            root_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+            card = QWidget(self)
+            card.setObjectName("nativeRetryCard")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(20, 20, 20, 20)
+            card_layout.setSpacing(12)
+
+            title_label = QLabel("表示に失敗しました", card)
+            title_label.setObjectName("nativeRetryTitle")
+            title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            card_layout.addWidget(title_label)
+            card_layout.addWidget(self._message_label)
+            card_layout.addWidget(self._retry_button, 0, Qt.AlignmentFlag.AlignCenter)
+
+            root_layout.addWidget(card, 0, Qt.AlignmentFlag.AlignCenter)
+            self.setStyleSheet(
+                """
+                QWidget#nativeRetryOverlay {
+                    background: rgba(9, 12, 20, 0.58);
+                }
+                QWidget#nativeRetryCard {
+                    background: #ffffff;
+                    border: 1px solid #d8dce7;
+                    border-radius: 14px;
+                    min-width: 320px;
+                    max-width: 520px;
+                }
+                QLabel#nativeRetryTitle {
+                    color: #111827;
+                    font-size: 18px;
+                    font-weight: 700;
+                }
+                QLabel#nativeRetryMessage {
+                    color: #334155;
+                    font-size: 13px;
+                }
+                QPushButton#nativeRetryButton {
+                    min-width: 120px;
+                    padding: 8px 14px;
+                    border-radius: 999px;
+                    border: 1px solid #1d4ed8;
+                    background: #eff6ff;
+                    color: #1d4ed8;
+                    font-weight: 700;
+                }
+                """
+            )
+
+        def sync_geometry(self):
+            parent_widget = self.parentWidget()
+            if parent_widget is None:
+                return
+            self.setGeometry(parent_widget.rect())
+            self.raise_()
+
+        def show_error(self, message_text):
+            text = str(message_text or "").strip() or "画面の読み込みに失敗しました。"
+            self._message_label.setText(text)
+            self.sync_geometry()
+            self.show()
+            self.raise_()
+
+        def _on_retry_clicked(self):
+            self.hide()
+            if callable(self._retry_callback):
+                self._retry_callback()
+
     app = QApplication.instance() or QApplication([])
     logger.info("[gui-startup] phase=app_ready elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     icon_dir = html_path.parent / "icons"
@@ -226,6 +319,16 @@ def run_webview_app(form_html_path, debug=False):
     window.resize(1440, 960)
     if icon_path.exists():
         window.setWindowIcon(QIcon(str(icon_path)))
+    startup_placeholder = QWidget(window)
+    startup_placeholder.setStyleSheet("background: #0b0f1a;")
+    window.setCentralWidget(startup_placeholder)
+    window.install_resize_handles()
+    window.show()
+    app.processEvents()
+    logger.info(
+        "[gui-startup] phase=window_shown_native elapsed_ms=%s",
+        round((time.perf_counter() - startup_started) * 1000, 1),
+    )
 
     view = QWebEngineView(window)
     view.setContextMenuPolicy(
@@ -234,13 +337,16 @@ def run_webview_app(form_html_path, debug=False):
 
     profile = QWebEngineProfile("zizai-webview", view)
     try:
-        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.NoCache)
-        profile.clearHttpCache()
+        profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
     except Exception:
-        logger.debug("WebView HTTPキャッシュ無効化に失敗しました。", exc_info=True)
+        logger.debug("WebView HTTPキャッシュ設定に失敗しました。", exc_info=True)
     profile.setUrlRequestInterceptor(LockedDownRequestInterceptor(html_path.parent, html_path))
     page = LockedDownPage(profile, html_path.parent, html_path, view)
     view.setPage(page)
+    logger.info(
+        "[gui-startup] phase=webengine_objects_ready elapsed_ms=%s",
+        round((time.perf_counter() - startup_started) * 1000, 1),
+    )
     devtools_window = None
     devtools_view = None
     devtools_page = None
@@ -611,16 +717,84 @@ def run_webview_app(form_html_path, debug=False):
     page.setWebChannel(channel)
     logger.info("[gui-startup] phase=bridge_ready elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
 
-    view.setUrl(QUrl.fromLocalFile(str(html_path)))
+    retry_state = {
+        "attempts": 0,
+    }
+    startup_version = str(int(html_path.stat().st_mtime))
+    target_url = QUrl.fromLocalFile(str(html_path))
+    target_url.setQuery(f"v={startup_version}")
+    retry_overlay = None
+    load_timeout_timer = QTimer(window)
+    load_timeout_timer.setSingleShot(True)
+    load_timeout_timer.setInterval(8000)
+
+    def load_main_page():
+        retry_state["attempts"] += 1
+        logger.info("[gui-startup] phase=page_load_attempt attempt=%s", retry_state["attempts"])
+        load_timeout_timer.stop()
+        load_timeout_timer.start()
+        view.setUrl(target_url)
+
+    def show_retry_overlay_for_load_failure():
+        if retry_overlay is None:
+            return
+        retry_overlay.show_error("画面の初期化に失敗しました。再試行してください。")
+        logger.error("[gui-startup] phase=page_load_failed attempt=%s", retry_state["attempts"])
+
+    def handle_load_finished(ok):
+        load_timeout_timer.stop()
+        if ok:
+            if retry_overlay is not None:
+                retry_overlay.hide()
+            logger.info("[gui-startup] phase=page_loaded attempt=%s", retry_state["attempts"])
+            logger.info(
+                "[gui-startup] phase=home_ready attempt=%s elapsed_ms=%s",
+                retry_state["attempts"],
+                round((time.perf_counter() - startup_started) * 1000, 1),
+            )
+            return
+        show_retry_overlay_for_load_failure()
+
+    def handle_load_timeout():
+        if retry_overlay is None:
+            return
+        retry_overlay.show_error("初期化がタイムアウトしました。再試行してください。")
+        logger.error("[gui-startup] phase=page_load_timeout attempt=%s", retry_state["attempts"])
+
+    def handle_render_process_terminated(termination_status, exit_code):
+        if retry_overlay is None:
+            return
+        status_text = str(termination_status)
+        retry_overlay.show_error("表示プロセスが停止しました。再試行してください。")
+        logger.error(
+            "[gui-startup] phase=render_process_terminated status=%s exit_code=%s",
+            status_text,
+            exit_code,
+        )
+
+    page.loadFinished.connect(handle_load_finished)
+    page.renderProcessTerminated.connect(handle_render_process_terminated)
+    load_timeout_timer.timeout.connect(handle_load_timeout)
+
     window.setCentralWidget(view)
-    window.install_resize_handles()
+    logger.info(
+        "[gui-startup] phase=webview_attached elapsed_ms=%s",
+        round((time.perf_counter() - startup_started) * 1000, 1),
+    )
+    retry_overlay = NativeRetryOverlay(window, load_main_page)
+    retry_overlay.sync_geometry()
+    window.set_overlay_sync_callback(retry_overlay.sync_geometry)
+    QTimer.singleShot(0, load_main_page)
     if debug:
         debug_menu = window.menuBar().addMenu("Debug")
         open_devtools_action = QAction("Open DevTools", window)
         open_devtools_action.setShortcuts([QKeySequence("F12"), QKeySequence("Ctrl+Shift+I")])
         open_devtools_action.triggered.connect(show_devtools)
         debug_menu.addAction(open_devtools_action)
-    window.show()
-    logger.info("[gui-startup] phase=window_shown elapsed_ms=%s html=%s", round((time.perf_counter() - startup_started) * 1000, 1), html_path.name)
+    logger.info(
+        "[gui-startup] phase=event_loop_start elapsed_ms=%s html=%s",
+        round((time.perf_counter() - startup_started) * 1000, 1),
+        html_path.name,
+    )
 
     return app.exec()

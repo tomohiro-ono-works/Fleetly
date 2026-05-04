@@ -39,6 +39,14 @@ const CONFIG = {
       label: "データフロー",
       defaultFlowName: "データフロー１",
       fileExtension: ".zizd",
+      nodeDefaults: {
+        initialConnectorId: "OperationConnector",
+        initialActionId: "define_values",
+        preferredConnectorId: "BQConnector",
+        preferredActionId: "execute_sql",
+        loopConnectorId: "OperationConnector",
+        loopActionId: "loop_tasks"
+      },
         connectorIds: [
           "BQConnector",
           "DummyConnector",
@@ -62,6 +70,12 @@ const CONFIG = {
       label: "クエリビルダー",
       defaultFlowName: "クエリビルダー１",
       fileExtension: ".zizq",
+      nodeDefaults: {
+        initialConnectorId: "BQConnector",
+        initialActionId: "execute_sql",
+        preferredConnectorId: "BQConnector",
+        preferredActionId: "execute_sql"
+      },
       connectorIds: [
         "BQConnector"
       ]
@@ -69,21 +83,21 @@ const CONFIG = {
   },
 
   connectors: [
-    { id: "DummyConnector",           label: "ダミー", exportId: "dummy_connector"},
+    { id: "DummyConnector",           label: "ダミー", exportId: "dummy_connector", icon: "./icons/chess_pawn.svg"},
     { id: "BQConnector",              label: "BigQuery", exportId: "bigquery_connector"},
     { id: "ExcelConnector",           label: "Excel", exportId: "excel_connector"},
     { id: "CSVConnector",             label: "CSV", exportId: "csv_connector"},
     { id: "PythonConnector",          label: "Python実行", exportId: "python_connector"},
     { id: "RpaSlackConnector",        label: "Slack操作", exportId: "rpa_slack_connector"},
     { id: "OutlookConnector",         label: "Outlook", exportId: "outlook_connector"},
-    { id: "WebConnector",             label: "Web操作", exportId: "web_connector"},
+    { id: "WebConnector",             label: "Web操作", exportId: "web_connector", icon: "./icons/web.svg"},
     { id: "WindowsConnector",             label: "Windows操作", exportId: "windows_connector"},
 
     { id: "PlotlyConnector",          label: "Plotly", exportId: "plotly_connector" },
     { id: "PPTConnector",             label: "PowerPoint", exportId: "ppt_connector" },
     { id: "OperationConnector",       label: "操作", exportId: "operation_connector"},
-    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector", category: "data"},
-    { id: "VectorConnector",          label: "VectorDB", exportId: "vector_connector"},
+    { id: "DataintegrationConnector", label: "データ加工", exportId: "dataintegration_connector", category: "data", icon: "./icons/brick.svg"},
+    { id: "VectorConnector",          label: "VectorDB", exportId: "vector_connector", icon: "./icons/vectordb.svg"},
     { id: "APIConnector",             label: "API実行", exportId: "api_connector"},
 
   ],
@@ -149,7 +163,7 @@ const CONFIG = {
     ],
     OperationConnector: [
       { id: "define_values", label: "変数定義" , rpaType: "Transform"},
-      { id: "loop_tasks", label: "繰り返し処理" , rpaType: "Transform"},
+      { id: "loop_tasks", label: "繰り返し処理" , rpaType: "Transform", nodeType: "loop" },
       { id: "get_files", label: "フォルダ内のファイルを取得" , rpaType: "Transform" },
       { id: "rename_files", label: "ファイル名を変更" , rpaType: "Transform"},
       { id: "execute_move", label: "ファイル移動" , rpaType: "Transform"}
@@ -238,7 +252,8 @@ const CONFIG = {
     "BQConnector.execute_sql": [
       { key:"google_auth", label:"認証", kind:"google-auth-login", buttonLabel:"Googleログイン" },
       { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
-      { key:"sql", label:"SQL", kind:"textarea", codeLanguage:"sql", required:true, allowVars:true, placeholder:"SELECT ...\nFROM ..." }
+      { key:"sql", label:"SQL", kind:"textarea", codeLanguage:"sql", required:true, allowVars:true, placeholder:"SELECT ...\nFROM ..." },
+      { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true, schema_autoextract:true }
     ],
 
     "BQConnector.execute_sql_file": [
@@ -253,9 +268,9 @@ const CONFIG = {
       { key:"project_id", label:"プロジェクト", kind:"combo", default:project_options[0], options:project_options, required:true},
       { key:"dataset_id", label:"データセット", kind:"combo", default:dataset_options[0], options:dataset_options, required:true},
       { key:"table_id", label:"テーブル", kind:"text", required:true, default:"defult_table", allowVars:true },
-      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}", schema_autoload:true, schema_autoload_target:"schema_add_description" },
       { key:"write_disposition", label:"書き込みモード", kind:"combo", required:true, default:"create_or_replace", options:["create_or_replace","create_or_insert"] },
-      { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
+      { key:"schema_add_description", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true, exportKey:"schema" }
     ],
 
     "CSVConnector.read_csv": [
@@ -385,7 +400,8 @@ const CONFIG = {
     ],
 
     "OperationConnector.loop_tasks": [
-      {key:"input_data", label:"繰り返しデータ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" }
+      { key:"source_step_id", label:"繰り返しデータ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
+      { key:"max_iterations", label:"最大反復数", kind:"number", required:false, default:30, min:1 }
     ],
 
     "ShellConnector.execute_bat": [
@@ -545,3 +561,4 @@ window.CONFIG = CONFIG;
 const __zizPackagesConfig = window.zizPackages = window.zizPackages || {};
 const __zizCoreConfig = __zizPackagesConfig.core = __zizPackagesConfig.core || {};
 __zizCoreConfig.CONFIG = CONFIG;
+

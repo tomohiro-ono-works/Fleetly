@@ -5,7 +5,7 @@ header {
   position: sticky;
   top: 0;
   z-index: 120;
-  background: #20295c;
+  background: #352480;
   color: var(--text-primary);
   /* border-bottom: 1px solid var(--border-default); */
   overflow: hidden;
@@ -87,7 +87,7 @@ header .header-icon-btn:disabled img[src$=".svg"] {
 }
 
 #flowName {
-  background: #343c6a; /* 好きな色 */
+  background: #483698; /* 好きな色 */
   color: #ffffff;
-  border: 1px solid #20295c;
+  border: 1px solid #483698;
 }

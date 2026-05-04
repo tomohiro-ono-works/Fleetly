@@ -71,6 +71,7 @@
   const splitDetailLayout = !!detailRoot && !!detailBottomRoot && detailBottomRoot !== detailRoot;
   const bodyDataset = bodyRoot?.dataset || {};
   const urlParams = new URLSearchParams(window.location.search);
+  const runtimeVersion = urlParams.get("v") || "";
   let importInput = null;
   const APP_MODES = CONFIG.modes || {};
   const DEFAULT_APP_MODE = APP_MODES.dataflow ? "dataflow" : (Object.keys(APP_MODES)[0] || "dataflow");
@@ -369,6 +370,7 @@
   let activeRightPanel = "detail";
   let currentRunId = "";
   const runKindById = Object.create(null);
+  const runMetaById = Object.create(null);
   let lastRunSummary = null;
   let stateChangeFrameId = 0;
   let pendingStateChangeOptions = null;
@@ -397,6 +399,36 @@
     if (typeof uiNode.refreshFlowStatus === "function") {
       uiNode.refreshFlowStatus({ root: flowRoot, state });
     }
+  }
+
+  function findNodeByStepId(stepId) {
+    const key = String(stepId || "").trim();
+    if (!key || !Array.isArray(state?.nodes)) return null;
+    return state.nodes.find((node) => String(node?.stepName || "").trim() === key) || null;
+  }
+
+  function setSchemaEditorModeByStep(stepId, mode = "output") {
+    const node = findNodeByStepId(stepId);
+    if (!node) return false;
+    const nextMode = String(mode || "").trim();
+    if (!["input", "json", "output"].includes(nextMode)) return false;
+    if (String(node.__schemaEditorMode || "") === nextMode) return false;
+    node.__schemaEditorMode = nextMode;
+    return true;
+  }
+
+  function getSelectedNode() {
+    const selectedNodeId = String(state?.selectedNodeId || "").trim();
+    if (!selectedNodeId || !Array.isArray(state?.nodes)) return null;
+    return state.nodes.find((node) => String(node?.id || "").trim() === selectedNodeId) || null;
+  }
+
+  function setRunAllEditLock(locked) {
+    if (!state || typeof state !== "object") return false;
+    const next = !!locked;
+    if (!!state.__runAllRunning === next) return false;
+    state.__runAllRunning = next;
+    return true;
   }
 
   function clearStepStatusesForVisuals() {
@@ -643,6 +675,14 @@
     const key = String(stepId || "").trim();
     if (!key) return;
     pendingStepStatuses[key] = String(status || "");
+    const normalizedStatus = String(status || "").trim().toLowerCase();
+    if (normalizedStatus === "error") {
+      const changed = setSchemaEditorModeByStep(key, "output");
+      const selectedNode = getSelectedNode();
+      if (changed && selectedNode && String(selectedNode.stepName || "").trim() === key) {
+        onStateChanged({ history: false });
+      }
+    }
     if (stepStatusFlushTimer) return;
     stepStatusFlushTimer = window.setTimeout(() => {
       stepStatusFlushTimer = 0;
@@ -852,7 +892,11 @@
 
   function toAbsolutePageUrl(relativeUrl) {
     try {
-      return new URL(String(relativeUrl || ""), window.location.href).toString();
+      const target = new URL(String(relativeUrl || ""), window.location.href);
+      if (runtimeVersion && !target.searchParams.has("v")) {
+        target.searchParams.set("v", runtimeVersion);
+      }
+      return target.toString();
     } catch (_) {
       return String(relativeUrl || "");
     }
@@ -863,6 +907,9 @@
     if (normalized === "dataflow" || normalized === "dataflow") {
       const dataflowUrl = bodyDataset.dataflowUrl || "./dataflow.html";
       const target = new URL(dataflowUrl, window.location.href);
+      if (runtimeVersion && !target.searchParams.has("v")) {
+        target.searchParams.set("v", runtimeVersion);
+      }
       if (normalized === "dataflow") {
         target.searchParams.set("mode", "dataflow");
       } else {
@@ -1031,6 +1078,57 @@
       .filter(Boolean);
   }
 
+  function getFormFieldParamKey(field) {
+    const raw = field?.paramKey ?? field?.exportKey ?? field?.export_key ?? field?.key;
+    const key = String(raw || "").trim();
+    return key || String(field?.key || "").trim();
+  }
+
+  function sanitizeFieldValueForExport(field, value) {
+    const fieldKey = String(field?.key || "").trim();
+    if (!fieldKey.startsWith("schema")) return value;
+    const raw = value;
+    let items = null;
+    if (Array.isArray(raw)) {
+      items = raw;
+    } else if (typeof raw === "string") {
+      const text = raw.trim();
+      if (!text) return raw;
+      try {
+        const parsed = JSON.parse(text);
+        if (Array.isArray(parsed)) items = parsed;
+      } catch (_) {
+        return raw;
+      }
+    } else {
+      return raw;
+    }
+    if (!Array.isArray(items)) return raw;
+    const filtered = items.filter((item) => !(item && typeof item === "object" && item.is_disabled));
+    return JSON.stringify(filtered, null, 2);
+  }
+
+  function mapStepParamsToForm(params, schema) {
+    const rawParams = (params && typeof params === "object") ? params : {};
+    const fields = Array.isArray(schema) ? schema : [];
+    const mapped = {};
+    const usedParamKeys = new Set();
+    fields.forEach((field) => {
+      const formKey = String(field?.key || "").trim();
+      const paramKey = getFormFieldParamKey(field);
+      if (!formKey || !paramKey) return;
+      if (!Object.prototype.hasOwnProperty.call(rawParams, paramKey)) return;
+      mapped[formKey] = rawParams[paramKey];
+      usedParamKeys.add(paramKey);
+    });
+    Object.entries(rawParams).forEach(([key, value]) => {
+      if (usedParamKeys.has(key)) return;
+      if (Object.prototype.hasOwnProperty.call(mapped, key)) return;
+      mapped[key] = value;
+    });
+    return mapped;
+  }
+
   function buildStateFromYaml(data, config) {
     if (!data || typeof data !== "object") {
       throw new Error("YAMLのルート構造が不正です");
@@ -1062,16 +1160,19 @@
       const actionSchema = (config.actions && config.actions[connector]) || [];
       const actionKnown = actionSchema.some((a) => a.id === action);
       const form = actionKnown && step.params && typeof step.params === "object"
-        ? { ...step.params }
+        ? mapStepParamsToForm(step.params, getFormSchema(config, connector, action))
         : {};
       const hasDescription = Object.prototype.hasOwnProperty.call(step, "description");
       const canvasPosition = normalizeCanvasPosition(step.ui_position);
+      const nodeType = String(step.node_type || "task").trim() || "task";
+      const importedLoopOwnerStep = String(step.loop_owner_id || "").trim();
 
       const node = {
         id: createLocalNodeId(),
         stepName,
         connector,
         action,
+        nodeType,
         description: hasDescription ? String(step.description ?? "") : "",
         descriptionAuto: !hasDescription,
         form,
@@ -1081,6 +1182,9 @@
         parallelOrder: 1,
         outputs: [stepName]
       };
+      if (importedLoopOwnerStep) {
+        node._importLoopOwnerStep = importedLoopOwnerStep;
+      }
       if (canvasPosition) node.canvasPosition = canvasPosition;
 
       nodeByStep.set(stepName, node);
@@ -1162,6 +1266,22 @@
       }
     });
 
+    nodes.forEach((node) => {
+      const loopOwnerStep = String(node?._importLoopOwnerStep || "").trim();
+      if (!loopOwnerStep) return;
+      const ownerNode = nodeByStep.get(loopOwnerStep);
+      if (!ownerNode) return;
+      node.loopOwnerId = ownerNode.id;
+    });
+    nodes.forEach((node) => {
+      if (Object.prototype.hasOwnProperty.call(node, "_importLoopOwnerStep")) {
+        delete node._importLoopOwnerStep;
+      }
+      if (!String(node.nodeType || "").trim()) {
+        node.nodeType = "task";
+      }
+    });
+
     const rawMode = String(data.metadata?.mode || "").trim();
     if (!APP_MODES[rawMode]) {
       throw new Error(`metadata.mode が不正です: ${data.metadata?.mode || ""}`);
@@ -1201,21 +1321,12 @@
       for (const field of schema) {
         const hasExplicit = n.form && Object.prototype.hasOwnProperty.call(n.form, field.key);
         const v = hasExplicit ? n.form[field.key] : undefined;
+        const paramKey = getFormFieldParamKey(field);
+        if (!paramKey) continue;
         if (v !== undefined && v !== "") {
-          params[field.key] = v;
+          params[paramKey] = sanitizeFieldValueForExport(field, v);
         } else if (field.default !== undefined) {
-          params[field.key] = field.default;
-        }
-      }
-
-      if (action === "read_excel" && params.path !== undefined && params.file_path === undefined) {
-        params.file_path = params.path;
-        delete params.path;
-      }
-
-      if (action === "write_excel" && typeof params.input_data === "string") {
-        if (params.input_data === stepId && idx > 0) {
-          params.input_data = String(nodes[idx - 1].stepName || `step${idx}`);
+          params[paramKey] = sanitizeFieldValueForExport(field, field.default);
         }
       }
 
@@ -1226,6 +1337,14 @@
         params,
         output_variable: stepId
       };
+      const nodeType = String(n?.nodeType || "").trim();
+      if (nodeType && nodeType !== "task") {
+        exported.node_type = nodeType;
+      }
+      if (n?.loopOwnerId) {
+        const loopOwnerStep = stepNameById.get(String(n.loopOwnerId || ""));
+        if (loopOwnerStep) exported.loop_owner_id = loopOwnerStep;
+      }
       const canvasPosition = normalizeCanvasPosition(n.canvasPosition);
       const description = typeof n.description === "string" ? n.description : "";
 
@@ -1432,6 +1551,35 @@
           errors.push(`${stepId}: ${field.label || field.key}`);
         }
       });
+    });
+    return errors;
+  }
+
+  function normalizeInputDataReference(value) {
+    const text = String(value || "").trim();
+    if (!text) return "";
+    const doubleBraceMatch = text.match(/^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$/);
+    if (doubleBraceMatch) return doubleBraceMatch[1];
+    const braceMatch = text.match(/^\$?\{([a-zA-Z0-9_]+)(?:[^}]*)\}$/);
+    if (braceMatch) return braceMatch[1];
+    return text;
+  }
+
+  function validateInputDataSelfReference(nodes, config) {
+    const errors = [];
+    (Array.isArray(nodes) ? nodes : []).forEach((node, idx) => {
+      const stepId = String(node?.stepName || `step${idx + 1}`).trim();
+      if (!stepId) return;
+      const schema = getFormSchema(config, node.connector, node.action);
+      const inputField = schema.find((field) => String(field?.key || "") === "input_data");
+      if (!inputField) return;
+      const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, inputField.key);
+      const rawValue = hasExplicit ? node.form[inputField.key] : inputField.default;
+      const ref = normalizeInputDataReference(rawValue);
+      if (!ref) return;
+      if (ref === stepId) {
+        errors.push(`${stepId}: input_data に自分自身は指定できません。`);
+      }
     });
     return errors;
   }
@@ -1731,6 +1879,13 @@
       showDialog(`必須パラメータが未入力です。\n\n${requiredErrors.join("\n")}`, { kind: "warning", title: "入力確認" });
       return null;
     }
+    const selfRefErrors = targetNode
+      ? validateInputDataSelfReference([targetNode], activeConfig)
+      : validateInputDataSelfReference(state.nodes, activeConfig);
+    if (selfRefErrors.length) {
+      showDialog(`入力データの参照設定が不正です。\n\n${selfRefErrors.join("\n")}`, { kind: "warning", title: "入力確認" });
+      return null;
+    }
     if (stepStatusFlushTimer) {
       window.clearTimeout(stepStatusFlushTimer);
       stepStatusFlushTimer = 0;
@@ -1741,6 +1896,8 @@
     state.stepStatuses = {};
     if (targetNode) {
       state.stepStatuses[String(targetNode.stepName || "")] = "running";
+      setSchemaEditorModeByStep(targetNode.stepName, "output");
+      onStateChanged({ history: false });
     }
     refreshFlowStatusOnly();
     const request = {
@@ -1754,6 +1911,14 @@
     currentRunId = String(payload?.run_id || "");
     if (currentRunId) {
       runKindById[currentRunId] = targetNode ? "single" : "flow";
+      runMetaById[currentRunId] = {
+        kind: targetNode ? "single" : "flow",
+        stepId: String(targetNode?.stepName || "")
+      };
+      if (!targetNode) {
+        const lockChanged = setRunAllEditLock(true);
+        if (lockChanged) onStateChanged({ history: false });
+      }
     }
     console.info(`[webview-run] accepted source=${source} run_id=${currentRunId}`);
     await logUiEvent("flow.run", {
@@ -1793,10 +1958,18 @@
         console.info(`[run:${payload.run_id || "-"}] 完了: ${summary.flow_name || ""}`);
       }
       const completedRunId = String(payload.run_id || "");
-      const runKind = runKindById[completedRunId] || "flow";
+      const runMeta = runMetaById[completedRunId] || null;
+      const runKind = runMeta?.kind || runKindById[completedRunId] || "flow";
       delete runKindById[completedRunId];
+      delete runMetaById[completedRunId];
       if (runKind === "flow") {
+        const lockChanged = setRunAllEditLock(false);
+        if (lockChanged) onStateChanged({ history: false });
         showRunCompletedDialog(summary, payload.run_id);
+      }
+      if (runKind === "single" && runMeta?.stepId) {
+        const changed = setSchemaEditorModeByStep(runMeta.stepId, "output");
+        if (changed) onStateChanged({ history: false });
       }
       refreshFlowStatusOnly();
       return;
@@ -1805,7 +1978,18 @@
       flushStepStatusUpdates();
       await fetchRunSummary(payload.run_id);
       const failedRunId = String(payload.run_id || "");
+      const runMeta = runMetaById[failedRunId] || null;
+      const runKind = runMeta?.kind || runKindById[failedRunId] || "flow";
+      if (runKind === "flow") {
+        const lockChanged = setRunAllEditLock(false);
+        if (lockChanged) onStateChanged({ history: false });
+      }
       delete runKindById[failedRunId];
+      delete runMetaById[failedRunId];
+      if (runKind === "single" && runMeta?.stepId) {
+        const changed = setSchemaEditorModeByStep(runMeta.stepId, "output");
+        if (changed) onStateChanged({ history: false });
+      }
       refreshFlowStatusOnly();
     }
   }
@@ -2230,6 +2414,14 @@
           );
           return;
         }
+        const selfRefErrors = validateInputDataSelfReference(state.nodes, activeConfig);
+        if (selfRefErrors.length) {
+          showDialog(
+            `入力データの参照設定が不正です。\n\n${selfRefErrors.join("\n")}`,
+            { kind: "warning", title: "入力確認" }
+          );
+          return;
+        }
 
         if (bridgeApi?.available?.()) {
           console.info("[save] bridge.begin");
@@ -2380,3 +2572,4 @@
 
   onStateChanged({ history: false });
 })();
+

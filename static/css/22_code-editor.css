@@ -107,3 +107,12 @@
   color: #6f7c8f;
   font-style: italic;
 }
+
+.cm-token.cm-variable-template {
+  color: #524e00;
+  background: #fff3c0;
+  border-radius: 3px;
+  padding: 0 2px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}

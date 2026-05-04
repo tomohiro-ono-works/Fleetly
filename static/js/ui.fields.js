@@ -251,7 +251,8 @@
     const sourceNode = findNodeByStepName(state, stepRef);
     if (!sourceNode) return "";
 
-    const fromForm = toSchemaText(sourceNode?.form?.schema || "");
+    const sourceSchema = sourceNode?.form?.schema_add_description ?? sourceNode?.form?.schema ?? "";
+    const fromForm = toSchemaText(sourceSchema);
     if (fromForm) return fromForm;
 
     if (!bridgeApi?.available?.()) return "";
@@ -269,16 +270,74 @@
     }
   }
 
-  async function applyBqLoadSchemaFromInputData({ node, state }) {
-    if (String(node?.connector || "") !== "BQConnector") return false;
-    if (String(node?.action || "") !== "load_data") return false;
+  function resolveSchemaAutoloadTargetField(inputField) {
+    if (!inputField || typeof inputField !== "object") return "";
+    if (typeof inputField.schema_autoload === "object") {
+      const fromObject = String(
+        inputField.schema_autoload.target
+        || inputField.schema_autoload.target_field_key
+        || inputField.schema_autoload.field
+        || ""
+      ).trim();
+      if (fromObject) return fromObject;
+    }
+    return String(inputField.schema_autoload_target || "").trim();
+  }
+
+  function shouldApplySchemaAutoload(inputField) {
+    if (!inputField || typeof inputField !== "object") return false;
+    if (typeof inputField.schema_autoload === "object") return true;
+    if (inputField.schema_autoload === true) return true;
+    return false;
+  }
+
+  async function applySchemaAutoloadFromInputData({ node, state, inputField }) {
+    if (!shouldApplySchemaAutoload(inputField)) return false;
+    const targetFieldKey = resolveSchemaAutoloadTargetField(inputField);
+    if (!targetFieldKey) return false;
 
     const schemaText = await resolveSchemaTextFromInputData({ node, state });
     if (!schemaText) return false;
-    if (String(node?.form?.schema || "") === String(schemaText)) return false;
+    const currentText = String(node?.form?.[targetFieldKey] || "");
+    if (currentText === String(schemaText)) return false;
 
-    node.form.schema = schemaText;
+    node.form[targetFieldKey] = schemaText;
     return true;
+  }
+
+  function shouldApplySchemaAutoextract(schemaField) {
+    if (!schemaField || typeof schemaField !== "object") return false;
+    if (typeof schemaField.schema_autoextract === "object") return true;
+    return schemaField.schema_autoextract === true;
+  }
+
+  function buildSchemaMergeKey(item) {
+    const origin = String(item?.origin_name || "").trim();
+    if (origin) return `origin:${origin}`;
+    const next = String(item?.new_name || "").trim();
+    if (next) return `new:${next}`;
+    return "";
+  }
+
+  function mergeSchemaItemsKeepingLocalState(currentItems, detectedItems) {
+    const current = normalizeSimpleSchemaItems(currentItems);
+    const detected = normalizeSimpleSchemaItems(detectedItems);
+    const merged = current.map((item) => ({ ...item }));
+    const seen = new Set();
+    merged.forEach((item) => {
+      const key = buildSchemaMergeKey(item);
+      if (key) seen.add(key);
+    });
+    detected.forEach((item) => {
+      const key = buildSchemaMergeKey(item);
+      if (!key || seen.has(key)) return;
+      merged.push({
+        ...item,
+        is_disabled: false
+      });
+      seen.add(key);
+    });
+    return merged;
   }
 
   function getCodeLanguageClass(field) {
@@ -337,7 +396,8 @@
       origin_name: String(item?.origin_name || item?.name_ja || item?.name_en || ""),
       new_name: String(item?.new_name || item?.name_en || item?.name_ja || ""),
       description: String(item?.description || item?.name_ja || item?.origin_name || ""),
-      ziz_datatype: String(item?.ziz_datatype || "STRING").trim().toUpperCase() || "STRING"
+      ziz_datatype: String(item?.ziz_datatype || "STRING").trim().toUpperCase() || "STRING",
+      is_disabled: !!(item?.is_disabled || item?.disabled)
     }));
   }
 
@@ -358,7 +418,7 @@
   }
 
   function collectSchemaDuplicateMessages(items) {
-    const normalizedItems = normalizeSimpleSchemaItems(items);
+    const normalizedItems = normalizeSimpleSchemaItems(items).filter((item) => !item.is_disabled);
     const originDuplicates = findDuplicateSchemaNames(normalizedItems.map((item) => item.origin_name));
     const newNameDuplicates = findDuplicateSchemaNames(normalizedItems.map((item) => item.new_name));
     const messages = [];
@@ -882,7 +942,12 @@
 
   function renderSchemaEditor({ node, field, current, state, onInputChanged, onCommitChanged }) {
     const parsed = parseSchemaText(current);
-    const initialMode = canUseSchemaFormMode(parsed) ? "input" : "json";
+    const canUseInputMode = canUseSchemaFormMode(parsed);
+    const preferredModeRaw = String(node?.__schemaEditorMode || "").trim();
+    const preferredMode = ["input", "json", "output"].includes(preferredModeRaw) ? preferredModeRaw : "";
+    const initialMode = preferredMode === "input"
+      ? (canUseInputMode ? "input" : "json")
+      : (preferredMode || (canUseInputMode ? "input" : "json"));
     const wrapper = el("div", { class: "schema-editor" }, []);
     const toolbar = el("div", { class: "schema-editor-toolbar" }, []);
     const toolbarMain = el("div", { class: "schema-editor-toolbar-main" }, []);
@@ -903,24 +968,34 @@
     const outputPreviewTable = el("table", { class: "node-data-table" }, [outputPreviewHead, outputPreviewBody]);
     const outputPreviewWrap = el("div", { class: "schema-output-wrap node-data-wrap is-preview" }, [outputPreviewTable]);
     const addRowRow = el("div", { class: "schema-form-add-row" }, [addRowBtn]);
-    const headerRow = el("div", { class: "schema-form-header" }, [
+    const headerCells = [
       el("div", { class: "schema-form-header__cell" }, [document.createTextNode("元フィールド名")]),
       el("div", { class: "schema-form-header__cell" }, [document.createTextNode("新フィールド名")]),
-      el("div", { class: "schema-form-header__cell" }, [document.createTextNode("説明")]),
+    ];
+    const isSchemaSddDescription = String(field?.key || "") === "schema_add_description";
+    if (isSchemaSddDescription) {
+      headerCells.push(el("div", { class: "schema-form-header__cell" }, [document.createTextNode("説明")]));
+    }
+    headerCells.push(
       el("div", { class: "schema-form-header__cell" }, [document.createTextNode("データ型")]),
       el("div", { class: "schema-form-header__cell schema-form-header__cell--action" }, [document.createTextNode("")])
-    ]);
+    );
+    const headerRow = el("div", { class: "schema-form-header" }, headerCells);
     const rowsHost = el("div", { class: "schema-form-rows" }, []);
+    if (!isSchemaSddDescription) {
+      headerRow.classList.add("is-compact");
+      addRowRow.classList.add("is-compact");
+    }
     const textarea = el("textarea", {
       class: "schema-json-input",
       placeholder: '[\n  {\n    "origin_name": "受注日",\n    "new_name": "order_date",\n    "description": "受注日",\n    "ziz_datatype": "DATE"\n  }\n]',
       oninput: (e) => {
-        node.form[field.key] = e.target.value;
+        writeSchemaFormValue(e.target.value);
         if (onInputChanged) onInputChanged();
         syncHint();
       },
       onchange: (e) => {
-        node.form[field.key] = e.target.value;
+        writeSchemaFormValue(e.target.value);
         if (onCommitChanged) onCommitChanged();
         syncHint();
       }
@@ -930,9 +1005,13 @@
     let mode = initialMode;
     let formItems = normalizeSimpleSchemaItems(parsed.items);
 
+    function writeSchemaFormValue(value) {
+      node.form[field.key] = value;
+    }
+
     function syncNodeForm(value, committed) {
       textarea.value = value;
-      node.form[field.key] = value;
+      writeSchemaFormValue(value);
       syncSchemaValidation();
       if (committed) {
         if (onCommitChanged) onCommitChanged();
@@ -942,15 +1021,48 @@
     }
 
     function collectFormItems() {
-      return Array.from(rowsHost.querySelectorAll(".schema-form-row")).map((row) => ({
+      return Array.from(rowsHost.querySelectorAll(".schema-form-row")).map((row, rowIndex) => ({
         origin_name: row.querySelector("[data-schema-key='origin_name']")?.value || "",
         new_name: row.querySelector("[data-schema-key='new_name']")?.value || "",
-        description: row.querySelector("[data-schema-key='description']")?.value || "",
-        ziz_datatype: row.querySelector("[data-schema-key='ziz_datatype']")?.value || "STRING"
+        description: isSchemaSddDescription
+          ? (row.querySelector("[data-schema-key='description']")?.value || "")
+          : String(formItems[rowIndex]?.description || ""),
+        ziz_datatype: row.querySelector("[data-schema-key='ziz_datatype']")?.value || "STRING",
+        is_disabled: String(row.getAttribute("data-schema-disabled") || "").toLowerCase() === "true"
       }));
     }
 
     let outputRequestSeq = 0;
+    let autoextractRequestSeq = 0;
+
+    async function syncSchemaAutoextractFromResult() {
+      if (!shouldApplySchemaAutoextract(field)) return;
+      if (!bridgeApi?.available?.()) return;
+      const stepId = String(node?.stepName || "").trim();
+      if (!stepId) return;
+      const requestSeq = ++autoextractRequestSeq;
+      try {
+        const schemaDto = await bridgeApi.call("result.getSchema", {
+          mode: String(state?.appMode || ""),
+          step_id: stepId
+        });
+        if (requestSeq !== autoextractRequestSeq) return;
+        const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
+        if (!columns.length) return;
+        const mergedItems = mergeSchemaItemsKeepingLocalState(formItems, columns);
+        const before = JSON.stringify(normalizeSimpleSchemaItems(formItems));
+        const after = JSON.stringify(normalizeSimpleSchemaItems(mergedItems));
+        if (before === after) return;
+        formItems = mergedItems;
+        renderFormRows();
+        syncNodeForm(stringifySchemaItems(formItems), true);
+      } catch (error) {
+        if (requestSeq !== autoextractRequestSeq) return;
+        const code = String(error?.code || "").trim();
+        if (code === "E_NOT_FOUND") return;
+        console.warn("schema autoextract failed", error);
+      }
+    }
 
     function setOutputStatus(message = "") {
       const text = String(message || "").trim();
@@ -1032,7 +1144,7 @@
         if (requestSeq !== outputRequestSeq) return;
         const code = String(error?.code || "").trim();
         if (code === "E_NOT_FOUND") {
-          setOutputStatus("まだ実行結果がありません。");
+          setOutputStatus("データ取得エラー: 実行結果が見つかりません。");
           return;
         }
         setOutputStatus(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`);
@@ -1042,24 +1154,20 @@
     function renderFormRows() {
       rowsHost.innerHTML = "";
       if (!formItems.length) {
-        formItems.push({ origin_name: "", new_name: "", description: "", ziz_datatype: "STRING" });
+        formItems.push({ origin_name: "", new_name: "", description: "", ziz_datatype: "STRING", is_disabled: false });
       }
       formItems.forEach((item, index) => {
-        const row = el("div", { class: "schema-form-row" }, []);
+        const isDisabled = !!item.is_disabled;
+        const row = el("div", { class: `schema-form-row${isDisabled ? " is-disabled" : ""}${!isSchemaSddDescription ? " is-compact" : ""}` }, []);
+        row.setAttribute("data-schema-disabled", isDisabled ? "true" : "false");
         const originInput = el("input", {
           type: "text",
           value: item.origin_name,
           "data-schema-key": "origin_name",
           placeholder: "元フィールド名",
-          oninput: () => {
-            formItems = collectFormItems();
-            syncNodeForm(stringifySchemaItems(formItems), false);
-          },
-          onchange: () => {
-            formItems = collectFormItems();
-            syncNodeForm(stringifySchemaItems(formItems), true);
-          }
+          readonly: "readonly"
         });
+        if (isDisabled) originInput.disabled = true;
         const newNameInput = el("input", {
           type: "text",
           value: item.new_name,
@@ -1074,20 +1182,24 @@
             syncNodeForm(stringifySchemaItems(formItems), true);
           }
         });
-        const descInput = el("input", {
-          type: "text",
-          value: item.description,
-          "data-schema-key": "description",
-          placeholder: "説明・日本語名",
-          oninput: () => {
-            formItems = collectFormItems();
-            syncNodeForm(stringifySchemaItems(formItems), false);
-          },
-          onchange: () => {
-            formItems = collectFormItems();
-            syncNodeForm(stringifySchemaItems(formItems), true);
-          }
-        });
+        if (isDisabled) newNameInput.disabled = true;
+        const descInput = isSchemaSddDescription
+          ? el("input", {
+            type: "text",
+            value: item.description,
+            "data-schema-key": "description",
+            placeholder: "説明・日本語名",
+            oninput: () => {
+              formItems = collectFormItems();
+              syncNodeForm(stringifySchemaItems(formItems), false);
+            },
+            onchange: () => {
+              formItems = collectFormItems();
+              syncNodeForm(stringifySchemaItems(formItems), true);
+            }
+          })
+          : null;
+        if (descInput && isDisabled) descInput.disabled = true;
         const typeSelect = el("select", {
           "data-schema-key": "ziz_datatype",
           onchange: () => {
@@ -1095,6 +1207,7 @@
             syncNodeForm(stringifySchemaItems(formItems), true);
           }
         });
+        if (isDisabled) typeSelect.disabled = true;
         SIMPLE_SCHEMA_TYPES.forEach((type) => {
           const opt = el("option", { value: type }, [document.createTextNode(type)]);
           if (type === item.ziz_datatype) opt.selected = true;
@@ -1102,24 +1215,24 @@
         });
         const removeBtn = el("button", {
           type: "button",
-          class: "schema-remove-row-btn",
-          title: "削除",
-          "aria-label": "削除",
+          class: `schema-remove-row-btn${isDisabled ? " is-restore" : ""}`,
+          title: isDisabled ? "復元" : "削除",
+          "aria-label": isDisabled ? "復元" : "削除",
           onclick: () => {
-            formItems.splice(index, 1);
+            formItems[index].is_disabled = !isDisabled;
             renderFormRows();
             syncNodeForm(stringifySchemaItems(formItems), true);
           }
-        }, [
-          el("img", {
-            src: "./icons/delete.svg",
-            alt: "",
-            class: "schema-remove-row-btn__icon"
-          })
-        ]);
+        }, isDisabled
+          ? [document.createTextNode("復元")]
+          : [el("img", {
+              src: "./icons/delete.svg",
+              alt: "",
+              class: "schema-remove-row-btn__icon"
+            })]);
         row.appendChild(originInput);
         row.appendChild(newNameInput);
-        row.appendChild(descInput);
+        if (descInput) row.appendChild(descInput);
         row.appendChild(typeSelect);
         row.appendChild(removeBtn);
         rowsHost.appendChild(row);
@@ -1131,6 +1244,11 @@
       const currentParsed = parseSchemaText(textarea.value);
       if (mode === "output") {
         hint.textContent = "※実行結果を表形式で最大200件表示します。";
+        hint.className = "schema-editor-hint";
+        return;
+      }
+      if (!isSchemaSddDescription) {
+        hint.textContent = "";
         hint.className = "schema-editor-hint";
         return;
       }
@@ -1176,6 +1294,7 @@
         renderFormRows();
       }
       mode = nextMode;
+      node.__schemaEditorMode = mode;
       wrapper.dataset.mode = mode;
       inputBtn.classList.toggle("is-active", mode === "input");
       jsonBtn.classList.toggle("is-active", mode === "json");
@@ -1186,12 +1305,13 @@
       addRowRow.classList.toggle("is-hidden", mode !== "input");
       if (mode === "output") {
         void syncOutputPreview();
+        void syncSchemaAutoextractFromResult();
       }
       syncHint();
     }
 
     addRowBtn.addEventListener("click", () => {
-      formItems.push({ origin_name: "", new_name: "", description: "", ziz_datatype: "STRING" });
+      formItems.push({ origin_name: "", new_name: "", description: "", ziz_datatype: "STRING", is_disabled: false });
       renderFormRows();
       syncNodeForm(stringifySchemaItems(formItems), true);
     });
@@ -1229,6 +1349,7 @@
     renderFormRows();
     setMode(mode);
     syncSchemaValidation();
+    void syncSchemaAutoextractFromResult();
     return { input: textarea, wrapper, skipVarSuggest: true };
   }
 
@@ -1263,6 +1384,7 @@
           input: textarea,
           value: textarea.value,
           language,
+          connectorId: String(node?.connector || ""),
           variableNames: availableVariableNames || [],
           suggestionHost: wrapper,
           onInputChanged: (value) => {
@@ -1292,6 +1414,11 @@
   ========================================================= */
 
   function getFieldCurrentValue(node, field) {
+    if (field?.key === "schema_add_description") {
+      if (node.form.schema_add_description !== undefined) return node.form.schema_add_description;
+      if (node.form.schema !== undefined) return node.form.schema;
+    }
+    if (field?.key === "schema" && node.form.schema !== undefined) return node.form.schema;
     return node.form[field.key] !== undefined
       ? node.form[field.key]
       : field.default !== undefined
@@ -1373,13 +1500,6 @@
     return text;
   }
 
-  function isWriteOutputConnector(node) {
-    const connector = String(node?.connector || "");
-    const action = String(node?.action || "");
-    return (connector === "CSVConnector" && action === "write_csv")
-      || (connector === "ExcelConnector" && action === "write_excel");
-  }
-
   function findNodeByStepName(state, stepName) {
     if (!state || !Array.isArray(state.nodes)) return null;
     return state.nodes.find((node) => String(node?.stepName || "") === String(stepName || "")) || null;
@@ -1434,7 +1554,7 @@
       return getDefineValuesValidationErrors(value);
     }
 
-    if (field.key === "input_data") {
+    if (field.key === "input_data" || field.key === "source_step_id") {
       const ref = normalizeInputDataReference(value);
       if (!ref) return [];
       if (!/^[a-zA-Z0-9_]+$/.test(ref)) {
@@ -1488,7 +1608,7 @@
         return;
       }
       const hasExplicitValue = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
-      const useDefaultWhenUnset = field.key !== "input_data";
+      const useDefaultWhenUnset = field.key !== "input_data" && field.key !== "source_step_id";
       const v = hasExplicitValue ? node.form[field.key] : (useDefaultWhenUnset ? field.default : "");
       const empty = v === undefined || v === null || String(v).trim() === "";
       row.classList.toggle("required-empty", empty);
@@ -1524,7 +1644,7 @@
       inputEl = rendered.input;
       wrapper = rendered.wrapper;
       field.__skipVarSuggest = !!rendered.skipVarSuggest;
-    } else if (field.kind === "textarea" && field.key === "schema") {
+    } else if (field.kind === "textarea" && (field.key === "schema" || field.key === "schema_add_description")) {
       const rendered = renderSchemaEditor({
         node,
         field,
@@ -1677,7 +1797,7 @@
         el("span", { class: "checkbox-field__text" }, [document.createTextNode(field.label || field.key)])
       ]);
       wrapper = checkboxLabel;
-    } else if (field.key === "input_data") {
+    } else if (field.key === "input_data" || field.key === "source_step_id") {
       const r = renderInputDataSelect({
         node,
         field,
@@ -1686,13 +1806,15 @@
         onValueChanged: () => {
           // 選択反映は先に行い、重い schema 解決は後追いで適用する
           notifyCommitted();
-          applyBqLoadSchemaFromInputData({ node, state })
-            .then((applied) => {
-              if (applied) notifyCommitted();
-            })
-            .catch((error) => {
-              console.warn("input_data schema sync failed", error);
-            });
+          if (field.key === "input_data") {
+            applySchemaAutoloadFromInputData({ node, state, inputField: field })
+              .then((applied) => {
+                if (applied) notifyCommitted();
+              })
+              .catch((error) => {
+                console.warn("input_data schema sync failed", error);
+              });
+          }
         }
       });
       inputEl = r.input;
@@ -1838,6 +1960,45 @@
     }
     delete field.__skipVarSuggest;
 
+    const runAllLocked = !!state?.__runAllRunning;
+    if (runAllLocked) {
+      row.classList.add("row--runall-locked");
+      const controls = row.querySelectorAll("input, select, textarea, button");
+      controls.forEach((control) => {
+        if (!(control instanceof HTMLElement)) return;
+        if (control.tagName === "BUTTON") {
+          if (control.classList.contains("schema-mode-btn")) return;
+          control.disabled = true;
+          control.setAttribute("aria-disabled", "true");
+          return;
+        }
+        if (control.tagName === "TEXTAREA") {
+          control.readOnly = true;
+          return;
+        }
+        if (control.tagName === "SELECT") {
+          control.disabled = true;
+          return;
+        }
+        if (control.tagName === "INPUT") {
+          const input = control;
+          const type = String(input.type || "").toLowerCase();
+          if (type === "checkbox" || type === "radio" || type === "file" || type === "range") {
+            input.disabled = true;
+            return;
+          }
+          if (type !== "hidden") {
+            input.readOnly = true;
+          }
+          input.disabled = true;
+        }
+      });
+      const editableNodes = row.querySelectorAll("[contenteditable='true'], [contenteditable='plaintext-only']");
+      editableNodes.forEach((editable) => {
+        editable.setAttribute("contenteditable", "false");
+      });
+    }
+
     const right = el("div", {}, [wrapper]);
     right.appendChild(warningEl);
     row.appendChild(right);
@@ -1849,3 +2010,4 @@
   const uiFields = { renderField, getFieldReferenceWarnings };
   window.uiFields = uiFields;
 })();
+

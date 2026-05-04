@@ -7,6 +7,7 @@
     addMergeParent,
     clearPendingMergeSource,
     createNodeAtAnchor,
+    createLoopNodeAtAnchor,
     createParallelNodeAtAnchor,
     duplicateNodesByIds,
     getSelectedNodeIds,
@@ -24,6 +25,9 @@
     isEditingShortcutTarget,
     getMergeParentIds,
     ensureNodeDefaults,
+    isLoopRootNode,
+    insertAfterLoopEnd,
+    insertLoopInternalAtAnchor,
     isMergeableNode,
     getMergeErrorMessage,
     isDraggableNode,
@@ -771,6 +775,18 @@
       }
       if (!items.length) {
         if (runtime && view.menuNodeId) {
+          const targetNode = runtime.state.nodes.find((item) => item.id === view.menuNodeId) || null;
+          const loopRootSelected = isLoopRootNode(targetNode);
+          const loopInternalSelected = !!targetNode?.loopOwnerId;
+          if (loopInternalSelected) {
+            items.push('<button class="flow-context-menu__item" type="button" data-action="add-loop-inner" role="menuitem">ループ内に追加</button>');
+          } else if (loopRootSelected) {
+            items.push('<button class="flow-context-menu__item" type="button" data-action="add-loop-inner" role="menuitem">ループ内に追加</button>');
+            items.push('<button class="flow-context-menu__item" type="button" data-action="add-after-loop" role="menuitem">ループの後に追加</button>');
+          } else {
+            items.push('<button class="flow-context-menu__item" type="button" data-action="add-after" role="menuitem">後に追加</button>');
+            items.push('<button class="flow-context-menu__item" type="button" data-action="add-loop" role="menuitem">後にループ追加</button>');
+          }
           items.push('<button class="flow-context-menu__item" type="button" data-action="copy-node" role="menuitem">コピー</button>');
           if (hasCopiedNodes) {
             items.push('<button class="flow-context-menu__item" type="button" data-action="paste" role="menuitem">貼り付け</button>');
@@ -782,8 +798,12 @@
           if (mergeMenuState.outgoingTargets.length) {
             items.push('<button class="flow-context-menu__item is-danger" type="button" data-action="remove-merge-outgoing" role="menuitem">合流を解除</button>');
           }
-        } else if (runtime && hasCopiedNodes) {
-          items.push('<button class="flow-context-menu__item" type="button" data-action="paste" role="menuitem">貼り付け</button>');
+        } else if (runtime) {
+          items.push('<button class="flow-context-menu__item" type="button" data-action="add-root" role="menuitem">ノードを追加</button>');
+          items.push('<button class="flow-context-menu__item" type="button" data-action="add-root-loop" role="menuitem">ループノードを追加</button>');
+          if (hasCopiedNodes) {
+            items.push('<button class="flow-context-menu__item" type="button" data-action="paste" role="menuitem">貼り付け</button>');
+          }
         }
         if (runtime && view.menuNodeId) {
           items.push('<button class="flow-context-menu__item" type="button" data-action="run" role="menuitem">実行</button>');
@@ -899,7 +919,9 @@
         showContextMenu(null, e.clientX, e.clientY);
         return;
       }
-      hideContextMenu();
+      e.preventDefault();
+      hideTooltip();
+      showContextMenu(null, e.clientX, e.clientY);
     });
 
     canvas.addEventListener("mousedown", (e) => {
@@ -1382,6 +1404,16 @@
         if (duplicatedIds.length) runtime.onStateChanged();
         return;
       }
+      if (btn.dataset.action === "add-root") {
+        const created = createNodeAtAnchor?.(runtime.state, null);
+        if (created) runtime.onStateChanged();
+        return;
+      }
+      if (btn.dataset.action === "add-root-loop") {
+        const created = createLoopNodeAtAnchor?.(runtime.state, null);
+        if (created) runtime.onStateChanged();
+        return;
+      }
       if (btn.dataset.action === "delete-edge") {
         const result = (menuEdge?.from && menuEdge?.to)
           ? removeDirectedEdge?.(runtime.state, menuEdge.from, menuEdge.to)
@@ -1396,6 +1428,29 @@
         return;
       }
       if (!nodeId) return;
+      if (btn.dataset.action === "add-after") {
+        const created = createNodeAtAnchor?.(runtime.state, nodeId);
+        if (created) runtime.onStateChanged();
+        return;
+      }
+      if (btn.dataset.action === "add-loop") {
+        const created = createLoopNodeAtAnchor?.(runtime.state, nodeId);
+        if (created) runtime.onStateChanged();
+        return;
+      }
+      if (btn.dataset.action === "add-loop-inner") {
+        const targetNode = runtime.state.nodes.find((item) => item.id === nodeId) || null;
+        const loopRootId = isLoopRootNode(targetNode) ? String(nodeId || "") : String(targetNode?.loopOwnerId || "");
+        if (!loopRootId) return;
+        const created = insertLoopInternalAtAnchor?.(runtime.state, loopRootId, nodeId);
+        if (created) runtime.onStateChanged();
+        return;
+      }
+      if (btn.dataset.action === "add-after-loop") {
+        const created = insertAfterLoopEnd?.(runtime.state, nodeId, null);
+        if (created) runtime.onStateChanged();
+        return;
+      }
       if (btn.dataset.action === "remove-merge-incoming") {
         const node = runtime.state.nodes.find((item) => item.id === nodeId);
         const incomingSources = node ? getMergeParentIds(node) : [];

@@ -1,0 +1,61 @@
+﻿entries:
+  - index: select
+    suggest_word: |
+      SELECT
+      FROM
+      WHERE
+
+  - index: with
+    suggest_word: |
+      ----------------------------------------------------------------
+      -- ○○
+      ----------------------------------------------------------------
+      , RD AS (
+        SELECT
+        FROM
+        WHERE
+      )
+
+  - index: join
+    suggest_word: |
+      AS t1
+      LEFT JOIN
+          RD AS t2
+          ON t1.key = t2.key
+      )
+
+  - index: group
+    suggest_word: GROUP BY ALL
+
+  - index: order
+    suggest_word: ORDER BY 1
+
+  - index: cast
+    suggest_word: CAST(xxx AS type)
+
+  - index: type
+    suggest_word: INT64
+
+  - index: type
+    suggest_word: FLOAT64
+
+  - index: type
+    suggest_word: DATE
+
+  - index: type
+    suggest_word: STRING
+
+  - index: current_date
+    suggest_word: CURRENT_DATE('Asia/Tokyo')
+
+  - index: format
+    suggest_word: FORMAT_DATE('%Y%m%d', xxx)
+
+  - index: date
+    suggest_word: FORMAT_DATE('%Y%m%d', xxx)
+
+  - index: parse
+    suggest_word: PARSE_DATE('%Y%m%d', xxx)
+
+  - index: date
+    suggest_word: PARSE_DATE('%Y%m%d', xxx)
