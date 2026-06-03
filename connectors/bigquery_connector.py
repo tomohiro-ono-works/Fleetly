@@ -162,7 +162,8 @@ class BQConnector(BaseConnector):
                 sql=self._normalize_optional_text(params.get("sql")) or self._normalize_optional_text(params.get("sql_query")),
                 sql_file=self._normalize_optional_text(params.get("sql_file")),
                 encoding=params.get("encoding", "utf-8"),
-                is_output=params.get("is_output", True)
+                is_output=params.get("is_output", True),
+                schema=params.get("schema"),
                 )
         elif action == "execute_sql_file":
             sql_file = self._normalize_optional_text(params.get("sql_file"))
@@ -173,6 +174,7 @@ class BQConnector(BaseConnector):
                 sql_file=sql_file,
                 encoding=str(params.get("encoding", "utf-8")),
                 is_output=params.get("is_output", True),
+                schema=params.get("schema"),
             )
                  
         elif action == "load_data":
@@ -493,12 +495,13 @@ class BQConnector(BaseConnector):
 
 
     def execute_sql(
-            self, 
+            self,
             project_id: str,
-            sql: Optional[str] = None, 
-            sql_file: Optional[str] = None, 
-            encoding: str = 'utf-8', 
-            is_output: bool = True) -> Any:
+            sql: Optional[str] = None,
+            sql_file: Optional[str] = None,
+            encoding: str = 'utf-8',
+            is_output: bool = True,
+            schema: Any = None) -> Any:
         query_str = self._get_query(sql, sql_file, encoding)
         client = self._get_client(project_id)
         query_job = client.query(query_str)
@@ -539,22 +542,24 @@ class BQConnector(BaseConnector):
 
         if not results:
             schema_columns = [str(field.name) for field in (getattr(query_job, "schema", None) or [])]
-            return self.attach_dataframe_schema(pd.DataFrame(columns=schema_columns))
+            return self.attach_dataframe_schema(pd.DataFrame(columns=schema_columns), schema_override=schema)
 
-        return self.attach_dataframe_schema(self.to_dataframe(results))
+        return self.attach_dataframe_schema(self.to_dataframe(results), schema_override=schema)
 
     def execute_sql_file(
             self,
             project_id: str,
             sql_file: str,
             encoding: str = 'utf-8',
-            is_output: bool = True) -> Any:
+            is_output: bool = True,
+            schema: Any = None) -> Any:
         return self.execute_sql(
             project_id=project_id,
             sql=None,
             sql_file=sql_file,
             encoding=encoding,
             is_output=is_output,
+            schema=schema,
         )
 
     def load_data(self,

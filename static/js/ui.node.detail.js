@@ -2,6 +2,7 @@
   const packages = window.zizPackages || {};
   const corePkg = packages.core || {};
   const bridgeApi = corePkg.bridge || null;
+  const embeddedMode = new URLSearchParams(window.location.search).get("embedded") === "1";
   const { el, getFormSchema } = (corePkg.utils || {});
   const shared = (packages.ui && packages.ui.nodeShared) || window.uiNodeShared || {};
   const {
@@ -22,15 +23,27 @@
     dumpYamlSafe,
     buildNodeYamlSettings,
     isDataConnector,
-    getNodeLogLines,
     getConnectorLabel,
     getNodeDescriptionSeed,
     renderConnectorSelect,
     getConnectorImageSrc,
     NOIMAGE_SRC
   } = shared;
-  const VARIABLE_NAME_PATTERN = /^[a-zA-Z0-9_]+$/;
-  const ALL_DETAIL_TABS = ["detail", "yaml", "data", "variables", "log"];
+  const VARIABLE_NAME_PATTERN = /^[a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005]+$/;
+  const ALL_DETAIL_TABS = ["detail", "yaml", "data", "variables"];
+
+  function resolveActiveBridgeApi() {
+    const localBridge = window.zizBridge || (window.zizPackages || {})?.core?.bridge || bridgeApi || null;
+    if (localBridge?.available?.()) return localBridge;
+    if (!embeddedMode) return localBridge;
+    const parentBridge = window.parent?.zizBridge || (window.parent?.zizPackages || {})?.core?.bridge || null;
+    if (parentBridge?.available?.()) return parentBridge;
+    return localBridge || parentBridge;
+  }
+  function getBridgeUnavailableMessage(activeBridge) {
+    const message = activeBridge?.unavailableMessage?.();
+    return String(message || "ブリッジ未接続です。再読み込みしてください。");
+  }
 
   function normalizeTabKeys(tabKeys) {
     if (!Array.isArray(tabKeys) || !tabKeys.length) return [...ALL_DETAIL_TABS];
@@ -44,7 +57,7 @@
     const text = String(name || "").trim();
     if (!text) return "";
     if (VARIABLE_NAME_PATTERN.test(text)) return "";
-    return "変数名には英数字と _ のみ使用できます。日本語や記号は使えません。";
+    return "変数名には ひらがな / カタカナ / 漢字 / 英数字 / _ のみ使用できます。";
   }
 
   function renderStartNodeDetail({ state, root, onStateChanged }) {
@@ -139,7 +152,7 @@
     root.appendChild(el("section", { class: "node detail-node" }, [body]));
   }
 
-  function renderNodeDetail({ state, config, root, onStateChanged, tabKeys, defaultTab, includePanelRunAction, forcedActiveTab, hideTabs }) {
+  function renderNodeDetail({ state, config, root, onStateChanged, tabKeys, defaultTab, includePanelRunAction, forcedActiveTab, hideTabs, topbarConnectorFirst }) {
     root.innerHTML = "";
     const enabledTabs = normalizeTabKeys(tabKeys);
     const enabledTabSet = new Set(enabledTabs);
@@ -284,6 +297,35 @@
 
     const body = el("div", { class: "node-body" }, []);
     const tabBar = hideTabHeader ? null : el("div", { class: "node-tabs", role: "tablist", "aria-label": "ノード詳細タブ" }, []);
+    const TAB_LABEL_MAP = {
+      detail: "ノード詳細",
+      yaml: "YAML設定",
+      data: "データ",
+      variables: "変数"
+    };
+    const TAB_ICON_MAP = {
+      detail: "./icons/workflow.svg",
+      yaml: "./icons/yaml.svg",
+      data: "./icons/database.svg",
+      variables: "./icons/val.svg"
+    };
+    function applyIconTabStyle(button, key) {
+      if (!(button instanceof HTMLElement)) return;
+      const label = TAB_LABEL_MAP[key] || String(key || "");
+      const iconSrc = TAB_ICON_MAP[key] || "./icons/block.svg";
+      button.classList.add("node-tab-btn--icon");
+      button.removeAttribute("role");
+      button.removeAttribute("aria-selected");
+      button.setAttribute("title", label);
+      button.setAttribute("aria-label", label);
+      button.setAttribute("aria-pressed", "false");
+      button.textContent = "";
+      button.appendChild(el("img", {
+        src: iconSrc,
+        alt: "",
+        class: "node-tab-btn__icon"
+      }));
+    }
     const detailTabBtn = el(
       "button",
       { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "detail" },
@@ -304,23 +346,18 @@
       { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "variables" },
       [document.createTextNode("変数")]
     );
-    const logTabBtn = el(
-      "button",
-      { type: "button", class: "node-tab-btn", role: "tab", "data-tab-key": "log" },
-      [document.createTextNode("ログ")]
-    );
     const tabButtonMap = {
       detail: detailTabBtn,
       yaml: yamlTabBtn,
       data: dataTabBtn,
       variables: variablesTabBtn,
-      log: logTabBtn,
     };
     enabledTabs.forEach((tabKey) => {
       const button = tabButtonMap[tabKey];
       if (button && tabBar) tabBar.appendChild(button);
     });
     const compactTopRow = enabledTabSet.has("detail") && enabledTabSet.has("yaml") && !includePanelRunAction;
+    const preferTopbarConnectorIcon = !!topbarConnectorFirst;
     const tabsHeadChildren = [];
     if (tabBar) tabsHeadChildren.push(tabBar);
     if (includePanelRunAction) {
@@ -388,19 +425,11 @@
     ]);
     const variablesPaneBody = el("div", { class: "variable-pane-body" }, []);
     const variablesPane = el("div", { class: "node-tab-pane", "data-tab-key": "variables" }, [variablesPaneBody]);
-    const logText = el("textarea", {
-      class: "node-log-view",
-      readonly: "readonly",
-      spellcheck: "false",
-      "aria-label": "処理ログ"
-    });
-    const logPane = el("div", { class: "node-tab-pane", "data-tab-key": "log" }, [el("div", { class: "node-log-wrap" }, [logText])]);
     const tabPaneMap = {
       detail: detailPane,
       yaml: yamlPane,
       data: dataPane,
       variables: variablesPane,
-      log: logPane,
     };
 
     const connectorSelect = renderConnectorSelect({
@@ -507,7 +536,7 @@
       descriptionInput.readOnly = true;
       descriptionInput.disabled = true;
     }
-    const isRightSidebarTopRow = compactTopRow && hideTabHeader;
+    const isRightSidebarTopRow = compactTopRow && (hideTabHeader || preferTopbarConnectorIcon);
     let headSelects = null;
     if (!isRightSidebarTopRow) {
       headSelects = el("div", { class: compactTopRow ? "head-selects node-topbar-selects" : "head-selects" }, [
@@ -515,11 +544,33 @@
       ]);
     }
     if (compactTopRow) {
-      const stepBadge = el("div", { class: "badge node-topbar-badge" }, [document.createTextNode(`{${node.stepName}}`)]);
+      const stepBadge = el("div", { class: "badge node-topbar-badge node-topbar-step" }, [document.createTextNode(String(node.stepName || ""))]);
       if (isRightSidebarTopRow) {
-        tabsHead.appendChild(stepBadge);
-        tabsHead.appendChild(buildHeadActions({ includeSupport: false, className: "node-head-actions node-topbar-actions" }));
-        tabsHead.appendChild(connectorHost);
+        const topbarActions = buildHeadActions({ includeSupport: false, className: "node-head-actions node-topbar-actions" });
+        const nameHost = el("div", { class: "head-description node-topbar-name" }, [descriptionInput]);
+        if (tabBar && tabBar.parentElement === tabsHead) {
+          tabsHead.removeChild(tabBar);
+        }
+        tabsHead.classList.add("node-tabs-head--icon-layout", "node-tabs-head--two-rows");
+        const topRow = el("div", { class: "node-topbar-row node-topbar-row--main" }, []);
+        const bottomRow = el("div", { class: "node-topbar-row node-topbar-row--controls" }, []);
+        topRow.appendChild(connectorHost);
+        topRow.appendChild(nameHost);
+        bottomRow.appendChild(stepBadge);
+        bottomRow.appendChild(topbarActions);
+        if (tabBar) {
+          tabBar.removeAttribute("role");
+          tabBar.setAttribute("aria-label", "表示切替ボタン");
+          tabBar.classList.add("node-tabs--icon");
+          ["detail", "yaml", "variables"].forEach((tabKey) => {
+            const button = tabButtonMap[tabKey];
+            if (!button || !enabledTabSet.has(tabKey)) return;
+            applyIconTabStyle(button, tabKey);
+          });
+          bottomRow.appendChild(tabBar);
+        }
+        tabsHead.appendChild(topRow);
+        tabsHead.appendChild(bottomRow);
       } else {
         tabsHead.insertBefore(stepBadge, tabsHead.firstChild);
         tabsHead.appendChild(buildHeadActions({ includeSupport: false, className: "node-head-actions node-topbar-actions" }));
@@ -532,7 +583,9 @@
       detailMetaChildren.push(buildHeadActions());
       if (headSelects) detailMetaChildren.push(headSelects);
     }
-    detailMetaChildren.push(el("div", { class: "head-description" }, [descriptionInput]));
+    if (!(compactTopRow && isRightSidebarTopRow)) {
+      detailMetaChildren.push(el("div", { class: "head-description" }, [descriptionInput]));
+    }
     const detailMeta = detailMetaChildren.length
       ? el("div", { class: compactTopRow ? "node-detail-meta node-detail-meta--description-only" : "node-detail-meta" }, detailMetaChildren)
       : null;
@@ -689,6 +742,20 @@
       return normalized === "INT64" || normalized === "FLOAT64" || normalized === "NUMERIC";
     }
 
+    function formatDatePreviewValue(value) {
+      const text = String(value ?? "").trim();
+      if (!text) return "";
+      const datePrefix = text.match(/^(\d{4}-\d{2}-\d{2})(?:[ T].*)?$/);
+      if (datePrefix) return datePrefix[1];
+      return text;
+    }
+
+    function formatPreviewValueBySchema(value, schemaItem) {
+      const datatype = String(schemaItem?.ziz_datatype || "").trim().toUpperCase();
+      if (datatype === "DATE") return formatDatePreviewValue(value);
+      return String(value ?? "");
+    }
+
     function setDataStatus(message = "") {
       const text = String(message || "");
       const visible = !!text.trim();
@@ -768,15 +835,15 @@
         dataPreviewWrap.hidden = true;
         return;
       }
-      dataPreviewHead.appendChild(
-        el("tr", {}, columns.map((column) => el("th", {}, [document.createTextNode(String(column || ""))])))
-      );
+      const headerCells = columns.map((column) => el("th", {}, [document.createTextNode(String(column || ""))]));
+      headerCells.push(el("th", { class: "node-data-spacer", "aria-hidden": "true" }, []));
+      dataPreviewHead.appendChild(el("tr", {}, headerCells));
       if (!rows.length) {
         dataPreviewBody.appendChild(
           el("tr", {}, [
             el(
               "td",
-              { class: "node-data-value", colspan: String(Math.max(columns.length, 1)) },
+              { class: "node-data-value", colspan: String(Math.max(columns.length + 1, 1)) },
               [document.createTextNode("データがないです。")]
             )
           ])
@@ -784,16 +851,18 @@
       } else {
         rows.forEach((row) => {
           const values = Array.isArray(row) ? row : [];
+          const rowCells = columns.map((column, index) => {
+            const schemaItem = schemaByName[String(column || "")] || null;
+            const value = index < values.length ? values[index] : "";
+            return el(
+              "td",
+              { class: `node-data-value${isNumericZizDatatype(schemaItem?.ziz_datatype) ? " is-numeric" : ""}` },
+              [document.createTextNode(formatPreviewValueBySchema(value, schemaItem))]
+            );
+          });
+          rowCells.push(el("td", { class: "node-data-spacer", "aria-hidden": "true" }, []));
           dataPreviewBody.appendChild(
-            el("tr", {}, columns.map((column, index) => {
-              const schemaItem = schemaByName[String(column || "")] || null;
-              const value = index < values.length ? values[index] : "";
-              return el(
-                "td",
-                { class: `node-data-value${isNumericZizDatatype(schemaItem?.ziz_datatype) ? " is-numeric" : ""}` },
-                [document.createTextNode(String(value ?? ""))]
-              );
-            }))
+            el("tr", {}, rowCells)
           );
         });
       }
@@ -822,8 +891,9 @@
         setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : ""));
         return;
       }
-      if (!bridgeApi?.available?.()) {
-        setDataStatus(buildDataStatusMessage("WebView モードでのみ利用できます。"));
+      const activeBridge = resolveActiveBridgeApi();
+      if (!activeBridge?.available?.()) {
+        setDataStatus(buildDataStatusMessage(getBridgeUnavailableMessage(activeBridge)));
         setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : "preview"));
         return;
       }
@@ -837,8 +907,8 @@
       setDataStatus(buildDataStatusMessage("データを取得しています..."));
       try {
         const [schemaDto, previewDto] = await Promise.all([
-          bridgeApi.call("result.getSchema", { mode: String(state?.appMode || ""), step_id: node.stepName }),
-          bridgeApi.call("result.getPreview", { mode: String(state?.appMode || ""), step_id: node.stepName })
+          activeBridge.call("result.getSchema", { mode: String(state?.appMode || ""), step_id: node.stepName }),
+          activeBridge.call("result.getPreview", { mode: String(state?.appMode || ""), step_id: node.stepName })
         ]);
         if (requestSeq !== dataRequestSeq) return;
         writeDataCache(cacheKey, { schemaDto, previewDto });
@@ -857,13 +927,15 @@
     }
 
     function buildDataSyncKey() {
+      const latestRunId = String((window.__zizLastRunSummary && window.__zizLastRunSummary.run_id) || "").trim();
       return [
         String(node?.id || "").trim(),
         String(node?.stepName || "").trim(),
         String(node?.connector || "").trim(),
         String(node?.action || "").trim(),
         String(node?.form?.input_data || "").trim(),
-        flowScopeKey
+        flowScopeKey,
+        latestRunId
       ].join("|");
     }
 
@@ -937,15 +1009,6 @@
       variablesPaneBody.appendChild(buildVariableGroup("上流ステップ出力", availableVariables.upstreamVariables));
     }
 
-    function syncLogView() {
-      const lines = getNodeLogLines(node);
-      if (!lines.length) {
-        logText.value = "ログがないです。";
-        return;
-      }
-      logText.value = lines.join("\n");
-    }
-
     const forcedTabKey = enabledTabSet.has(String(forcedActiveTab || ""))
       ? String(forcedActiveTab || "")
       : "";
@@ -970,7 +1033,11 @@
         if (button) {
           button.hidden = hideTabHeader;
           button.classList.toggle("is-active", isActive);
-          button.setAttribute("aria-selected", isActive ? "true" : "false");
+          if (button.classList.contains("node-tab-btn--icon")) {
+            button.setAttribute("aria-pressed", isActive ? "true" : "false");
+          } else {
+            button.setAttribute("aria-selected", isActive ? "true" : "false");
+          }
         }
         pane.classList.toggle("is-active", isActive);
         pane.hidden = !isActive;
@@ -982,14 +1049,20 @@
         ensureDataViewSynced({ force: prevTab !== "data" });
       }
       if (activeTab === "variables") syncVariablesView();
-      if (activeTab === "log") syncLogView();
+      const changeDetail = { tab: activeTab };
+      root.dispatchEvent(new CustomEvent("ziz:node-detail-tab-change", {
+        detail: changeDetail,
+        bubbles: true
+      }));
+      window.dispatchEvent(new CustomEvent("ziz:node-detail-tab-change", {
+        detail: changeDetail
+      }));
     }
 
     if (enabledTabSet.has("detail")) detailTabBtn.addEventListener("click", () => setActiveTab("detail"));
     if (enabledTabSet.has("yaml")) yamlTabBtn.addEventListener("click", () => setActiveTab("yaml"));
     if (enabledTabSet.has("data")) dataTabBtn.addEventListener("click", () => setActiveTab("data"));
     if (enabledTabSet.has("variables")) variablesTabBtn.addEventListener("click", () => setActiveTab("variables"));
-    if (enabledTabSet.has("log")) logTabBtn.addEventListener("click", () => setActiveTab("log"));
 
     if (enabledTabSet.has("yaml")) {
       body.addEventListener("input", syncYamlView);
@@ -1000,11 +1073,6 @@
       body.addEventListener("input", syncVariablesView);
       body.addEventListener("change", syncVariablesView);
       syncVariablesView();
-    }
-    if (enabledTabSet.has("log")) {
-      body.addEventListener("input", syncLogView);
-      body.addEventListener("change", syncLogView);
-      syncLogView();
     }
     setActiveTab(activeTabByRoot);
 

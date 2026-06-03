@@ -221,8 +221,59 @@
   left: 0;
   z-index: 90;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 8px;
+}
+
+.flow-sticky-toolbar__pane-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.flow-sticky-toolbar__pane-action-btn {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  border: 1px solid #d0d0e0;
+  border-radius: 10px;
+  background: #e3e3f3;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: none;
+  cursor: pointer;
+}
+
+.flow-sticky-toolbar__pane-action-btn:hover {
+  border-color: #d0d0e0;
+  background: #e3e3f3;
+}
+
+.flow-sticky-toolbar__pane-action-btn.is-run {
+  border-color: var(--brand-600);
+  background: var(--brand-600);
+}
+
+.flow-sticky-toolbar__pane-action-btn.is-run:hover {
+  border-color: var(--brand-700);
+  background: var(--brand-700);
+}
+
+.flow-sticky-toolbar__pane-action-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.flow-sticky-toolbar__pane-action-icon {
+  width: 20px;
+  height: 20px;
+  display: block;
+  filter: none;
+}
+
+.flow-sticky-toolbar__pane-action-btn.is-run .flow-sticky-toolbar__pane-action-icon {
+  filter: brightness(0) invert(1);
 }
 
 .flow-sticky-toolbar__icon-btn {
@@ -288,7 +339,7 @@
 }
 
 .flow-sticky-toolbar__btn:hover:not(:disabled) {
-  border-color: #352480;
+  border-color: #5e1ef6;
 }
 
 .flow-sticky-toolbar__btn.is-danger {
@@ -316,7 +367,7 @@
 }
 
 .flow-sticky-toolbar__color.is-active {
-  border-color: #352480;
+  border-color: #5e1ef6;
   box-shadow: 0 0 0 2px rgba(83, 50, 247, 0.2);
 }
 
@@ -331,7 +382,7 @@
   margin: 0;
   padding: 8px;
   border-radius: 10px;
-  border: 2px solid #352480;
+  border: 2px solid #5e1ef6;
   outline: none;
   box-shadow: 0 6px 14px rgba(21, 23, 35, 0.18);
   color: #2b2f3d;

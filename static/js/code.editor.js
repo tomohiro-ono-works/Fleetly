@@ -7,6 +7,30 @@
   const SUGGEST_INDEX_CACHE = new Map();
   const SUGGEST_INDEX_LOADING = new Map();
 
+  function getShellApi() {
+    return window.zizShell || {};
+  }
+
+  async function loadScriptOnce(path) {
+    const shellApi = getShellApi();
+    if (typeof shellApi.loadScriptOnce !== "function") return null;
+    return shellApi.loadScriptOnce(path);
+  }
+
+  async function ensureYamlParserLoaded() {
+    const parser = window.jsyaml;
+    if (parser && typeof parser.load === "function") return parser;
+    await loadScriptOnce("./vendor/js-yaml/js-yaml.min.js");
+    return window.jsyaml || null;
+  }
+
+  async function ensureCodeHighlightLoaded() {
+    const api = getCodeHighlightApi();
+    if (typeof api.renderHighlightedHtml === "function") return api;
+    await loadScriptOnce("./js/code.highlight.js");
+    return getCodeHighlightApi();
+  }
+
   function getCodeHighlightApi() {
     return (window.zizPackages && window.zizPackages.core && window.zizPackages.core.codeHighlight)
       || window.codeHighlight
@@ -18,22 +42,49 @@
     const shouldStretchInRightSidebar = !!basis?.closest?.(
       ".right-sidebar-content .node-tab-pane[data-tab-key='detail'] .row.row--code-editor"
     );
-    if (shouldStretchInRightSidebar) {
-      [input, surface, highlight].forEach((node) => {
-        if (!node) return;
-        node.style.height = "100%";
-        node.style.minHeight = "100%";
-        node.style.maxHeight = "none";
-      });
+    const shouldStretchInWorkspaceText = !!basis?.closest?.(
+      ".workspace-text-editor-host.code-editor"
+    );
+    if (shouldStretchInRightSidebar || shouldStretchInWorkspaceText) {
+      const hostHeight = Math.max(
+        0,
+        Number.parseFloat(String(basis?.getBoundingClientRect?.().height || 0)) || 0
+      );
+      const stretchHeight = hostHeight > 0 ? `${Math.floor(hostHeight)}px` : "100%";
+      if (input) {
+        input.style.height = stretchHeight;
+        input.style.minHeight = stretchHeight;
+        input.style.maxHeight = "none";
+      }
+      if (surface) {
+        surface.style.height = stretchHeight;
+        surface.style.minHeight = stretchHeight;
+        surface.style.maxHeight = "none";
+      }
+      if (highlight) {
+        highlight.style.height = "auto";
+        highlight.style.minHeight = stretchHeight;
+        highlight.style.maxHeight = "none";
+      }
       return;
     }
     const height = CODE_EDITOR_LINE_HEIGHT * CODE_EDITOR_VISIBLE_LINES + CODE_EDITOR_VERTICAL_PADDING;
-    [input, surface, highlight].forEach((node) => {
-      if (!node) return;
-      node.style.height = `${height}px`;
-      node.style.minHeight = `${height}px`;
-      node.style.maxHeight = `${height}px`;
-    });
+    const fixedHeight = `${height}px`;
+    if (input) {
+      input.style.height = fixedHeight;
+      input.style.minHeight = fixedHeight;
+      input.style.maxHeight = fixedHeight;
+    }
+    if (surface) {
+      surface.style.height = fixedHeight;
+      surface.style.minHeight = fixedHeight;
+      surface.style.maxHeight = fixedHeight;
+    }
+    if (highlight) {
+      highlight.style.height = "auto";
+      highlight.style.minHeight = fixedHeight;
+      highlight.style.maxHeight = "none";
+    }
   }
 
   function getBridgeApi() {
@@ -121,6 +172,7 @@
           return [];
         }
       }
+      await ensureYamlParserLoaded().catch(() => null);
       const entries = await fetchSuggestIndexFromStatic(normalizedConnector);
       if (entries.length) {
         SUGGEST_INDEX_CACHE.set(normalizedConnector, entries);
@@ -170,7 +222,7 @@
     const caret = input.selectionStart || 0;
     const left = text.slice(0, caret);
 
-    const variableMatch = left.match(/\{\{\s*([a-zA-Z0-9_]*)$/);
+    const variableMatch = left.match(/\{\{\s*([a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005]*)$/);
     if (variableMatch) {
       const prefix = variableMatch[1] || "";
       const loweredPrefix = prefix.toLowerCase();
@@ -356,21 +408,6 @@
       });
     }
 
-    function handleTabCompletion() {
-      if (currentItems.length) {
-        return applyItem();
-      }
-      if (
-        !connectorSuggestEntries.length &&
-        normalizedConnectorId &&
-        (SUGGEST_INDEX_LOADING.has(normalizedConnectorId) || !SUGGEST_INDEX_CACHE.has(normalizedConnectorId))
-      ) {
-        reloadSuggestEntries();
-        return true;
-      }
-      return refresh({ includeIndexSuggest: true });
-    }
-
     input.addEventListener("input", scheduleRefresh);
     input.addEventListener("scroll", positionList);
     input.addEventListener("keyup", positionList);
@@ -401,11 +438,9 @@
       }
       if (event.key === "Tab") {
         event.preventDefault();
-        if (!handleTabCompletion()) {
-          const start = input.selectionStart || 0;
-          const end = input.selectionEnd || 0;
-          replaceRange(input, start, end, INDENT_TEXT);
-        }
+        const start = input.selectionStart || 0;
+        const end = input.selectionEnd || 0;
+        replaceRange(input, start, end, INDENT_TEXT);
       }
     });
 
@@ -436,6 +471,18 @@
 
     function render() {
       const api = getCodeHighlightApi();
+      const inputStyles = window.getComputedStyle(input);
+      const wrapperStyles = window.getComputedStyle(wrapper);
+      const gutterWidth = Number.parseFloat(wrapperStyles.getPropertyValue("--code-editor-gutter-width") || "0") || 0;
+      const inputPaddingLeft = Number.parseFloat(inputStyles.paddingLeft || "0") || 0;
+      const highlightPaddingLeft = Math.max(0, inputPaddingLeft - gutterWidth);
+      highlight.style.fontFamily = inputStyles.fontFamily;
+      highlight.style.fontSize = inputStyles.fontSize;
+      highlight.style.lineHeight = inputStyles.lineHeight;
+      highlight.style.paddingTop = inputStyles.paddingTop;
+      highlight.style.paddingRight = inputStyles.paddingRight;
+      highlight.style.paddingBottom = inputStyles.paddingBottom;
+      highlight.style.paddingLeft = `${highlightPaddingLeft}px`;
       if (typeof api.renderHighlightedHtml === "function") {
         surface.hidden = false;
         highlight.innerHTML = api.renderHighlightedHtml(input.value, language);
@@ -451,8 +498,28 @@
       surface.scrollLeft = input.scrollLeft;
     }
 
+    function bindWheelScrollSync() {
+      if (!wrapper || typeof wrapper.addEventListener !== "function") return;
+      wrapper.addEventListener("wheel", (event) => {
+        if (!input) return;
+        const deltaY = Number(event.deltaY || 0);
+        const deltaX = Number(event.deltaX || 0);
+        if (!deltaY && !deltaX) return;
+        const prevTop = input.scrollTop;
+        const prevLeft = input.scrollLeft;
+        if (deltaY) input.scrollTop += deltaY;
+        if (deltaX) input.scrollLeft += deltaX;
+        const moved = input.scrollTop !== prevTop || input.scrollLeft !== prevLeft;
+        if (!moved) return;
+        syncScroll();
+        input.dispatchEvent(new Event("scroll", { bubbles: false }));
+        event.preventDefault();
+      }, { passive: false });
+    }
+
     input.addEventListener("input", render);
     input.addEventListener("scroll", syncScroll);
+    bindWheelScrollSync();
     render();
     syncScroll();
 
@@ -468,14 +535,62 @@
     gutter.appendChild(inner);
     wrapper.insertBefore(gutter, wrapper.firstChild || null);
 
+    const lineWrapProbe = document.createElement("div");
+    lineWrapProbe.style.position = "fixed";
+    lineWrapProbe.style.left = "-99999px";
+    lineWrapProbe.style.top = "0";
+    lineWrapProbe.style.visibility = "hidden";
+    lineWrapProbe.style.pointerEvents = "none";
+    lineWrapProbe.style.whiteSpace = "pre-wrap";
+    lineWrapProbe.style.wordBreak = "break-word";
+    lineWrapProbe.style.boxSizing = "content-box";
+    lineWrapProbe.style.padding = "0";
+    lineWrapProbe.style.border = "0";
+    lineWrapProbe.style.margin = "0";
+    lineWrapProbe.style.overflow = "visible";
+    document.body.appendChild(lineWrapProbe);
+
     function render() {
       const text = String(input.value || "");
-      const lineCount = Math.max(1, text.split(/\r\n|\r|\n/).length);
+      const logicalLines = text.split(/\r\n|\r|\n/);
       const lines = [];
-      for (let i = 1; i <= lineCount; i += 1) {
-        lines.push(String(i).padStart(CODE_EDITOR_GUTTER_DIGITS, " "));
+      const inputStyles = window.getComputedStyle(input);
+      const lineHeight = Math.max(1, Number.parseFloat(inputStyles.lineHeight || "0") || CODE_EDITOR_LINE_HEIGHT);
+      const inputPaddingLeft = Number.parseFloat(inputStyles.paddingLeft || "0") || 0;
+      const inputPaddingRight = Number.parseFloat(inputStyles.paddingRight || "0") || 0;
+      const availableWidth = Math.max(1, (input.clientWidth || 1) - inputPaddingLeft - inputPaddingRight);
+      lineWrapProbe.style.width = `${availableWidth}px`;
+      lineWrapProbe.style.fontFamily = inputStyles.fontFamily;
+      lineWrapProbe.style.fontSize = inputStyles.fontSize;
+      lineWrapProbe.style.fontWeight = inputStyles.fontWeight;
+      lineWrapProbe.style.fontStyle = inputStyles.fontStyle;
+      lineWrapProbe.style.lineHeight = inputStyles.lineHeight;
+      lineWrapProbe.style.letterSpacing = inputStyles.letterSpacing;
+      lineWrapProbe.style.textTransform = inputStyles.textTransform;
+      lineWrapProbe.style.tabSize = inputStyles.tabSize;
+      lineWrapProbe.style.MozTabSize = inputStyles.MozTabSize;
+
+      for (let i = 0; i < logicalLines.length; i += 1) {
+        const logicalLineNumber = i + 1;
+        const rawLine = logicalLines[i] ?? "";
+        lineWrapProbe.textContent = rawLine || " ";
+        const probeHeight = lineWrapProbe.getBoundingClientRect().height || lineHeight;
+        const visualRows = Math.max(1, Math.round(probeHeight / lineHeight));
+        lines.push(String(logicalLineNumber).padStart(CODE_EDITOR_GUTTER_DIGITS, " "));
+        for (let row = 1; row < visualRows; row += 1) {
+          lines.push("");
+        }
       }
       inner.textContent = lines.join("\n");
+    }
+
+    function syncTypography() {
+      const inputStyles = window.getComputedStyle(input);
+      inner.style.fontFamily = inputStyles.fontFamily;
+      inner.style.fontSize = inputStyles.fontSize;
+      inner.style.lineHeight = inputStyles.lineHeight;
+      inner.style.paddingTop = inputStyles.paddingTop;
+      inner.style.paddingBottom = inputStyles.paddingBottom;
     }
 
     function syncScroll() {
@@ -484,6 +599,11 @@
 
     input.addEventListener("input", render);
     input.addEventListener("scroll", syncScroll);
+    window.addEventListener("resize", () => {
+      syncTypography();
+      render();
+    });
+    syncTypography();
     render();
     syncScroll();
     return { gutter, inner, render, syncScroll };
@@ -509,35 +629,39 @@
     input.autocomplete = "off";
     input.classList.add("is-enhanced-code-editor");
 
-    const { surface, highlight } = createHighlightController({
-      input,
-      wrapper: suggestionHost,
-      language
-    });
-    const lineNumbers = createLineNumberController({
-      input,
-      wrapper: suggestionHost
-    });
-    const syncEditorHeight = () => applyEditorHeight(input, surface, highlight, suggestionHost);
-    syncEditorHeight();
-    window.requestAnimationFrame(syncEditorHeight);
-    window.setTimeout(syncEditorHeight, 0);
-    window.addEventListener("resize", syncEditorHeight);
+    return ensureCodeHighlightLoaded()
+      .catch(() => null)
+      .then(() => {
+        const { surface, highlight } = createHighlightController({
+          input,
+          wrapper: suggestionHost,
+          language
+        });
+        const lineNumbers = createLineNumberController({
+          input,
+          wrapper: suggestionHost
+        });
+        const syncEditorHeight = () => applyEditorHeight(input, surface, highlight, suggestionHost);
+        syncEditorHeight();
+        window.requestAnimationFrame(syncEditorHeight);
+        window.setTimeout(syncEditorHeight, 0);
+        window.addEventListener("resize", syncEditorHeight);
 
-    createCompletionController({
-      input,
-      host: suggestionHost,
-      connectorId,
-      variableNames
-    });
+        createCompletionController({
+          input,
+          host: suggestionHost,
+          connectorId,
+          variableNames
+        });
 
-    if (typeof onCommitChanged === "function") {
-      input.addEventListener("blur", () => {
-        onCommitChanged(String(input.value || ""));
+        if (typeof onCommitChanged === "function") {
+          input.addEventListener("blur", () => {
+            onCommitChanged(String(input.value || ""));
+          });
+        }
+
+        return { input, surface, highlight, lineNumbers };
       });
-    }
-
-    return Promise.resolve({ input, surface, highlight, lineNumbers });
   }
 
   const codeEditors = { mountCodeEditor };

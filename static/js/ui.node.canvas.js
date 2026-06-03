@@ -59,7 +59,7 @@
   const STICKY_NOTE_DEFAULT_W = 224;
   const STICKY_NOTE_DEFAULT_H = 128;
   const STICKY_NOTE_GRID_SIZE = 32;
-  const STICKY_NOTE_COLORS = ["#fff2a8", "#ffd7a8", "#ffd0d8", "#c9f7d1", "#cfe4ff", "#e0d4ff"];
+  const STICKY_NOTE_COLORS = ["#ebebf2", "#fce672", "#ff1665", "#a220b6", "#5e1ef6", "#1a807d"];
   const STICKY_NOTE_HANDLE_SIZE = 14;
   const STICKY_TOOLBAR_MARGIN = 10;
 
@@ -125,6 +125,72 @@
 
   function findStickyNoteById(state, noteId) {
     return getStickyNotes(state).find((note) => note.id === noteId) || null;
+  }
+
+  function findStickyLinkHitAt(view, x, y) {
+    const areas = Array.isArray(view?.stickyLinkHitAreas) ? view.stickyLinkHitAreas : [];
+    for (let i = areas.length - 1; i >= 0; i -= 1) {
+      const area = areas[i];
+      const ax = Number(area?.x);
+      const ay = Number(area?.y);
+      const aw = Number(area?.w);
+      const ah = Number(area?.h);
+      if (!Number.isFinite(ax) || !Number.isFinite(ay) || !Number.isFinite(aw) || !Number.isFinite(ah)) continue;
+      if (x >= ax && x <= ax + aw && y >= ay && y <= ay + ah) {
+        const href = String(area?.href || "").trim();
+        if (href) return { href };
+      }
+    }
+    return null;
+  }
+
+  function resolveBridgeApi() {
+    const localBridge = window?.zizBridge || window?.zizPackages?.core?.bridge || null;
+    const parentBridge = (window.parent && window.parent !== window)
+      ? (window.parent?.zizBridge || window.parent?.zizPackages?.core?.bridge || null)
+      : null;
+    const isCallable = (candidate) => !!candidate && typeof candidate.call === "function";
+    const isAvailable = (candidate) => isCallable(candidate) && !!candidate.available?.();
+    if (isAvailable(localBridge)) return localBridge;
+    if (isAvailable(parentBridge)) return parentBridge;
+    if (isCallable(localBridge)) return localBridge;
+    if (isCallable(parentBridge)) return parentBridge;
+    return null;
+  }
+
+  function openStickyLinkInExternalBrowser(url) {
+    const href = String(url || "").trim();
+    if (!href) return;
+    const bridge = resolveBridgeApi();
+    if (bridge?.available?.()) {
+      bridge.call("app.openExternal", { url: href, prefer: "chrome" }).catch(async (error) => {
+        try { console.warn("[sticky-link] app.openExternal failed", error); } catch (_) {}
+        let restartHint = "";
+        try {
+          const status = await bridge.call("app.getStatus", {});
+          const capabilities = Array.isArray(status?.capabilities) ? status.capabilities : [];
+          if (!capabilities.includes("app.openExternal")) {
+            restartHint = "\nアプリを再起動してください（bridge機能が古い可能性があります）。";
+          }
+        } catch (_) {}
+        const message = `外部ブラウザ起動に失敗しました。${error?.message ? `\n${error.message}` : ""}${restartHint}`;
+        if (dialogApi?.show) dialogApi.show(message, { kind: "warning", title: "外部リンク" });
+        else alert(message);
+        try {
+          window.open(href, "_blank", "noopener,noreferrer");
+        } catch (_) {}
+      });
+      return;
+    }
+    if (bridge) {
+      try { console.warn("[sticky-link] bridge resolved but not available", bridge.status?.()); } catch (_) {}
+      const message = "外部ブラウザ起動に失敗しました。\nネイティブブリッジ未接続です。";
+      if (dialogApi?.show) dialogApi.show(message, { kind: "warning", title: "外部リンク" });
+      else alert(message);
+    }
+    try {
+      window.open(href, "_blank", "noopener,noreferrer");
+    } catch (_) {}
   }
 
   function toGridCoordinate(value, origin, gridSize) {
@@ -231,13 +297,18 @@
       stickyNoteSelectedId: "",
       stickyNotePreview: null,
       stickyNoteDragState: null,
+      stickyLinkHitAreas: [],
       stickyToolbar: null,
       stickyEditorEl: null,
       stickyEditorNoteId: "",
       rangeSelectionRect: null,
       pendingRangeSelection: null,
       menuSelectionIds: null,
-      stickyToolbarResizeObserver: null
+      stickyToolbarResizeObserver: null,
+      stickyToolbarFrameId: 0,
+      stickyToolbarLastX: null,
+      stickyToolbarLastY: null,
+      stickyToolbarLastVisible: null
     };
     root.__flowView = view;
 
@@ -249,6 +320,17 @@
     const stickyToolbar = document.createElement("div");
     stickyToolbar.className = "flow-sticky-toolbar";
     stickyToolbar.innerHTML = `
+      <div class="flow-sticky-toolbar__pane-actions" data-role="pane-actions">
+        <button class="flow-sticky-toolbar__pane-action-btn" type="button" data-role="pane-undo" title="戻る" aria-label="戻る">
+          <img src="./icons/undo.svg" alt="" aria-hidden="true" class="flow-sticky-toolbar__pane-action-icon" />
+        </button>
+        <button class="flow-sticky-toolbar__pane-action-btn" type="button" data-role="pane-redo" title="進む" aria-label="進む">
+          <img src="./icons/redo.svg" alt="" aria-hidden="true" class="flow-sticky-toolbar__pane-action-icon" />
+        </button>
+        <button class="flow-sticky-toolbar__pane-action-btn is-run" type="button" data-role="pane-run" title="実行" aria-label="実行">
+          <img src="./icons/run.svg" alt="" aria-hidden="true" class="flow-sticky-toolbar__pane-action-icon" />
+        </button>
+      </div>
       <button class="flow-sticky-toolbar__icon-btn" type="button" data-role="sticky-enter" title="メモモードに切り替える">
         <img src="./icons/stickynote.svg" alt="" aria-hidden="true" />
       </button>
@@ -269,6 +351,9 @@
     view.stickyEditorEl = stickyEditor;
 
     const stickyControls = {
+      paneUndoBtn: stickyToolbar.querySelector('[data-role="pane-undo"]'),
+      paneRedoBtn: stickyToolbar.querySelector('[data-role="pane-redo"]'),
+      paneRunBtn: stickyToolbar.querySelector('[data-role="pane-run"]'),
       enterBtn: stickyToolbar.querySelector('[data-role="sticky-enter"]'),
       panel: stickyToolbar.querySelector('[data-role="sticky-panel"]'),
       exitBtn: stickyToolbar.querySelector('[data-role="sticky-exit"]'),
@@ -296,10 +381,9 @@
       const rootVisible = rootRect.width > 0 && rootRect.height > 0;
 
       const rightSidebar = document.getElementById("rightSidebar");
-      const rightRail = document.getElementById("rightSidebarRail");
       const anchorRect = isElementVisible(rightSidebar)
         ? rightSidebar.getBoundingClientRect()
-        : (isElementVisible(rightRail) ? rightRail.getBoundingClientRect() : null);
+        : null;
 
       const minX = Math.round(rootRect.left + STICKY_TOOLBAR_MARGIN);
       const maxX = Math.max(minX, Math.round(rootRect.right - toolbarWidth - STICKY_TOOLBAR_MARGIN));
@@ -315,10 +399,29 @@
       if (!Number.isFinite(nextY)) nextY = minY;
       nextY = Math.max(minY, Math.min(maxY, nextY));
 
+      const nextVisible = rootVisible ? "visible" : "hidden";
       view.stickyToolbar.style.position = "fixed";
-      view.stickyToolbar.style.left = `${nextX}px`;
-      view.stickyToolbar.style.top = `${nextY}px`;
-      view.stickyToolbar.style.visibility = rootVisible ? "visible" : "hidden";
+      if (view.stickyToolbarLastX !== nextX) {
+        view.stickyToolbar.style.left = `${nextX}px`;
+        view.stickyToolbarLastX = nextX;
+      }
+      if (view.stickyToolbarLastY !== nextY) {
+        view.stickyToolbar.style.top = `${nextY}px`;
+        view.stickyToolbarLastY = nextY;
+      }
+      if (view.stickyToolbarLastVisible !== nextVisible) {
+        view.stickyToolbar.style.visibility = nextVisible;
+        view.stickyToolbarLastVisible = nextVisible;
+      }
+    }
+
+    function scheduleStickyToolbarPosition() {
+      if (view.stickyToolbarFrameId) return;
+      view.stickyToolbarFrameId = window.requestAnimationFrame(() => {
+        view.stickyToolbarFrameId = 0;
+        if (root.__flowView !== view) return;
+        positionStickyToolbar();
+      });
     }
 
     if (stickyControls.colors) {
@@ -358,7 +461,6 @@
       if (root.__flowView !== view) return;
       drawFlowCanvas(view);
       syncStickyInlineEditor();
-      positionStickyToolbar();
       invalidateCanvasRect();
       if (view.hasRunningAnimation) scheduleAnimation();
       else stopAnimation();
@@ -378,10 +480,19 @@
       return root.__flowRuntime || null;
     }
 
-    function getNormalizedSelectedNodeIds(state) {
+    function notifySelectionGesture(kind) {
+      const value = String(kind || "").trim();
+      if (!value) return;
+      window.dispatchEvent(new CustomEvent("ziz:flow-selection-gesture", {
+        detail: { kind: value }
+      }));
+    }
+
+    function getNormalizedSelectedNodeIds(state, options = {}) {
       if (!state || typeof state !== "object") return [];
+      const allowEmpty = options.allowEmpty !== false;
       if (typeof getSelectedNodeIds === "function") {
-        return getSelectedNodeIds(state);
+        return getSelectedNodeIds(state, { allowEmpty });
       }
       const nodeIdSet = new Set((Array.isArray(state.nodes) ? state.nodes : []).map((node) => String(node?.id || "")));
       const selected = Array.isArray(state.selectedNodeIds)
@@ -394,7 +505,7 @@
         seen.add(nodeId);
         deduped.push(nodeId);
       });
-      if (!deduped.length && Array.isArray(state.nodes) && state.nodes.length) {
+      if (!allowEmpty && !deduped.length && Array.isArray(state.nodes) && state.nodes.length) {
         const fallbackId = String(state.nodes[0]?.id || "");
         if (fallbackId) deduped.push(fallbackId);
       }
@@ -403,16 +514,17 @@
       return deduped;
     }
 
-    function applySelectedNodeIds(state, nodeIds) {
+    function applySelectedNodeIds(state, nodeIds, options = {}) {
       if (!state || typeof state !== "object") return [];
+      const allowEmpty = options.allowEmpty !== false;
       if (typeof setSelectedNodes === "function") {
-        setSelectedNodes(state, nodeIds);
-        return getNormalizedSelectedNodeIds(state);
+        setSelectedNodes(state, nodeIds, { allowEmpty });
+        return getNormalizedSelectedNodeIds(state, { allowEmpty });
       }
       const deduped = Array.from(new Set((Array.isArray(nodeIds) ? nodeIds : []).map((nodeId) => String(nodeId || "").trim()).filter(Boolean)));
       state.selectedNodeIds = deduped;
       state.selectedNodeId = deduped[0] || null;
-      return getNormalizedSelectedNodeIds(state);
+      return getNormalizedSelectedNodeIds(state, { allowEmpty });
     }
 
     function getSelectedDraggableNodeIds(state) {
@@ -585,7 +697,7 @@
           button.disabled = !hasSelection;
         });
       }
-      positionStickyToolbar();
+      scheduleStickyToolbarPosition();
     }
 
     function setStickyMode(enabled) {
@@ -669,10 +781,49 @@
       openStickyInlineEditor(selectedId);
     }
 
+    function triggerPaneShortcut(action) {
+      const normalized = String(action || "").trim();
+      if (!normalized) return;
+      const embedded = new URLSearchParams(window.location.search).get("embedded") === "1";
+      if (embedded && window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          source: "ziz-embedded",
+          type: "shortcut",
+          detail: { action: normalized }
+        }, window.location.origin);
+        return;
+      }
+      const api = window.zizEmbeddedApi || null;
+      if (!api) return;
+      if (normalized === "undo") {
+        void api.undo?.();
+        return;
+      }
+      if (normalized === "redo") {
+        void api.redo?.();
+        return;
+      }
+      if (normalized === "run") {
+        void api.runFlow?.();
+      }
+    }
+
     stickyToolbar.addEventListener("click", (event) => {
       const button = event.target.closest("button[data-role]");
       if (!button) return;
       const role = String(button.getAttribute("data-role") || "");
+      if (role === "pane-undo") {
+        triggerPaneShortcut("undo");
+        return;
+      }
+      if (role === "pane-redo") {
+        triggerPaneShortcut("redo");
+        return;
+      }
+      if (role === "pane-run") {
+        triggerPaneShortcut("run");
+        return;
+      }
       if (role === "sticky-enter") {
         if (!view.stickyNoteMode) setStickyMode(true);
         syncStickyToolbar();
@@ -724,14 +875,12 @@
     view.syncStickyInlineEditor = syncStickyInlineEditor;
     if (typeof window.ResizeObserver === "function") {
       const resizeObserver = new window.ResizeObserver(() => {
-        positionStickyToolbar();
+        scheduleStickyToolbarPosition();
       });
       try { resizeObserver.observe(root); } catch (_) {}
       try {
         const rightSidebar = document.getElementById("rightSidebar");
-        const rightRail = document.getElementById("rightSidebarRail");
         if (rightSidebar) resizeObserver.observe(rightSidebar);
-        if (rightRail) resizeObserver.observe(rightRail);
       } catch (_) {}
       view.stickyToolbarResizeObserver = resizeObserver;
     }
@@ -868,7 +1017,7 @@
     }, { passive: false });
     root.addEventListener("scroll", () => {
       invalidateCanvasRect();
-      positionStickyToolbar();
+      scheduleStickyToolbarPosition();
     }, { passive: true });
 
     canvas.addEventListener("contextmenu", (e) => {
@@ -1040,6 +1189,25 @@
     });
 
     window.addEventListener("mousemove", (e) => {
+      if (
+        !view.stickyNoteMode &&
+        !view.stickyNoteDragState &&
+        !view.pendingRangeSelection &&
+        !view.pendingMergeDrag &&
+        !view.mergeDragState &&
+        !pendingDrag &&
+        !isPanning
+      ) {
+        const rect = getCanvasRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const stickyLinkHit = findStickyLinkHitAt(view, x, y);
+        if (stickyLinkHit?.href) {
+          canvas.style.cursor = "pointer";
+        } else if (canvas.style.cursor === "pointer") {
+          canvas.style.cursor = "default";
+        }
+      }
       if (view.stickyNoteDragState) {
         const runtime = root.__flowRuntime;
         const drag = view.stickyNoteDragState;
@@ -1251,6 +1419,7 @@
           const selectedIds = collectNodeIdsInRect(runtime.model, selectionRect, runtime.state);
           if (selectedIds.length) {
             applySelectedNodeIds(runtime.state, selectedIds);
+            notifySelectionGesture(selectedIds.length > 1 ? "multi" : "single");
             runtime.onStateChanged({ history: false });
             return;
           }
@@ -1500,12 +1669,22 @@
         return;
       }
 
+      const stickyLinkHit = findStickyLinkHitAt(view, x, y);
+      if (stickyLinkHit?.href) {
+        openStickyLinkInExternalBrowser(stickyLinkHit.href);
+        return;
+      }
+
       const targetNode = hitSelectableNode(runtime.model, x, y);
       if (targetNode) {
         applySelectedNodeIds(runtime.state, [targetNode.id]);
+        notifySelectionGesture("single");
         runtime.onStateChanged({ history: false });
         return;
       }
+      applySelectedNodeIds(runtime.state, [], { allowEmpty: true });
+      notifySelectionGesture("clear");
+      runtime.onStateChanged({ history: false });
     });
 
     canvas.addEventListener("dblclick", (e) => {
@@ -1591,12 +1770,12 @@
     window.addEventListener("resize", () => {
       invalidateCanvasRect();
       hideContextMenu();
-      positionStickyToolbar();
+      scheduleStickyToolbarPosition();
       requestDraw();
     });
 
     window.addEventListener("scroll", () => {
-      positionStickyToolbar();
+      scheduleStickyToolbarPosition();
     }, { passive: true, capture: true });
 
     return view;

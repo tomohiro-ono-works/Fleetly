@@ -99,7 +99,7 @@
 }
 
 .home-screen__create-btn:hover {
-  border-color: #352480;
+  border-color: #5e1ef6;
   background: #f9f7ff;
 }
 
@@ -145,7 +145,7 @@
 }
 
 .home-screen__item:hover {
-  border-color: #352480;
+  border-color: #5e1ef6;
   background: #f9f7ff;
 }
 

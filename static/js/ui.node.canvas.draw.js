@@ -206,6 +206,38 @@
     return lines;
   }
 
+  function isStickyLinkLine(text) {
+    return /^https:\/\//.test(String(text || "").trim());
+  }
+
+  function wrapStickyNoteTextWithMeta(ctx, text, maxWidth) {
+    const source = String(text || "");
+    if (!source) return [];
+    const lines = [];
+    source.split(/\r?\n/).forEach((segment) => {
+      const raw = String(segment || "");
+      const linkLine = isStickyLinkLine(raw);
+      const href = linkLine ? raw.trim() : "";
+      if (!raw) {
+        lines.push({ text: "", isLink: false });
+        return;
+      }
+      const chars = raw.split("");
+      let line = "";
+      chars.forEach((ch) => {
+        const nextLine = line + ch;
+        if (line && ctx.measureText(nextLine).width > maxWidth) {
+          lines.push({ text: line, isLink: linkLine, href });
+          line = ch;
+        } else {
+          line = nextLine;
+        }
+      });
+      lines.push({ text: line, isLink: linkLine, href });
+    });
+    return lines;
+  }
+
   function resolveRenderedStickyNotes(view, model) {
     const notes = Array.isArray(model?.stickyNotes) ? model.stickyNotes.map((note) => ({ ...note })) : [];
     const preview = view?.stickyNotePreview;
@@ -220,15 +252,19 @@
   }
 
   function drawStickyNotes(ctx, notes, options = {}) {
+    const view = options.view || null;
+    if (view) view.stickyLinkHitAreas = [];
     if (!Array.isArray(notes) || !notes.length) return;
     const mode = String(options.mode || "normal");
     const selectedId = String(options.selectedId || "");
     const editable = !!options.editable;
-    const noteOpacity = mode === "sticky" ? 0.95 : 0.75;
+    const noteOpacity = 0.95;
     const textColor = "#2b2f3d";
-    const borderColor = "#b9bfd3";
-    const selectedColor = "#352480";
+    const linkColor = "#1a5fd0";
+    const selectedColor = "#5e1ef6";
     const handleSize = 14;
+    const linkEnabled = mode === "normal";
+    const stickyLinkHitAreas = [];
     notes.forEach((note) => {
       if (!note) return;
       const x = Math.round(Number(note.x) || 0);
@@ -236,30 +272,50 @@
       const w = Math.max(120, Math.round(Number(note.w) || 0));
       const h = Math.max(72, Math.round(Number(note.h) || 0));
       const isSelected = selectedId && note.id === selectedId;
-      const fill = String(note.color || "#fff2a8");
+      const fill = String(note.color || "#ebebf2");
 
       ctx.save();
       ctx.globalAlpha = noteOpacity;
       ctx.fillStyle = fill;
-      ctx.strokeStyle = isSelected ? selectedColor : borderColor;
-      ctx.lineWidth = isSelected ? 2 : 1;
       drawRoundedRect(ctx, x, y, w, h, 10);
       ctx.fill();
-      ctx.stroke();
       ctx.globalAlpha = 1;
 
       ctx.fillStyle = textColor;
       ctx.font = "13px 'Segoe UI', 'Yu Gothic UI', sans-serif";
       ctx.textAlign = "left";
       ctx.textBaseline = "top";
-      const lines = wrapNoteText(ctx, String(note.text || ""), Math.max(20, w - 16));
+      const lines = wrapStickyNoteTextWithMeta(ctx, String(note.text || ""), Math.max(20, w - 16));
       const lineHeight = 17;
       const maxLines = Math.max(1, Math.floor((h - 12) / lineHeight));
-      lines.slice(0, maxLines).forEach((line, idx) => {
+      lines.slice(0, maxLines).forEach((lineEntry, idx) => {
+        const rawLine = String(lineEntry?.text || "");
         const rendered = idx === maxLines - 1 && lines.length > maxLines
-          ? `${String(line || "").slice(0, Math.max(0, String(line || "").length - 1))}…`
-          : line;
-        ctx.fillText(rendered, x + 8, y + 7 + idx * lineHeight);
+          ? `${rawLine.slice(0, Math.max(0, rawLine.length - 1))}…`
+          : rawLine;
+        const lineX = x + 8;
+        const lineY = y + 7 + idx * lineHeight;
+        const isLink = linkEnabled && !!lineEntry?.isLink && !!String(rendered || "").trim();
+        ctx.fillStyle = isLink ? linkColor : textColor;
+        ctx.fillText(rendered, lineX, lineY);
+        if (isLink) {
+          const linkWidth = Math.ceil(ctx.measureText(rendered).width);
+          const underlineY = lineY + 15;
+          ctx.strokeStyle = linkColor;
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(lineX, underlineY);
+          ctx.lineTo(lineX + linkWidth, underlineY);
+          ctx.stroke();
+          stickyLinkHitAreas.push({
+            noteId: String(note.id || ""),
+            href: String(lineEntry?.href || "").trim(),
+            x: lineX,
+            y: lineY,
+            w: linkWidth,
+            h: lineHeight
+          });
+        }
       });
 
       if (editable && isSelected) {
@@ -273,6 +329,7 @@
       }
       ctx.restore();
     });
+    if (view) view.stickyLinkHitAreas = stickyLinkHitAreas;
   }
 
   function getConnectorIconSrc(nodeRef, config) {
@@ -553,10 +610,10 @@
     const warningText = rootStyles.getPropertyValue("--surface-page").trim() || "#fffefe";
     const flowEdgeUnified = "#d4dae4";
     const flowEdgeWidthUnified = 2;
-    const flowSelectedNodeAccent = "#352480";
+    const flowSelectedNodeAccent = "#5e1ef6";
     const flowSelectedEdgeAccent = "#4c4f64";
     const flowNodeBorder = rootStyles.getPropertyValue("--flow-node-border").trim() || "#9aa5b6";
-    const flowNodeStatusRunning = "#352480";
+    const flowNodeStatusRunning = "#5e1ef6";
     const flowNodeStatusError = "#ef475a";
     const flowNodeShadow = rootStyles.getPropertyValue("--flow-node-shadow").trim()
       || rootStyles.getPropertyValue("--alpha-shadow-10").trim()
@@ -582,7 +639,7 @@
     const selectedNodeIdSet = new Set(selectedNodeIds);
 
     if (!stickyNoteMode) {
-      drawStickyNotes(ctx, stickyNotes, { mode: "normal", selectedId: "", editable: false });
+      drawStickyNotes(ctx, stickyNotes, { mode: "normal", selectedId: "", editable: false, view });
     }
 
     const drawModelEdge = ({ edge, from, to, isSelectedEdge }) => {
@@ -799,7 +856,7 @@
     });
 
     if (stickyNoteMode) {
-      drawStickyNotes(ctx, stickyNotes, { mode: "sticky", selectedId: stickyNoteSelectedId, editable: true });
+      drawStickyNotes(ctx, stickyNotes, { mode: "sticky", selectedId: stickyNoteSelectedId, editable: true, view });
     }
 
     drawDraggedNodePreview(ctx, view, model);

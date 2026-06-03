@@ -2,6 +2,7 @@
   const packages = window.zizPackages || {};
   const corePkg = packages.core || {};
   const { el } = (corePkg.utils || {});
+  const VARIABLE_NAME_PREFIX_PATTERN = /\{\{\s*([a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005]*)$/;
 
   /* =========================================================
      {{var}} suggest (text/textarea/combo)
@@ -54,7 +55,7 @@
       const caret = inputEl.selectionStart || 0;
       const left = v.slice(0, caret);
 
-      const m = left.match(/\{\{\s*([a-zA-Z0-9_]*)$/);
+      const m = left.match(VARIABLE_NAME_PREFIX_PATTERN);
       if (!m) return hide();
 
       const prefix = m[1] || "";
@@ -132,7 +133,7 @@
       const cursor = editor.getCursor();
       const line = editor.getLine(cursor.line) || "";
       const left = line.slice(0, cursor.ch);
-      const match = left.match(/\{\{\s*([a-zA-Z0-9_]*)$/);
+      const match = left.match(VARIABLE_NAME_PREFIX_PATTERN);
       if (!match) return hide();
 
       const prefix = match[1] || "";

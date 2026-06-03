@@ -703,12 +703,14 @@ def run_webview_app(form_html_path, debug=False):
         kind, title, text = build_run_popup_text(message)
         show_native_status_popup(kind, title, text)
 
-    relay.messageReady.connect(handle_native_event)
+    # 実行完了/失敗の通知はフロントエンド側(app.js)で統一表示する。
+    # ここでネイティブダイアログを出すと二重表示になるため無効化する。
+    # relay.messageReady.connect(handle_native_event)
 
     def emit_event_to_frontend_and_native(message):
         serialized = json.dumps(message, ensure_ascii=False)
         bridge.messageToFrontend.emit(serialized)
-        relay.messageReady.emit(serialized)
+        # relay.messageReady.emit(serialized)
 
     runtime.set_event_sink(emit_event_to_frontend_and_native)
 

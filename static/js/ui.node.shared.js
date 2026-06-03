@@ -2,7 +2,6 @@
   const packages = window.zizPackages || {};
   const corePkg = packages.core || {};
   const uiPkg = packages.ui || {};
-  const modalPkg = packages.modal || {};
   const bridgeApi = corePkg.bridge || null;
   const dialogApi = corePkg.dialog || null;
   const { el, getFormSchema } = (corePkg.utils || {});
@@ -20,10 +19,31 @@
     setPendingMergeSource,
     setSelectedNode
   } = (corePkg.stateOps || {});
+
+  function getModalPkg() {
+    return (window.zizPackages && window.zizPackages.modal) || {};
+  }
+
+  async function ensureModalLibrariesLoaded() {
+    const shellApi = window.zizShell || {};
+    if (typeof shellApi.loadScriptOnce !== "function") return;
+    await shellApi.loadScriptOnce("./js/packages/modal.package.js");
+    await shellApi.loadScriptOnce("./modal/preview_schema.js");
+    await shellApi.loadScriptOnce("./modal/excel_modal.js");
+    await shellApi.loadScriptOnce("./modal/csv_modal.js");
+  }
   function getUiFieldsApi() {
     return (window.zizPackages && window.zizPackages.ui && window.zizPackages.ui.fields)
       || window.uiFields
       || {};
+  }
+
+  function isFieldVisibleForNodeSafe(node, field) {
+    const api = getUiFieldsApi();
+    if (typeof api.isFieldVisibleForNode === "function") {
+      return !!api.isFieldVisibleForNode(node, field);
+    }
+    return true;
   }
 
   function renderFieldSafe(args) {
@@ -56,6 +76,14 @@
   const ICON_CACHE = new Map();
   let copiedNodeSnapshot = null;
   const SYSTEM_VARIABLE_NAMES = ["current_date", "user_name"];
+  const VARIABLE_NAME_PATTERN = /^[a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005]+$/;
+
+  function formatLocalLogTimestamp(dateLike = new Date()) {
+    const date = dateLike instanceof Date ? dateLike : new Date(dateLike);
+    if (!(date instanceof Date) || Number.isNaN(date.getTime())) return "";
+    const pad = (value) => String(value).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+  }
 
   function jpLabel(x) {
     return (x && (x.label_jp || x.label)) || (x && x.id) || "";
@@ -137,6 +165,68 @@
     return Array.from(new Set(out)).reverse();
   }
 
+  function normalizeDefineValueRowsForSuggest(value) {
+    const normalizeRow = (item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const name = String(item.name || item.key || "").trim();
+      if (!name) return null;
+      if (!VARIABLE_NAME_PATTERN.test(name)) return null;
+      return { name };
+    };
+
+    if (Array.isArray(value)) {
+      return value.map((item) => normalizeRow(item)).filter(Boolean);
+    }
+
+    if (value && typeof value === "object") {
+      return Object.keys(value)
+        .map((name) => String(name || "").trim())
+        .filter((name) => !!name && VARIABLE_NAME_PATTERN.test(name))
+        .map((name) => ({ name }));
+    }
+
+    const text = String(value || "").trim();
+    if (!text) return [];
+    try {
+      const parsed = JSON.parse(text);
+      return normalizeDefineValueRowsForSuggest(parsed);
+    } catch (_) {
+      return [];
+    }
+  }
+
+  function getUpstreamDefineValueNames(state, nodeId) {
+    const byId = new Map((state?.nodes || []).map((n) => [n.id, n]));
+    const target = byId.get(nodeId);
+    if (!target) return [];
+
+    const names = [];
+    const seen = new Set();
+    const queue = [];
+    if (target.parentId) queue.push(target.parentId);
+    getMergeParentIds(target).forEach((parentId) => queue.push(parentId));
+    while (queue.length) {
+      const currentId = queue.shift();
+      if (!currentId || seen.has(currentId)) continue;
+      seen.add(currentId);
+      const parent = byId.get(currentId);
+      if (!parent) continue;
+
+      if (String(parent?.action || "").trim() === "define_values") {
+        const raw = parent?.form?.define_values;
+        const rows = normalizeDefineValueRowsForSuggest(raw);
+        rows.forEach((row) => {
+          const name = String(row?.name || "").trim();
+          if (name) names.push(name);
+        });
+      }
+
+      if (parent.parentId) queue.push(parent.parentId);
+      getMergeParentIds(parent).forEach((parentId) => queue.push(parentId));
+    }
+    return Array.from(new Set(names));
+  }
+
   function getActionConfig(config, connector, action) {
     const actions = (config.actions && config.actions[connector]) || [];
     return actions.find((a) => a.id === action) || null;
@@ -154,13 +244,21 @@
     });
   }
 
-  function openConfiguredDetailModal({ node, detailModal, hiddenBindings, onStateChanged }) {
+  async function openConfiguredDetailModal({ node, detailModal, hiddenBindings, onStateChanged }) {
     if (!detailModal || !detailModal.type) return;
     const fieldMap = (detailModal && detailModal.resultFieldMap) || {};
     const pathFieldKey = fieldMap.fileName || "file_path";
     const currentPathValue = node?.form?.[pathFieldKey] || "";
 
     if (detailModal.type === "excel") {
+      try {
+        await ensureModalLibrariesLoaded();
+      } catch (error) {
+        if (dialogApi?.show) dialogApi.show(`Excelアシスタントの読み込みに失敗しました。\n${error?.message || error}`, { kind: "error", title: "モーダルエラー" });
+        else alert(`Excelアシスタントの読み込みに失敗しました。\n${error?.message || error}`);
+        return;
+      }
+      const modalPkg = getModalPkg();
       const excelModal = modalPkg.excel || null;
       if (!excelModal || typeof excelModal.open !== "function") {
         if (dialogApi?.show) dialogApi.show("Excelアシスタントを読み込めませんでした。", { kind: "error", title: "モーダルエラー" });
@@ -181,6 +279,14 @@
     }
 
     if (detailModal.type === "csv") {
+      try {
+        await ensureModalLibrariesLoaded();
+      } catch (error) {
+        if (dialogApi?.show) dialogApi.show(`CSVアシスタントの読み込みに失敗しました。\n${error?.message || error}`, { kind: "error", title: "モーダルエラー" });
+        else alert(`CSVアシスタントの読み込みに失敗しました。\n${error?.message || error}`);
+        return;
+      }
+      const modalPkg = getModalPkg();
       const csvModal = modalPkg.csv || null;
       if (!csvModal || typeof csvModal.open !== "function") {
         if (dialogApi?.show) dialogApi.show("CSVアシスタントを読み込めませんでした。", { kind: "error", title: "モーダルエラー" });
@@ -207,7 +313,7 @@
   function requestNodeRun(node, mode, onStateChanged) {
     if (!node) return;
     if (!Array.isArray(node.runtimeLogs)) node.runtimeLogs = [];
-    const timestamp = new Date().toISOString();
+    const timestamp = formatLocalLogTimestamp(new Date());
     const modeLabel = mode === "through" ? "フロー実行" : "ステップ実行";
     node.runtimeLogs.push(`[${timestamp}] ${modeLabel} をリクエストしました`);
     window.dispatchEvent(
@@ -277,12 +383,21 @@
       .map((item) => String(item?.name || "").trim())
       .filter(Boolean);
     const upstreamVariables = getUpstreamSteps(state, node.id);
+    const upstreamDefinedVariables = getUpstreamDefineValueNames(state, node.id);
     const systemVariables = [...SYSTEM_VARIABLE_NAMES];
     return {
       startVariables,
       systemVariables,
       upstreamVariables,
-      suggestNames: Array.from(new Set([...startVariables, ...systemVariables]))
+      upstreamDefinedVariables,
+      suggestNames: Array.from(new Set([
+        ...startVariables,
+        ...systemVariables,
+        ...upstreamVariables,
+        ...upstreamDefinedVariables,
+        "current_item",
+        "current_index"
+      ]))
     };
   }
 
@@ -379,6 +494,7 @@
     const schema = getFormSchema(config, node.connector, node.action);
     return schema
       .filter((field) => {
+        if (!isFieldVisibleForNodeSafe(node, field)) return false;
         if (!field.required) return false;
         const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
         const useDefaultWhenUnset = field.key !== "input_data";
@@ -393,7 +509,9 @@
     const upstreamSteps = getUpstreamSteps(state, node.id);
     const availableVariables = getAvailableVariables(state, node);
     const schema = getFormSchema(config, node.connector, node.action);
-    return schema.flatMap((field) =>
+    return schema
+      .filter((field) => isFieldVisibleForNodeSafe(node, field))
+      .flatMap((field) =>
       getFieldReferenceWarningsSafe({
         node,
         field,
@@ -626,16 +744,23 @@
   const NOIMAGE_SRC = "./img/noimage.jpg";
 
   function isDataConnector(connectorId, config) {
-    const connectors = config?.connectors || [];
-    const connector = connectors.find((item) => item.id === connectorId);
+    const normalizedConnectorId = String(connectorId || "").trim();
+    if (!normalizedConnectorId) return false;
+    const connectors = Array.isArray(config?.connectors) ? config.connectors : [];
+    const connector = connectors.find((item) => {
+      const uiId = String(item?.id || "").trim();
+      const exportId = String(item?.exportId || "").trim();
+      return uiId === normalizedConnectorId || exportId === normalizedConnectorId;
+    });
     if (!connector) return false;
     if (connector.category) {
       return connector.category === "data";
     }
     const dataflowConnectorIds = Array.isArray(config?.modes?.dataflow?.connectorIds)
-      ? config.modes.dataflow.connectorIds
+      ? config.modes.dataflow.connectorIds.map((id) => String(id || "").trim())
       : [];
-    return dataflowConnectorIds.includes(connectorId);
+    if (dataflowConnectorIds.includes(String(connector.id || "").trim())) return true;
+    return dataflowConnectorIds.includes(normalizedConnectorId);
   }
 
   function connectorDisplayLabel(connector) {
@@ -679,39 +804,15 @@
     const connectors = buildConnectorChoices(config, node.connector);
     let activeConnectorId = node.connector || (connectors[0]?.id || "");
     let activeActionType = normalizeActionType(getActionConfig(config, node.connector, node.action)?.rpaType);
-    let stage = "grid";
+    let expandedConnectorId = activeConnectorId;
 
     const wrapper = el("div", { class: "connector-flyout" });
     const trigger = el("button", { class: "connector-flyout-trigger", type: "button" });
     const menu = el("div", { class: "connector-flyout-menu" });
     const gridPane = el("div", { class: "connector-stage connector-stage-grid" });
-    const actionPane = el("div", { class: "connector-stage connector-stage-actions", hidden: "hidden" });
     const gridList = el("div", { class: "connector-image-grid" });
-    const actionHeader = el("div", { class: "connector-action-head" });
-    const backButton = el(
-      "button",
-      {
-        type: "button",
-        class: "connector-back-btn",
-        onclick: () => {
-          stage = "grid";
-          renderStage();
-        }
-      },
-      [document.createTextNode("戻る")]
-    );
-    const connectorTitle = el("div", { class: "connector-action-title" });
-    const actionTabs = el("div", { class: "connector-action-tabs", role: "tablist", "aria-label": "アクション種別" });
-    const actionList = el("div", { class: "connector-action-list" });
-
-    actionHeader.appendChild(backButton);
-    actionHeader.appendChild(connectorTitle);
-    actionPane.appendChild(actionHeader);
-    actionPane.appendChild(actionTabs);
-    actionPane.appendChild(actionList);
     gridPane.appendChild(gridList);
     menu.appendChild(gridPane);
-    menu.appendChild(actionPane);
     wrapper.appendChild(trigger);
     wrapper.appendChild(menu);
 
@@ -726,8 +827,9 @@
       const connectorText = connectorDisplayLabel(selected) || "コネクタを選択";
       const actionText = getActionLabel(config, node.connector, node.action) || "";
       const merged = actionText ? `${connectorText} / ${actionText}` : connectorText;
-      trigger.textContent = merged;
+      trigger.textContent = connectorText;
       trigger.title = merged;
+      trigger.setAttribute("aria-label", merged);
     }
 
     function normalizeActiveConnector() {
@@ -737,6 +839,9 @@
       }
       if (!connectors.some((item) => item.id === activeConnectorId)) {
         activeConnectorId = connectors[0].id;
+      }
+      if (!expandedConnectorId || !connectors.some((item) => item.id === expandedConnectorId)) {
+        expandedConnectorId = activeConnectorId;
       }
       const currentTypeItems = getActionTypeItems(config, activeConnectorId, activeActionType);
       if (!currentTypeItems.length) {
@@ -761,13 +866,62 @@
       }
     }
 
+    function getVisibleActions(connectorId) {
+      const currentNodeType = String(node.nodeType || "task").trim() || "task";
+      return ACTION_TYPE_TABS.flatMap((tab) => getActionTypeItems(config, connectorId, tab.id))
+        .filter((action) => {
+          const actionNodeType = String(action?.nodeType || "").trim();
+          if (!actionNodeType) return true;
+          if (actionNodeType === "loop" && currentNodeType === "task") {
+            return !node.loopOwnerId;
+          }
+          return actionNodeType === currentNodeType;
+        });
+    }
+
+    function renderActionsForConnector(connectorId) {
+      const actionList = el("div", {
+        class: `connector-action-list${connectorId === expandedConnectorId ? " is-open" : ""}`,
+        "aria-hidden": connectorId === expandedConnectorId ? "false" : "true"
+      });
+      const actions = getVisibleActions(connectorId);
+      if (!actions.length) {
+        actionList.appendChild(
+          el("div", { class: "connector-action-empty" }, [document.createTextNode("このコネクタのアクションがありません")])
+        );
+        return actionList;
+      }
+
+      actions.forEach((action) => {
+        const isSelected = node.connector === connectorId && node.action === action.id;
+        const btn = el(
+          "button",
+          {
+            type: "button",
+            class: `connector-action-btn${isSelected ? " is-active" : ""}`,
+            onclick: (event) => {
+              event.stopPropagation();
+              selectConnectorAction(connectorId, action.id);
+            }
+          },
+          [
+            el("span", { class: "connector-action-kind" }, [document.createTextNode(getActionTypeLabel(action.rpaType))]),
+            el("span", { class: "connector-action-name" }, [document.createTextNode(jpLabel(action || { id: action.id }))])
+          ]
+        );
+        actionList.appendChild(btn);
+      });
+      return actionList;
+    }
+
     function renderGrid() {
       gridList.innerHTML = "";
       connectors.forEach((connector) => {
+        const isExpanded = connector.id === expandedConnectorId;
         const img = el("img", {
           class: "connector-image-thumb",
           src: getConnectorImageSrc(connector.id, config),
-          alt: connectorDisplayLabel(connector),
+          alt: "",
           loading: "lazy"
         });
         img.addEventListener("error", () => {
@@ -778,21 +932,23 @@
           "button",
           {
             type: "button",
-            class: `connector-image-item${connector.id === node.connector ? " is-current" : ""}`,
+            class: `connector-image-item${connector.id === node.connector ? " is-current" : ""}${isExpanded ? " is-expanded" : ""}`,
+            "aria-expanded": isExpanded ? "true" : "false",
             onclick: () => {
               activeConnectorId = connector.id;
               const currentAction = getActionConfig(config, connector.id, node.connector === connector.id ? node.action : "");
               activeActionType = normalizeActionType(currentAction?.rpaType);
-              stage = "actions";
+              expandedConnectorId = isExpanded ? "" : connector.id;
               renderStage();
             }
           },
           [
             el("span", { class: "connector-image-frame" }, [img]),
-            el("span", { class: "connector-image-label" }, [document.createTextNode(connectorDisplayLabel(connector))])
+            el("span", { class: "connector-image-label" }, [document.createTextNode(connectorDisplayLabel(connector))]),
+            el("span", { class: "connector-image-arrow", "aria-hidden": "true" }, [document.createTextNode("▼")])
           ]
         );
-        gridList.appendChild(btn);
+        gridList.appendChild(el("div", { class: "connector-accordion-item" }, [btn, renderActionsForConnector(connector.id)]));
       });
     }
 
@@ -898,90 +1054,15 @@
       onStateChanged();
     }
 
-    function renderActionTabs() {
-      actionTabs.innerHTML = "";
-      ACTION_TYPE_TABS.forEach((tab) => {
-        const hasItems = getActionTypeItems(config, activeConnectorId, tab.id).length > 0;
-        const btn = el(
-          "button",
-          {
-            type: "button",
-            class: `connector-action-tab${tab.id === activeActionType ? " is-active" : ""}`,
-            "data-empty": hasItems ? "false" : "true"
-          },
-          [document.createTextNode(tab.label)]
-        );
-        btn.addEventListener("mouseenter", () => {
-          if (!hasItems) return;
-          activeActionType = tab.id;
-          renderActionTabs();
-          renderActionList();
-        });
-        btn.addEventListener("click", () => {
-          if (!hasItems) return;
-          activeActionType = tab.id;
-          renderActionTabs();
-          renderActionList();
-        });
-        actionTabs.appendChild(btn);
-      });
-    }
-
-    function renderActionList() {
-      actionList.innerHTML = "";
-      const currentNodeType = String(node.nodeType || "task").trim() || "task";
-      const actions = getActionTypeItems(config, activeConnectorId, activeActionType)
-        .filter((action) => {
-          const actionNodeType = String(action?.nodeType || "").trim();
-          if (!actionNodeType) return true;
-          if (actionNodeType === "loop" && currentNodeType === "task") {
-            return !node.loopOwnerId;
-          }
-          return actionNodeType === currentNodeType;
-        });
-      if (!actions.length) {
-        actionList.appendChild(
-          el("div", { class: "connector-action-empty" }, [document.createTextNode("この種別のアクションがありません")])
-        );
-        return;
-      }
-
-      actions.forEach((action) => {
-        const isSelected = node.connector === activeConnectorId && node.action === action.id;
-        const btn = el(
-          "button",
-          {
-            type: "button",
-            class: `connector-action-btn${isSelected ? " is-active" : ""}`,
-            onclick: () => selectConnectorAction(activeConnectorId, action.id)
-          },
-          [
-            el("span", { class: "connector-action-kind" }, [document.createTextNode(getActionTypeLabel(action.rpaType))]),
-            el("span", { class: "connector-action-name" }, [document.createTextNode(jpLabel(action || { id: action.id }))])
-          ]
-        );
-        actionList.appendChild(btn);
-      });
-    }
-
     function renderStage() {
       normalizeActiveConnector();
-      const activeConnector = connectors.find((connector) => connector.id === activeConnectorId) || null;
-      const showActions = stage === "actions" && !!activeConnector;
-      gridPane.hidden = showActions;
-      actionPane.hidden = !showActions;
-      wrapper.classList.toggle("is-stage-actions", showActions);
       renderGrid();
-      if (!showActions) return;
-      connectorTitle.textContent = connectorDisplayLabel(activeConnector);
-      renderActionTabs();
-      renderActionList();
     }
 
     function openFlyout() {
       if (disabled) return false;
       if (open) return true;
-      stage = "grid";
+      expandedConnectorId = node.connector || activeConnectorId;
       setOpen(true);
       renderStage();
       return true;

@@ -1,0 +1,18 @@
+{
+  "default": "./icons/block.svg",
+  "csv": "./img/CSVConnector.jpg",
+  "xls": "./img/ExcelConnector.jpg",
+  "xlsx": "./img/ExcelConnector.jpg",
+  "sql": "./icons/database.svg",
+  "py": "./img/PythonConnector.jpg",
+  "md": "./icons/block.svg",
+  "json": "./icons/json.svg",
+  "yml": "./icons/json.svg",
+  "yaml": "./icons/json.svg",
+  "html": "./icons/code.svg",
+  "cs": "./icons/code.svg",
+  "js": "./icons/code.svg",
+  "zizd": "./icons/ziz.svg",
+  "zizw": "./icons/ziz.svg",
+  "zizq": "./icons/ziz.svg"
+}

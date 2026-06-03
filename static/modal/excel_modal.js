@@ -7,7 +7,28 @@
   const corePkg = packages.core || {};
   const modalCoreApi = modalPkg.modalCore || null;
   const previewSchemaApi = modalPkg.previewSchema || null;
-  const bridgeApi = corePkg.bridge || null;
+  function safeResolveParentBridge() {
+    try {
+      if (!(window.parent && window.parent !== window)) return null;
+      return window.parent?.zizBridge || (window.parent?.zizPackages || {})?.core?.bridge || null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function resolveBridgeApi() {
+    const localBridge = window.zizBridge || corePkg.bridge || (window.zizPackages || {})?.core?.bridge || null;
+    if (localBridge?.available?.()) return localBridge;
+    const parentBridge = safeResolveParentBridge();
+    if (parentBridge?.available?.()) return parentBridge;
+    return localBridge || parentBridge;
+  }
+  function resolveWorkspaceTabId() {
+    return String(
+      window.zizEmbeddedApi?.getWorkspaceTabId?.()
+      || window.__zizWorkspaceTabId?.()
+      || "__standalone__"
+    ).trim();
+  }
 
   function buildSheetSelect($sheet, wb) {
     $sheet.innerHTML = "";
@@ -60,6 +81,18 @@
 
     function setStatus(msg) { $status.textContent = msg || ""; }
     function setFileLabel(text) { if ($fileLabel) $fileLabel.textContent = text || "未選択"; }
+    function getDisplayPath(payload) {
+      if (payload && typeof payload === "object") {
+        const hint = String(payload.display_hint || "").trim();
+        if (hint) return hint;
+      }
+      if (currentRef && currentHiddenBindings && currentHiddenBindings[currentRef]) {
+        const hint = String(currentHiddenBindings[currentRef].display_hint || "").trim();
+        if (hint) return hint;
+      }
+      if (currentValue && !currentRef) return String(currentValue || "").trim();
+      return "";
+    }
 
     function setPickedText() {
       const headerExcelRow = view.baseRow + headerRowInView + 1;
@@ -86,7 +119,7 @@
           display_hint: String(payload.display_hint || "")
         };
       }
-      setFileLabel(payload.display_name || fileName || "未選択");
+      setFileLabel(getDisplayPath(payload) || payload.display_name || fileName || "未選択");
       buildSheetSelect($sheet, { SheetNames: payload.sheet_names || [] });
       $sheet.value = payload.sheet_name || (payload.sheet_names && payload.sheet_names[0]) || "";
       view = {
@@ -101,19 +134,22 @@
     }
 
     async function loadBridgePreview(sheetName) {
+      const bridgeApi = resolveBridgeApi();
       if (!bridgeApi?.available?.()) return false;
       if (!currentRef && !currentValue) return false;
       const payload = await bridgeApi.call("preview.readExcel", {
         current_ref: currentRef || "",
         current_value: currentRef ? "" : String(currentValue || ""),
         field_key: currentFieldKey,
-        sheet_name: sheetName || ""
+        sheet_name: sheetName || "",
+        workspace_tab_id: resolveWorkspaceTabId(),
       });
       applyBridgePreview(payload || {});
       return true;
     }
 
     async function pickBridgeFile() {
+      const bridgeApi = resolveBridgeApi();
       if (!bridgeApi?.available?.()) return false;
       const picked = await bridgeApi.call("file.pickFile", {
         title: "Excelファイルを選択",
@@ -121,7 +157,8 @@
         field_key: currentFieldKey,
         current_ref: currentRef || "",
         current_value: currentRef ? "" : String(currentValue || ""),
-        filters: [{ label: "Excel", patterns: ["*.xlsx", "*.xlsm", "*.xls"] }]
+        filters: [{ label: "Excel", patterns: ["*.xlsx", "*.xlsm", "*.xls"] }],
+        workspace_tab_id: resolveWorkspaceTabId(),
       });
       if (!picked || picked.selected === false || !picked.ref) return true;
       currentRef = picked.ref;
@@ -217,6 +254,7 @@
 
     $sheet.addEventListener("change", async () => {
       try {
+        const bridgeApi = resolveBridgeApi();
         const name = $sheet.value;
         if (!bridgeApi?.available?.() || (!currentRef && !currentValue)) return;
         await loadBridgePreview(name);
@@ -244,6 +282,7 @@
     });
 
     function open(opts = {}) {
+      try { console.info("[excel-modal] open start"); } catch (_) {}
       onOk = typeof opts.onOk === "function" ? opts.onOk : null;
       currentStepName = String(opts.stepName || "global");
       currentFieldKey = String(opts.fieldKey || "file_path");
@@ -253,14 +292,16 @@
       fileName = null;
       clearTable();
       if (currentRef && currentHiddenBindings[currentRef]) {
-        setFileLabel(String(currentHiddenBindings[currentRef].display_name || currentRef));
+        setFileLabel(getDisplayPath() || String(currentHiddenBindings[currentRef].display_name || currentRef));
       } else if (currentValue) {
-        setFileLabel(String(currentValue).split(/[\\/]/).pop());
+        setFileLabel(getDisplayPath() || String(currentValue).split(/[\\/]/).pop());
       } else {
         setFileLabel("未選択");
       }
       core.open();
       setPickedText();
+      const bridgeApi = resolveBridgeApi();
+      try { console.info("[excel-modal] bridge resolved", !!bridgeApi, bridgeApi?.status?.()); } catch (_) {}
       if (bridgeApi?.available?.() && (currentRef || currentValue)) {
         loadBridgePreview("").then(() => {
           setStatus(`読み込み完了: ${fileName || "-"} / ${$sheet.value || "-"}`);

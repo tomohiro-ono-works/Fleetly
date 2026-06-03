@@ -151,16 +151,16 @@ const stateOps = {
     sanitizeSelectedNodeIdsInternal(state);
   },
 
-  setSelectedNode(state, nodeId) {
-    setSelectedNodeIdsInternal(state, nodeId ? [nodeId] : []);
+  setSelectedNode(state, nodeId, options = {}) {
+    setSelectedNodeIdsInternal(state, nodeId ? [nodeId] : [], options);
   },
 
-  setSelectedNodes(state, nodeIds) {
-    setSelectedNodeIdsInternal(state, nodeIds);
+  setSelectedNodes(state, nodeIds, options = {}) {
+    setSelectedNodeIdsInternal(state, nodeIds, options);
   },
 
-  getSelectedNodeIds(state) {
-    return sanitizeSelectedNodeIdsInternal(state);
+  getSelectedNodeIds(state, options = {}) {
+    return sanitizeSelectedNodeIdsInternal(state, options);
   },
 
   removeNodesByIds(state, nodeIds) {
@@ -416,12 +416,14 @@ function setSelectedNodeIdsInternal(state, nodeIds, options = {}) {
   return selected;
 }
 
-function sanitizeSelectedNodeIdsInternal(state) {
+function sanitizeSelectedNodeIdsInternal(state, options = {}) {
   if (!state || typeof state !== "object") return [];
   const rawSelected = Array.isArray(state.selectedNodeIds)
     ? state.selectedNodeIds
     : (state.selectedNodeId ? [state.selectedNodeId] : []);
-  return setSelectedNodeIdsInternal(state, rawSelected, { allowEmpty: !(Array.isArray(state.nodes) && state.nodes.length) });
+  const allowEmptyByDefault = !(Array.isArray(state.nodes) && state.nodes.length);
+  const allowEmpty = options.allowEmpty === true ? true : allowEmptyByDefault;
+  return setSelectedNodeIdsInternal(state, rawSelected, { allowEmpty });
 }
 
 function sanitizeNodeIdsForOperation(state, nodeIds) {
@@ -1114,7 +1116,7 @@ function createNewNode(stepName, appMode) {
 
 function getLoopNodeDefaults(appMode) {
   const defaults = getModeNodeDefaults(appMode);
-  const connectorId = getPreferredConnectorId(appMode, defaults.loopConnectorId || "OperationConnector");
+  const connectorId = getPreferredConnectorId(appMode, defaults.loopConnectorId || "WindowsConnector");
   const actionId = getPreferredActionId(connectorId, defaults.loopActionId || "loop_tasks");
   return { connectorId, actionId };
 }

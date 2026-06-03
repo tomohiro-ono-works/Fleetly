@@ -6,7 +6,28 @@
   const corePkg = packages.core || {};
   const modalCoreApi = modalPkg.modalCore || null;
   const previewSchemaApi = modalPkg.previewSchema || null;
-  const bridgeApi = corePkg.bridge || null;
+  function safeResolveParentBridge() {
+    try {
+      if (!(window.parent && window.parent !== window)) return null;
+      return window.parent?.zizBridge || (window.parent?.zizPackages || {})?.core?.bridge || null;
+    } catch (_) {
+      return null;
+    }
+  }
+  function resolveBridgeApi() {
+    const localBridge = window.zizBridge || corePkg.bridge || (window.zizPackages || {})?.core?.bridge || null;
+    if (localBridge?.available?.()) return localBridge;
+    const parentBridge = safeResolveParentBridge();
+    if (parentBridge?.available?.()) return parentBridge;
+    return localBridge || parentBridge;
+  }
+  function resolveWorkspaceTabId() {
+    return String(
+      window.zizEmbeddedApi?.getWorkspaceTabId?.()
+      || window.__zizWorkspaceTabId?.()
+      || "__standalone__"
+    ).trim();
+  }
 
   function colIndexToLetters(idx0) {
     let n = idx0 + 1;
@@ -145,6 +166,18 @@
     function setFileLabel(text) {
       if ($fileLabel) $fileLabel.textContent = text || "未選択";
     }
+    function getDisplayPath(payload) {
+      if (payload && typeof payload === "object") {
+        const hint = String(payload.display_hint || "").trim();
+        if (hint) return hint;
+      }
+      if (currentRef && currentHiddenBindings && currentHiddenBindings[currentRef]) {
+        const hint = String(currentHiddenBindings[currentRef].display_hint || "").trim();
+        if (hint) return hint;
+      }
+      if (currentValue && !currentRef) return String(currentValue || "").trim();
+      return "";
+    }
 
     function clearTable() {
       $wrap.innerHTML = "";
@@ -164,7 +197,7 @@
           display_hint: String(payload.display_hint || "")
         };
       }
-      setFileLabel(payload.display_name || fileName || "未選択");
+      setFileLabel(getDisplayPath(payload) || payload.display_name || fileName || "未選択");
       preview = {
         columns: payload.columns || [],
         rows2d: payload.rows2d || [],
@@ -269,6 +302,7 @@
     }
 
     async function loadBridgePreview() {
+      const bridgeApi = resolveBridgeApi();
       if (!bridgeApi?.available?.()) return false;
       if (!currentRef && !currentValue) return false;
       const payload = await bridgeApi.call("preview.readCsv", {
@@ -276,13 +310,15 @@
         current_value: currentRef ? "" : String(currentValue || ""),
         field_key: currentFieldKey,
         encoding: $encoding.value,
-        delimiter: $delimiter.value
+        delimiter: $delimiter.value,
+        workspace_tab_id: resolveWorkspaceTabId(),
       });
       applyBridgePreview(payload || {});
       return true;
     }
 
     async function pickBridgeFile() {
+      const bridgeApi = resolveBridgeApi();
       if (!bridgeApi?.available?.()) return false;
       const picked = await bridgeApi.call("file.pickFile", {
         title: "CSVファイルを選択",
@@ -290,7 +326,8 @@
         field_key: currentFieldKey,
         current_ref: currentRef || "",
         current_value: currentRef ? "" : String(currentValue || ""),
-        filters: [{ label: "CSV/TSV/TXT", patterns: ["*.csv", "*.tsv", "*.txt"] }]
+        filters: [{ label: "CSV/TSV/TXT", patterns: ["*.csv", "*.tsv", "*.txt"] }],
+        workspace_tab_id: resolveWorkspaceTabId(),
       });
       if (!picked || picked.selected === false || !picked.ref) return true;
       currentRef = picked.ref;
@@ -302,6 +339,7 @@
 
     $file.addEventListener("change", reloadPreview);
     $encoding.addEventListener("change", async () => {
+      const bridgeApi = resolveBridgeApi();
       if (bridgeApi?.available?.() && (currentRef || currentValue)) {
         try {
           await loadBridgePreview();
@@ -315,6 +353,7 @@
       reloadPreview();
     });
     $delimiter.addEventListener("change", async () => {
+      const bridgeApi = resolveBridgeApi();
       if (bridgeApi?.available?.() && (currentRef || currentValue)) {
         try {
           await loadBridgePreview();
@@ -357,6 +396,7 @@
     });
 
     function open(opts = {}) {
+      try { console.info("[csv-modal] open start"); } catch (_) {}
       onOk = typeof opts.onOk === "function" ? opts.onOk : null;
       currentStepName = String(opts.stepName || "global");
       currentFieldKey = String(opts.fieldKey || "file_path");
@@ -366,14 +406,16 @@
       fileName = null;
       clearTable();
       if (currentRef && currentHiddenBindings[currentRef]) {
-        setFileLabel(String(currentHiddenBindings[currentRef].display_name || currentRef));
+        setFileLabel(getDisplayPath() || String(currentHiddenBindings[currentRef].display_name || currentRef));
       } else if (currentValue) {
-        setFileLabel(String(currentValue).split(/[\\/]/).pop());
+        setFileLabel(getDisplayPath() || String(currentValue).split(/[\\/]/).pop());
       } else {
         setFileLabel("未選択");
       }
       core.open();
       setPickedText();
+      const bridgeApi = resolveBridgeApi();
+      try { console.info("[csv-modal] bridge resolved", !!bridgeApi, bridgeApi?.status?.()); } catch (_) {}
       if (bridgeApi?.available?.() && (currentRef || currentValue)) {
         loadBridgePreview().then(() => {
           setStatus(`読み込み完了: ${fileName || "-"}`);

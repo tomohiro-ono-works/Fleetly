@@ -46,6 +46,7 @@
   const CANVAS_MIN_HEIGHT = 1200;
   const CANVAS_PADDING_RIGHT = 520;
   const CANVAS_PADDING_BOTTOM = 260;
+  const AUTO_LAYOUT_OFFSET_Y = NODE_H;
 
   function clampCanvasCoordinate(value) {
     return Math.max(8, Math.round(Number(value) || 0));
@@ -133,7 +134,7 @@
       w: Math.max(120, Math.round(w)),
       h: Math.max(72, Math.round(h)),
       text: String(note.text || ""),
-      color: String(note.color || "#fff2a8"),
+      color: String(note.color || "#ebebf2"),
       anchorNodeId: note.anchorNodeId ? String(note.anchorNodeId) : null
     };
   }
@@ -304,8 +305,9 @@
       setDisplayChildren(node.id, getChildren(node.id).map((n) => n.id));
     });
 
+    const initialLayoutY = START_Y + AUTO_LAYOUT_OFFSET_Y;
     start.x = START_X;
-    start.y = START_Y;
+    start.y = initialLayoutY;
 
     const depthById = new Map([[start.id, 0]]);
     const nodeMap = new Map([[start.id, start], ...Array.from(viewById.entries()), [end.id, end]]);
@@ -333,7 +335,7 @@
     }
 
     const rootChildren = displayChildren.get(start.id) || [];
-    let yCursor = START_Y;
+    let yCursor = initialLayoutY;
     rootChildren.forEach((childId) => {
       const subtreeBottom = layoutNode(childId, 1, yCursor, new Set([start.id]));
       yCursor = subtreeBottom + MIN_SIBLING_GAP;
@@ -392,7 +394,7 @@
       START_X + LEVEL_MARGIN * (maxDepth + 1),
       rightMostNodeX + LEVEL_MARGIN
     );
-    end.y = START_Y;
+    end.y = initialLayoutY;
 
     const controls = [];
 

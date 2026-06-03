@@ -7,14 +7,14 @@
   const title = body.dataset.shellTitle || "トップ画面";
   const isDataflow = page === "dataflow" && new URLSearchParams(window.location.search).get("mode") === "dataflow";
   const isFlowLayoutPage = page === "workflow" || page === "dataflow";
-  const disablePrimaryActions = page === "form-builder" || page === "settings";
+  const disablePrimaryActions = page === "settings";
+  const embeddedMode = new URLSearchParams(window.location.search).get("embedded") === "1";
   const urls = {
     dataflow: body.dataset.dataflowUrl || "./dataflow.html",
-    queryBuilder: body.dataset.queryBuilderUrl || "./query-builder.html",
-    formBuilder: body.dataset.formBuilderUrl || "./form-builder.html",
     settings: body.dataset.settingsUrl || "./settings.html",
   };
   const runtimeVersion = new URLSearchParams(window.location.search).get("v") || "";
+  const scriptLoadPromises = new Map();
 
   function current(name) {
     const active = name === "dataflow" ? isDataflow : (page === name && !isDataflow);
@@ -25,9 +25,8 @@
     return `
       <aside class="sidebar" aria-label="主要ナビゲーション">
         <nav id="sidebarNav" class="sidebar-nav">
-          <button class="sidebar-item${current("dataflow")} data-app-mode="dataflow" data-nav-url="${urls.dataflow}" title="ワークフロー作成"><span class="sidebar-item-icon"><img src="./icons/dataflow.svg" alt="" /></span><span class="sidebar-item-label">データフロー作成</span></button>
-          <button class="sidebar-item${current("query-builder")} data-app-mode="query-builder" data-nav-url="${urls.queryBuilder}" title="クエリビルダー"><span class="sidebar-item-icon"><img src="./icons/database.svg" alt="" /></span><span class="sidebar-item-label">クエリビルダー</span></button>
-          <button class="sidebar-item${current("form-builder")} data-sidebar-action="form" data-nav-url="${urls.formBuilder}" title="入力フォーム作成"><span class="sidebar-item-icon"><img src="./icons/form.svg" alt="" /></span><span class="sidebar-item-label">入力フォーム作成</span></button>
+          <button class="sidebar-item" data-sidebar-action="project-select" title="プロジェクト選択"><span class="sidebar-item-icon"><img src="./icons/launch_project.svg" alt="" /></span><span class="sidebar-item-label">プロジェクト選択</span></button>
+          <button class="sidebar-item" data-sidebar-action="explorer" title="エクスプローラー"><span class="sidebar-item-icon"><img src="./icons/folder_open.svg" alt="" /></span><span class="sidebar-item-label">エクスプローラー</span></button>
         </nav>
         <div class="sidebar-bottom">
           <button class="sidebar-item sidebar-item-settings${current("settings")} data-sidebar-action="settings" data-nav-url="${urls.settings}" title="設定"><span class="sidebar-item-icon"><img src="./icons/settings.svg" alt="" /></span><span class="sidebar-item-label">設定</span></button>
@@ -42,16 +41,10 @@
         <div class="header-inner">
           <div class="header-left">
             <button id="sidebarToggle" class="header-action-btn header-icon-btn header-home-btn" type="button" aria-label="トップ画面へ戻る" aria-expanded="false" aria-controls="sidebarNav" title="トップ画面へ戻る">
-              <img src="./icons/ziz.svg" alt="" />
+              <img src="./icons/ziz_one.svg" alt="" />
             </button>
-            <input id="flowName" class="flow-name-input" type="text" value="${title}" />
           </div>
           <div class="actions">
-            <button id="btnUndo" class="header-action-btn header-icon-btn" type="button" aria-label="戻る" title="戻る" ${disablePrimaryActions ? "disabled" : ""}><img src="./icons/undo.svg" alt="" /></button>
-            <button id="btnRedo" class="header-action-btn header-icon-btn" type="button" aria-label="進む" title="進む" ${disablePrimaryActions ? "disabled" : ""}><img src="./icons/redo.svg" alt="" /></button>
-            <button id="btnRun" class="header-action-btn header-icon-btn" type="button" aria-label="実行" title="実行" ${disablePrimaryActions ? "disabled" : ""}><img src="./icons/run.svg" alt="" /></button>
-            <button id="btnReset" class="header-action-btn header-icon-btn" type="button" aria-label="インポート" title="インポート" ${disablePrimaryActions ? "disabled" : ""}><img src="./icons/import.svg" alt="" /></button>
-            <button id="btnSave" class="header-action-btn header-icon-btn" type="button" aria-label="保存" title="保存" ${disablePrimaryActions ? "disabled" : ""}><img src="./icons/save.svg" alt="" /></button>
             <button id="btnDiagnostics" class="header-action-btn header-icon-btn" type="button" aria-label="診断" title="診断"><img src="./icons/healthcheck.svg" alt="" /></button>
             <button id="btnWindowMinimize" class="header-action-btn header-icon-btn" type="button" aria-label="最小化" title="最小化"><img src="./icons/small.svg" alt="" /></button>
             <button id="btnWindowMaximize" class="header-action-btn header-icon-btn window-control-btn" type="button" aria-label="拡大" title="拡大"><img src="./icons/middle.svg" alt="" /></button>
@@ -71,32 +64,18 @@
           <div id="nodeDetail"></div>
         </div>
       </aside>
-      <aside id="rightSidebarRail" class="right-sidebar-rail" aria-label="右サイドバー">
-        <button id="rightSidebarToggle" class="right-sidebar-toggle" type="button" aria-label="右サイドエリアの開閉" aria-expanded="true" title="右サイドエリアの開閉">
-          <span class="sidebar-item-icon"><img src="./icons/menu.svg" alt="" /></span>
-        </button>
-        <nav id="rightSidebarNav" class="right-sidebar-nav" aria-label="ノード表示切替">
-          <button class="right-rail-item is-current" type="button" data-right-panel="detail" title="ノード詳細" aria-label="ノード詳細" aria-current="true">
-            <span class="sidebar-item-icon"><img src="./icons/workflow.svg" alt="" /></span>
-          </button>
-          <button class="right-rail-item" type="button" data-right-panel="yaml" title="YAML設定" aria-label="YAML設定">
-            <span class="sidebar-item-icon"><img src="./icons/block.svg" alt="" /></span>
-          </button>
-          <button class="right-rail-item" type="button" data-right-panel="variables" title="変数" aria-label="変数">
-            <span class="sidebar-item-icon"><img src="./icons/chess_pawn.svg" alt="" /></span>
-          </button>
-          <button class="right-rail-item" type="button" data-right-panel="log" title="ログ" aria-label="ログ">
-            <span class="sidebar-item-icon"><img src="./icons/database.svg" alt="" /></span>
-          </button>
-        </nav>
-      </aside>
     `;
   }
 
   if (main && !body.querySelector(".app-shell")) {
     const shell = document.createElement("div");
     shell.className = `app-shell${isFlowLayoutPage ? " app-shell--with-right-sidebar" : ""}`;
-    shell.innerHTML = `${renderHeader()}${renderSidebar()}<div class="app-main"></div>${renderRightSidebar()}`;
+    if (embeddedMode) {
+      body.classList.add("embedded-mode");
+      shell.innerHTML = `<div class="app-main"></div>${renderRightSidebar()}`;
+    } else {
+      shell.innerHTML = `${renderHeader()}${renderSidebar()}<div class="app-main"></div>${renderRightSidebar()}`;
+    }
     const appMain = shell.querySelector(".app-main");
     if (appMain) {
       main.removeAttribute("data-shell-main");
@@ -128,7 +107,6 @@
     btnWindowClose: document.getElementById("btnWindowClose"),
     headerInner: document.querySelector(".header-inner"),
     rightSidebar: document.getElementById("rightSidebar"),
-    rightSidebarRail: document.getElementById("rightSidebarRail"),
     rightSidebarToggle: document.getElementById("rightSidebarToggle"),
     rightSidebarNav: document.getElementById("rightSidebarNav"),
     rightPanelItems: Array.from(document.querySelectorAll("[data-right-panel]")),
@@ -143,8 +121,10 @@
   }
 
   function toAbsoluteUrl(url) {
+    const raw = String(url || "").trim();
+    if (!raw) return "";
     try {
-      const target = new URL(String(url || ""), window.location.href);
+      const target = new URL(raw, window.location.href);
       if (runtimeVersion && !target.searchParams.has("v")) {
         target.searchParams.set("v", runtimeVersion);
       }
@@ -152,6 +132,40 @@
     } catch (_) {
       return String(url || "");
     }
+  }
+
+  function normalizeScriptSrc(url) {
+    const target = new URL(String(url || ""), window.location.href);
+    if (runtimeVersion && !target.searchParams.has("v")) {
+      target.searchParams.set("v", runtimeVersion);
+    }
+    return target.toString();
+  }
+
+  function loadScriptOnce(url) {
+    const src = normalizeScriptSrc(url);
+    if (scriptLoadPromises.has(src)) {
+      return scriptLoadPromises.get(src);
+    }
+    const existing = Array.from(document.scripts || []).find((script) => script.src === src);
+    if (existing) {
+      const resolved = Promise.resolve(existing);
+      scriptLoadPromises.set(src, resolved);
+      return resolved;
+    }
+    const promise = new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = src;
+      script.async = false;
+      script.onload = () => resolve(script);
+      script.onerror = () => {
+        scriptLoadPromises.delete(src);
+        reject(new Error(`Script load failed: ${src}`));
+      };
+      document.head.appendChild(script);
+    });
+    scriptLoadPromises.set(src, promise);
+    return promise;
   }
 
   function isSidebarExpanded() {
@@ -339,7 +353,7 @@
     return {
       enabled: isFlowLayoutPage,
       container: refs.rightSidebar,
-      rail: refs.rightSidebarRail,
+      rail: null,
       toggle: refs.rightSidebarToggle,
       resizer: refs.rightSidebarResizer,
       content: refs.rightSidebarContent
@@ -359,6 +373,7 @@
     setRightSidebarWidth,
     setActiveRightPanel,
     getRightSidebarRefs,
+    loadScriptOnce,
   };
 
   window.addEventListener("resize", () => {

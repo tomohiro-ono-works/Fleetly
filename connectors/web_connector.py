@@ -1,513 +1,539 @@
-import os
-import base64
-import hashlib
-import json
-import random
-import socket
-import ssl
-import shutil
-import subprocess
-import time
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any, Optional
-from urllib.parse import urlparse
-from urllib.request import urlopen
+from __future__ import annotations
 
-import pandas as pd
+import re
+import time
+from pathlib import Path
+from typing import Any
+import uuid
 
 from connectors.base_connector import BaseConnector
-from core.security_policies import is_web_target_allowed
+
+SESSION_STORE: dict[str, dict] = {}
+LAST_SESSION_KEY: str = ""
+DEFAULT_SESSION_KEY = "__default__"
+
+
+def clear_session_runtime(session_key: str | None) -> None:
+    key = str(session_key or "").strip()
+    if not key:
+        return
+    runtime = SESSION_STORE.pop(key, None)
+    if not isinstance(runtime, dict):
+        return
+    driver = runtime.get("driver")
+    if driver is not None:
+        try:
+            driver.quit()
+        except Exception:
+            pass
+
+
+try:
+    from selenium import webdriver
+    from selenium.webdriver.common.by import By
+    from selenium.webdriver.common.keys import Keys
+    from selenium.webdriver.support import expected_conditions as EC
+    from selenium.webdriver.support.ui import Select, WebDriverWait
+except ImportError:  # pragma: no cover
+    webdriver = None
+    By = None
+    Keys = None
+    EC = None
+    Select = None
+    WebDriverWait = None
 
 
 class WebConnector(BaseConnector):
-    CDP_HOST = "127.0.0.1"
-    CDP_PORT = 9222
-    CDP_TIMEOUT_SECONDS = 10.0
+    RUNTIME_KEY = "__web_runtime__"
+    SESSION_ID_COLUMN = "web_session_id"
 
-    def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
-        if action not in {
-            "open_chrome_page",
-            "lookat_pages",
-            "lookat_page",
-            "easy_get_element",
-            "easy_click_element",
-        }:
-            raise ValueError(f"Unknown action: {action}")
+    DEFAULT_WINDOW_ID = "main"
+    DEFAULT_TAB_ID = "current"
+    DEFAULT_TIMEOUT_MS = 10_000
 
-        if action in {"open_chrome_page", "lookat_pages", "lookat_page"}:
-            target = self._normalize_optional_text(params.get("url"))
-            if not target:
-                raise ValueError("url は必須です。")
-            try:
-                result = self.open_chrome_page(target)
-                return self._build_result_dataframe(
-                    action=action,
-                    target=result["target"],
-                    status="success",
-                    message=result["message"],
-                )
-            except Exception as error:
-                raise RuntimeError(str(error)) from error
+    def execute(self, action: str, params: dict | None, context: dict) -> Any:
+        params = params or {}
+        if action == "navigate":
+            return self.navigate(params, context)
+        if action == "dom_action":
+            return self.dom_action(params, context)
+        if action == "dom_get":
+            return self.dom_get(params, context)
+        if action == "wait":
+            return self.wait(params, context)
+        if action == "screenshot":
+            return self.screenshot(params, context)
+        raise ValueError(f"Unknown action: {action}")
 
-        text = self._normalize_optional_text(params.get("text"))
-        if not text:
-            raise ValueError("text は必須です。")
-        occurrence = self._parse_occurrence(params.get("occurrence"))
-        url_hint = self._normalize_optional_text(params.get("url"))
-        try:
-            matched = self._easy_match_element(
-                text=text,
-                occurrence=occurrence,
-                click=(action == "easy_click_element"),
-                url_hint=url_hint,
-            )
-            return self._build_easy_result_dataframe(
-                action=action,
-                status="success",
-                message=matched.get("message") or "成功",
-                matched=matched,
-            )
-        except Exception as error:
-            raise RuntimeError(str(error)) from error
+    def navigate(self, params: dict, context: dict) -> Any:
+        self._require(params, ["url"])
+        runtime = self._ensure_runtime(params, context)
+        driver = runtime["driver"]
 
-    @staticmethod
-    def _normalize_optional_text(value: Any) -> Optional[str]:
-        if value is None:
-            return None
-        text = str(value).strip()
-        return text or None
+        window_id = str(params.get("window_id") or self.DEFAULT_WINDOW_ID)
+        tab_id = str(params.get("tab_id") or self.DEFAULT_TAB_ID)
+        tab_mode = str(params.get("tab_mode") or "reuse_or_new").strip()
+        wait_until = str(params.get("wait_until") or "none").strip().lower()
+        timeout_ms = int(params.get("timeout_ms") or self.DEFAULT_TIMEOUT_MS)
+        url = str(params["url"])
 
-    @staticmethod
-    def _parse_occurrence(value: Any) -> int:
-        if value in {None, ""}:
-            return 1
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError) as error:
-            raise ValueError("occurrence は 1 以上の整数で指定してください。") from error
-        if parsed < 1:
-            raise ValueError("occurrence は 1 以上の整数で指定してください。")
-        return parsed
+        page_key = f"{window_id}:{tab_id}"
+        tabs = runtime["tabs"]
+        handle = tabs.get(page_key)
 
-    @staticmethod
-    def _find_chrome_executable() -> Optional[str]:
-        executable = shutil.which("chrome") or shutil.which("chrome.exe")
-        if executable:
-            return executable
-
-        candidates = [
-            Path(os.environ.get("PROGRAMFILES", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            Path(os.environ.get("PROGRAMFILES(X86)", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-            Path(os.environ.get("LOCALAPPDATA", "")) / "Google" / "Chrome" / "Application" / "chrome.exe",
-        ]
-        for candidate in candidates:
-            if str(candidate) and candidate.exists():
-                return str(candidate)
-        return None
-
-    def _build_result_dataframe(self, *, action: str, target: str, status: str, message: str) -> pd.DataFrame:
-        return pd.DataFrame([{
-            "status": str(status),
-            "executed_at": datetime.now(timezone.utc).isoformat(),
-            "connector": "WebConnector",
-            "action": str(action),
-            "target": str(target or ""),
-            "message": str(message or ""),
-        }])
-
-    def _build_easy_result_dataframe(
-        self,
-        *,
-        action: str,
-        status: str,
-        message: str,
-        matched: dict[str, Any],
-    ) -> pd.DataFrame:
-        return pd.DataFrame([{
-            "status": str(status),
-            "executed_at": datetime.now(timezone.utc).isoformat(),
-            "connector": "WebConnector",
-            "action": str(action),
-            "target": str(matched.get("page_url") or ""),
-            "text": str(matched.get("text") or ""),
-            "occurrence": int(matched.get("occurrence") or 1),
-            "total_matches": int(matched.get("total_matches") or 0),
-            "tag_name": str(matched.get("tag_name") or ""),
-            "dom_path": str(matched.get("dom_path") or ""),
-            "outer_html": str(matched.get("outer_html") or ""),
-            "clicked": bool(matched.get("clicked")),
-            "message": str(message or ""),
-        }])
-
-    def _resolve_open_target(self, target: str) -> str:
-        normalized_target = self.normalize_file_path(target)
-        if not normalized_target:
-            raise ValueError("url は必須です。")
-
-        parsed = urlparse(normalized_target)
-        if parsed.scheme in {"http", "https", "file"}:
-            return normalized_target
-
-        path = Path(normalized_target)
-        if path.exists():
-            return path.resolve().as_uri()
-
-        if "://" in normalized_target:
-            return normalized_target
-
-        return f"https://{normalized_target}"
-
-    def open_chrome_page(self, target: str) -> dict[str, str]:
-        chrome_path = self._find_chrome_executable()
-        if not chrome_path:
-            raise FileNotFoundError("Chrome が見つかりませんでした。")
-
-        open_target = self._resolve_open_target(target)
-        parsed = urlparse(open_target)
-        if parsed.scheme in {"http", "https"} and not is_web_target_allowed(open_target):
-            raise ValueError(f"Web allowlist に未登録のため開けません: {parsed.netloc}{parsed.path or '/'}")
-        subprocess.Popen([
-            chrome_path,
-            f"--remote-debugging-port={self.CDP_PORT}",
-            "--new-window",
-            open_target,
-        ])
-        try:
-            self._wait_for_cdp_ready(timeout_seconds=5.0)
-        except Exception:
-            # open アクションはページ起動を優先し、CDP待機失敗のみでは失敗扱いにしない。
-            pass
-        return {
-            "target": open_target,
-            "message": f"Chrome で開きました: {open_target}",
-        }
-
-    def _easy_match_element(
-        self,
-        *,
-        text: str,
-        occurrence: int,
-        click: bool,
-        url_hint: Optional[str],
-    ) -> dict[str, Any]:
-        page = self._resolve_target_page(url_hint=url_hint)
-        ws_url = str(page.get("webSocketDebuggerUrl") or "").strip()
-        if not ws_url:
-            raise RuntimeError("対象ページのデバッグソケットが見つかりません。")
-        script = self._build_easy_match_script(text=text, occurrence=occurrence, click=click)
-        with _CdpSocket(ws_url, timeout_seconds=self.CDP_TIMEOUT_SECONDS) as cdp:
-            self._cdp_call(cdp, "Page.bringToFront", {})
-            eval_result = self._cdp_call(cdp, "Runtime.evaluate", {
-                "expression": script,
-                "returnByValue": True,
-                "awaitPromise": True,
-            })
-        payload = (((eval_result or {}).get("result") or {}).get("value") or {})
-        if not isinstance(payload, dict):
-            raise RuntimeError("要素検索結果の解析に失敗しました。")
-        if not payload.get("ok"):
-            raise RuntimeError(str(payload.get("error") or "要素が見つかりませんでした。"))
-        payload["page_url"] = str(page.get("url") or "")
-        payload["text"] = text
-        payload["occurrence"] = occurrence
-        return payload
-
-    def _resolve_target_page(self, *, url_hint: Optional[str]) -> dict[str, Any]:
-        pages = self._list_cdp_pages()
-        if not pages:
-            if url_hint:
-                self.open_chrome_page(url_hint)
-                pages = self._list_cdp_pages()
-            if not pages:
-                raise RuntimeError("Chrome のデバッグ対象ページがありません。先に Chromeで開く を実行してください。")
-
-        normalized_hint = self._normalize_url_hint(url_hint) if url_hint else ""
-        if normalized_hint:
-            exact = [page for page in pages if str(page.get("url") or "") == normalized_hint]
-            if exact:
-                return exact[0]
-            partial = [page for page in pages if normalized_hint in str(page.get("url") or "")]
-            if partial:
-                return partial[0]
-            self.open_chrome_page(normalized_hint)
-            pages = self._list_cdp_pages()
-            exact = [page for page in pages if str(page.get("url") or "") == normalized_hint]
-            if exact:
-                return exact[0]
-
-        return pages[0]
-
-    def _normalize_url_hint(self, value: str) -> str:
-        if not value:
-            return ""
-        target = self._resolve_open_target(value)
-        parsed = urlparse(target)
-        if parsed.scheme in {"http", "https"} and not is_web_target_allowed(target):
-            raise ValueError(f"Web allowlist に未登録のため操作できません: {parsed.netloc}{parsed.path or '/'}")
-        return target
-
-    def _wait_for_cdp_ready(self, timeout_seconds: float) -> None:
-        deadline = time.time() + max(0.2, float(timeout_seconds))
-        last_error: Exception | None = None
-        while time.time() < deadline:
-            try:
-                info = self._read_cdp_json("version")
-                if isinstance(info, dict) and info.get("webSocketDebuggerUrl"):
-                    return
-            except Exception as error:
-                last_error = error
-            time.sleep(0.2)
-        if last_error:
-            raise RuntimeError(f"Chrome DevTools 接続待機に失敗しました: {last_error}") from last_error
-        raise RuntimeError("Chrome DevTools 接続待機に失敗しました。")
-
-    def _list_cdp_pages(self) -> list[dict[str, Any]]:
-        data = self._read_cdp_json("list")
-        pages = []
-        for item in data if isinstance(data, list) else []:
-            if not isinstance(item, dict):
-                continue
-            if str(item.get("type") or "") != "page":
-                continue
-            url = str(item.get("url") or "")
-            if url.startswith("devtools://"):
-                continue
-            if not str(item.get("webSocketDebuggerUrl") or "").strip():
-                continue
-            pages.append(item)
-        return pages
-
-    def _read_cdp_json(self, route: str) -> Any:
-        url = f"http://{self.CDP_HOST}:{self.CDP_PORT}/json/{route}"
-        with urlopen(url, timeout=self.CDP_TIMEOUT_SECONDS) as response:
-            raw = response.read()
-        return json.loads(raw.decode("utf-8"))
-
-    @staticmethod
-    def _build_easy_match_script(*, text: str, occurrence: int, click: bool) -> str:
-        payload_text = json.dumps(text, ensure_ascii=False)
-        payload_occurrence = int(occurrence)
-        payload_click = "true" if click else "false"
-        return f"""
-(() => {{
-  const targetText = String({payload_text} ?? "").trim();
-  const occurrence = Math.max(1, Number({payload_occurrence}) || 1);
-  const doClick = {payload_click};
-  if (!targetText) return {{ ok: false, error: "text は必須です。" }};
-
-  const elements = Array.from(document.querySelectorAll("*")).filter((element) => {{
-    if (!element) return false;
-    if (element.children && element.children.length > 0) return false;
-    if (element.attributes && element.attributes.length > 0) return false;
-    const textValue = String(element.textContent || "").trim();
-    return textValue === targetText;
-  }});
-  if (!elements.length) {{
-    return {{ ok: false, error: `完全一致要素が見つかりません: ${{targetText}}` }};
-  }}
-  if (occurrence > elements.length) {{
-    return {{ ok: false, error: `指定件数がヒット数を超えています: ${{occurrence}} / ${{elements.length}}` }};
-  }}
-
-  const element = elements[occurrence - 1];
-  element.scrollIntoView({{ block: "center", inline: "center", behavior: "instant" }});
-  const tagName = String(element.tagName || "").toLowerCase();
-  const outerHtml = String(element.outerHTML || "");
-  const domPathParts = [];
-  let current = element;
-  while (current && current.nodeType === 1) {{
-    const parent = current.parentElement;
-    const index = parent ? (Array.prototype.indexOf.call(parent.children, current) + 1) : 1;
-    domPathParts.unshift(`${{String(current.tagName || "").toLowerCase()}}:nth-child(${{index}})`);
-    current = parent;
-  }}
-  const domPath = domPathParts.join(" > ");
-
-  if (doClick) {{
-    if (typeof element.click === "function") {{
-      element.click();
-    }} else {{
-      const clickEvent = new MouseEvent("click", {{ bubbles: true, cancelable: true, view: window }});
-      element.dispatchEvent(clickEvent);
-    }}
-  }}
-  return {{
-    ok: true,
-    clicked: doClick,
-    total_matches: elements.length,
-    tag_name: tagName,
-    outer_html: outerHtml,
-    dom_path: domPath,
-    message: doClick ? "対象DOMへ click() を実行しました。" : "対象DOMを取得しました。"
-  }};
-}})();
-""".strip()
-
-    @staticmethod
-    def _cdp_call(client: "_CdpSocket", method: str, params: dict[str, Any]) -> dict[str, Any]:
-        return client.call(method=method, params=params)
-
-
-class _CdpSocket:
-    def __init__(self, ws_url: str, *, timeout_seconds: float = 10.0) -> None:
-        self.ws_url = str(ws_url or "")
-        self.timeout_seconds = max(1.0, float(timeout_seconds))
-        self._socket: socket.socket | ssl.SSLSocket | None = None
-        self._next_id = 0
-
-    def __enter__(self) -> "_CdpSocket":
-        self._connect()
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        self.close()
-
-    def close(self) -> None:
-        if self._socket:
-            try:
-                self._socket.close()
-            except Exception:
-                pass
-            self._socket = None
-
-    def call(self, *, method: str, params: dict[str, Any]) -> dict[str, Any]:
-        self._next_id += 1
-        request_id = self._next_id
-        payload = json.dumps({
-            "id": request_id,
-            "method": str(method),
-            "params": params or {},
-        }, ensure_ascii=False)
-        self._send_text(payload)
-        deadline = time.time() + self.timeout_seconds
-        while time.time() < deadline:
-            message = self._receive_json()
-            if not isinstance(message, dict):
-                continue
-            if int(message.get("id") or 0) != request_id:
-                continue
-            if message.get("error"):
-                error = message["error"]
-                raise RuntimeError(str(error.get("message") or error))
-            return message.get("result") or {}
-        raise RuntimeError(f"CDP 応答待機がタイムアウトしました: {method}")
-
-    def _connect(self) -> None:
-        parsed = urlparse(self.ws_url)
-        if parsed.scheme not in {"ws", "wss"}:
-            raise ValueError(f"無効な WebSocket URL: {self.ws_url}")
-        host = parsed.hostname or "127.0.0.1"
-        port = parsed.port or (443 if parsed.scheme == "wss" else 80)
-        resource = parsed.path or "/"
-        if parsed.query:
-            resource += f"?{parsed.query}"
-
-        raw_sock = socket.create_connection((host, port), timeout=self.timeout_seconds)
-        if parsed.scheme == "wss":
-            context = ssl.create_default_context()
-            sock = context.wrap_socket(raw_sock, server_hostname=host)
+        if tab_mode == "new":
+            handle = self._open_new_tab(runtime)
+            tabs[page_key] = handle
+        elif tab_mode in {"reuse", "current"}:
+            if not handle:
+                raise ValueError(f"指定されたタブが存在しません: {page_key}")
+        elif tab_mode == "reuse_or_new":
+            if not handle:
+                handle = self._open_new_tab(runtime)
+                tabs[page_key] = handle
         else:
-            sock = raw_sock
-        sock.settimeout(self.timeout_seconds)
-        self._socket = sock
+            raise ValueError(f"tab_mode が不正です: {tab_mode}")
 
-        sec_key = base64.b64encode(os.urandom(16)).decode("ascii")
-        request = (
-            f"GET {resource} HTTP/1.1\r\n"
-            f"Host: {host}:{port}\r\n"
-            "Upgrade: websocket\r\n"
-            "Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Key: {sec_key}\r\n"
-            "Sec-WebSocket-Version: 13\r\n"
-            "\r\n"
-        )
-        self._socket.sendall(request.encode("utf-8"))
-        response = self._read_http_response_header()
-        if " 101 " not in response.split("\r\n", 1)[0]:
-            raise RuntimeError(f"WebSocket 接続に失敗しました: {response.splitlines()[0] if response else 'no response'}")
-        accept_key = self._extract_header(response, "Sec-WebSocket-Accept")
-        expected = base64.b64encode(
-            hashlib.sha1((sec_key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11").encode("utf-8")).digest()
-        ).decode("ascii")
-        if accept_key != expected:
-            raise RuntimeError("WebSocket ハンドシェイク検証に失敗しました。")
+        self._switch_to_handle(runtime, handle)
+        driver.set_page_load_timeout(max(1, int(timeout_ms / 1000)))
+        driver.get(url)
+        if wait_until != "none":
+            self._wait_after_navigate(driver, wait_until, timeout_ms)
+        session_key = self._store_runtime(context, runtime)
 
-    def _read_http_response_header(self) -> str:
-        data = b""
-        while b"\r\n\r\n" not in data:
-            chunk = self._socket.recv(4096)
-            if not chunk:
-                break
-            data += chunk
-            if len(data) > 65536:
-                break
-        return data.decode("utf-8", errors="ignore")
+        rows = [{
+            "status": "success",
+            "action": "navigate",
+            "window_id": window_id,
+            "tab_id": tab_id,
+            "url": driver.current_url,
+            "title": driver.title,
+            self.SESSION_ID_COLUMN: session_key,
+        }]
+        df = self.to_dataframe(rows)
+        return self._save_output(params, context, df)
+
+    def dom_action(self, params: dict, context: dict) -> Any:
+        self._require(params, ["operation"])
+        runtime = context.get(self.RUNTIME_KEY)
+        driver = self._get_page(params, context)
+        timeout_ms = int(params.get("timeout_ms") or self.DEFAULT_TIMEOUT_MS)
+        operation = str(params["operation"]).strip().lower()
+
+        if operation == "click":
+            locator = self._resolve_element(driver, params)
+            locator.click()
+
+        elif operation == "input":
+            locator = self._resolve_element(driver, params)
+            value = params.get("value")
+            value_ref = str(params.get("value_ref") or "").strip()
+            if value_ref:
+                value = context.get(value_ref)
+                try:
+                    if hasattr(value, "columns") and "value" in value.columns and len(value.index) > 0:
+                        value = value.iloc[0]["value"]
+                except Exception:
+                    pass
+            if value is None:
+                value = ""
+            clear_first = bool(params.get("clear", True))
+            if clear_first:
+                locator.clear()
+                locator.send_keys(str(value))
+            else:
+                locator.send_keys(str(value))
+
+        elif operation == "select":
+            locator = self._resolve_element(driver, params)
+            select = Select(locator)
+            if params.get("value") is not None and str(params.get("value")).strip() != "":
+                select.select_by_value(str(params["value"]))
+            elif params.get("label") is not None and str(params.get("label")).strip() != "":
+                select.select_by_visible_text(str(params["label"]))
+            elif params.get("index") is not None and str(params.get("index")).strip() != "":
+                select.select_by_index(int(params["index"]))
+            else:
+                raise ValueError("select では value / label / index のいずれかが必要です。")
+
+        elif operation == "check":
+            locator = self._resolve_element(driver, params)
+            if not locator.is_selected():
+                locator.click()
+
+        elif operation == "uncheck":
+            locator = self._resolve_element(driver, params)
+            if locator.is_selected():
+                locator.click()
+
+        elif operation == "key":
+            key_value = str(params.get("key") or "").strip()
+            if not key_value:
+                raise ValueError("key は必須です。")
+            if params.get("selector"):
+                self._resolve_element(driver, params).click()
+            key_token = getattr(Keys, key_value.upper(), None)
+            if key_token is None:
+                key_token = key_value
+            runtime["driver"].switch_to.active_element.send_keys(key_token)
+
+        elif operation == "scroll":
+            to = str(params.get("to") or "").strip().lower()
+            direction = str(params.get("direction") or "down").strip().lower()
+            amount = int(params.get("amount") or 800)
+            if params.get("selector"):
+                locator = self._resolve_element(driver, params)
+                if to == "element":
+                    runtime["driver"].execute_script("arguments[0].scrollIntoView({block:'center'});", locator)
+                else:
+                    x_val = amount if direction == "right" else -amount if direction == "left" else 0
+                    y_val = amount if direction == "down" else -amount if direction == "up" else 0
+                    runtime["driver"].execute_script("arguments[0].scrollBy(arguments[1], arguments[2]);", locator, x_val, y_val)
+            else:
+                if to == "top":
+                    runtime["driver"].execute_script("window.scrollTo(0, 0);")
+                elif to == "bottom":
+                    runtime["driver"].execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                else:
+                    x_val = amount if direction == "right" else -amount if direction == "left" else 0
+                    y_val = amount if direction == "down" else -amount if direction == "up" else 0
+                    runtime["driver"].execute_script("window.scrollBy(arguments[0], arguments[1]);", x_val, y_val)
+
+        else:
+            raise ValueError(f"Unknown dom_action operation: {operation}")
+
+        rows = [{
+            "status": "success",
+            "action": "dom_action",
+            "operation": operation,
+            "selector": params.get("selector", ""),
+            "timeout_ms": timeout_ms,
+            self.SESSION_ID_COLUMN: self._current_session_id(context),
+        }]
+        df = self.to_dataframe(rows)
+        return self._save_output(params, context, df)
+
+    def dom_get(self, params: dict, context: dict) -> Any:
+        self._require(params, ["get_type", "selector"])
+        driver = self._get_page(params, context)
+        get_type = str(params["get_type"]).strip().lower()
+        selector = str(params["selector"])
+        get_all = bool(params.get("all", False))
+
+        if get_type == "count":
+            by, query = self._to_locator(params)
+            elements = driver.find_elements(by, query)
+            rows = [{
+                "selector": selector,
+                "get_type": get_type,
+                "index": None,
+                "value": len(elements),
+                self.SESSION_ID_COLUMN: self._current_session_id(context),
+            }]
+            df = self.to_dataframe(rows)
+            return self._save_output(params, context, df)
+
+        if get_all:
+            by, query = self._to_locator(params)
+            elements = driver.find_elements(by, query)
+        else:
+            elements = [self._resolve_element(driver, params)]
+
+        rows = []
+        for index, element in enumerate(elements):
+            if get_type == "html":
+                if bool(params.get("outer", False)):
+                    value = element.get_attribute("outerHTML")
+                else:
+                    value = element.get_attribute("innerHTML")
+            elif get_type == "text":
+                value = element.text
+            elif get_type == "value":
+                value = element.get_attribute("value")
+            elif get_type == "attribute":
+                self._require(params, ["attribute"])
+                value = element.get_attribute(str(params["attribute"]))
+            else:
+                raise ValueError(f"Unknown dom_get get_type: {get_type}")
+
+            rows.append({
+                "selector": selector,
+                "get_type": get_type,
+                "index": index,
+                "value": value,
+                self.SESSION_ID_COLUMN: self._current_session_id(context),
+            })
+
+        df = self.to_dataframe(rows)
+        return self._save_output(params, context, df)
+
+    def wait(self, params: dict, context: dict) -> Any:
+        self._require(params, ["until"])
+        driver = self._get_page(params, context)
+        until = str(params["until"]).strip()
+        timeout_ms = int(params.get("timeout_ms") or self.DEFAULT_TIMEOUT_MS)
+        wait = WebDriverWait(driver, max(1, timeout_ms / 1000))
+
+        if until.startswith("selector_"):
+            self._require(params, ["selector"])
+            by, query = self._to_locator(params)
+            state = until.replace("selector_", "", 1)
+            if state == "visible":
+                wait.until(EC.visibility_of_element_located((by, query)))
+            elif state == "hidden":
+                wait.until(EC.invisibility_of_element_located((by, query)))
+            elif state == "attached":
+                wait.until(EC.presence_of_element_located((by, query)))
+            elif state == "detached":
+                wait.until(EC.invisibility_of_element_located((by, query)))
+            else:
+                raise ValueError(f"Unknown wait selector state: {state}")
+
+        elif until == "url_contains":
+            self._require(params, ["value"])
+            wait.until(EC.url_contains(str(params["value"])))
+
+        elif until == "url_equals":
+            self._require(params, ["value"])
+            wait.until(EC.url_to_be(str(params["value"])))
+
+        elif until == "url_regex":
+            self._require(params, ["value"])
+            pattern = re.compile(str(params["value"]))
+            wait.until(lambda d: bool(pattern.search(str(d.current_url))))
+
+        elif until == "load":
+            target_state = str(params.get("state") or "domcontentloaded").strip().lower()
+            wait.until(self._document_ready_condition(target_state))
+
+        elif until == "sleep":
+            ms = int(params.get("ms") or 1000)
+            time.sleep(max(0, ms) / 1000)
+
+        else:
+            raise ValueError(f"Unknown wait until: {until}")
+
+        rows = [{
+            "status": "success",
+            "action": "wait",
+            "until": until,
+            "selector": params.get("selector"),
+            "value": params.get("value"),
+            self.SESSION_ID_COLUMN: self._current_session_id(context),
+        }]
+        df = self.to_dataframe(rows)
+        return self._save_output(params, context, df)
+
+    def screenshot(self, params: dict, context: dict) -> Any:
+        self._require(params, ["path"])
+        driver = self._get_page(params, context)
+        target = str(params.get("target") or "page").strip().lower()
+        path = Path(str(params["path"])).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        if target == "page":
+            driver.save_screenshot(str(path))
+        elif target == "element":
+            element = self._resolve_element(driver, params)
+            element.screenshot(str(path))
+        else:
+            raise ValueError(f"Unknown screenshot target: {target}")
+
+        rows = [{
+            "status": "success",
+            "action": "screenshot",
+            "target": target,
+            "path": str(path),
+            self.SESSION_ID_COLUMN: self._current_session_id(context),
+        }]
+        df = self.to_dataframe(rows)
+        return self._save_output(params, context, df)
+
+    def _ensure_runtime(self, params: dict, context: dict) -> dict:
+        if webdriver is None:
+            raise ImportError(
+                "selenium がインストールされていません。"
+                " `pip install selenium` を実行してください。"
+            )
+
+        runtime = context.get(self.RUNTIME_KEY)
+        if runtime is None:
+            runtime = {
+                "driver": None,
+                "tabs": {},
+            }
+            context[self.RUNTIME_KEY] = runtime
+
+        if runtime["driver"] is None:
+            options = webdriver.ChromeOptions()
+            options.page_load_strategy = "none"
+            if bool(params.get("headless", False)):
+                options.add_argument("--headless=new")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--no-sandbox")
+            options.add_argument("--disable-dev-shm-usage")
+            driver = webdriver.Chrome(options=options)
+            runtime["driver"] = driver
+            first_handle = driver.current_window_handle
+            runtime["tabs"][f"{self.DEFAULT_WINDOW_ID}:{self.DEFAULT_TAB_ID}"] = first_handle
+        self._store_runtime(context, runtime)
+        return runtime
+
+    def _get_page(self, params: dict, context: dict):
+        source_session_key = self._resolve_source_session_key(params, context)
+        if source_session_key:
+            runtime = SESSION_STORE.get(source_session_key)
+            if runtime is None:
+                raise ValueError(
+                    f"source_step_id から参照した Webセッションが見つかりません: {source_session_key}"
+                )
+            context[self.RUNTIME_KEY] = runtime
+        else:
+            runtime = context.get(self.RUNTIME_KEY)
+            if runtime is None:
+                runtime = self._restore_runtime(context)
+        if runtime is None or runtime.get("driver") is None:
+            raise ValueError("Webランタイムが存在しません。先に navigate を実行してください。")
+
+        window_id = str(params.get("window_id") or self.DEFAULT_WINDOW_ID)
+        tab_id = str(params.get("tab_id") or self.DEFAULT_TAB_ID)
+        page_key = f"{window_id}:{tab_id}"
+        handle = runtime["tabs"].get(page_key)
+        if handle is None:
+            raise ValueError(f"操作対象ページが存在しません。先に navigate を実行してください: {page_key}")
+        self._switch_to_handle(runtime, handle)
+        return runtime["driver"]
+
+    def _store_runtime(self, context: dict, runtime: dict) -> str:
+        global LAST_SESSION_KEY
+        context[self.RUNTIME_KEY] = runtime
+        session_key = self._get_session_key(context)
+        if not session_key:
+            session_key = str(runtime.get("session_id") or "").strip()
+        if not session_key:
+            session_key = f"{DEFAULT_SESSION_KEY}:{uuid.uuid4().hex}"
+        runtime["session_id"] = session_key
+        SESSION_STORE[session_key] = runtime
+        LAST_SESSION_KEY = session_key
+        return session_key
+
+    def _restore_runtime(self, context: dict):
+        session_key = self._get_session_key(context)
+        runtime = SESSION_STORE.get(session_key) if session_key else None
+        if runtime is None and LAST_SESSION_KEY:
+            runtime = SESSION_STORE.get(LAST_SESSION_KEY)
+        if runtime is None:
+            runtime = SESSION_STORE.get(DEFAULT_SESSION_KEY)
+        if runtime is not None:
+            context[self.RUNTIME_KEY] = runtime
+        return runtime
+
+    def _resolve_source_session_key(self, params: dict, context: dict) -> str:
+        source_ref = str(params.get("source_step_id") or "").strip()
+        if not source_ref:
+            return ""
+        source_val = context.get(source_ref)
+        if source_val is None:
+            raise ValueError(f"source_step_id が context に存在しません: {source_ref}")
+        try:
+            df = self.to_dataframe(source_val)
+        except Exception:
+            return str(source_val or "").strip()
+        if self.SESSION_ID_COLUMN not in df.columns or len(df.index) == 0:
+            raise ValueError(
+                f"source_step_id の出力に {self.SESSION_ID_COLUMN} がありません: {source_ref}"
+            )
+        return str(df.iloc[0][self.SESSION_ID_COLUMN] or "").strip()
+
+    def _current_session_id(self, context: dict) -> str:
+        runtime = context.get(self.RUNTIME_KEY) if isinstance(context, dict) else None
+        sid = str((runtime or {}).get("session_id") or "").strip()
+        if sid:
+            return sid
+        return self._get_session_key(context) or ""
 
     @staticmethod
-    def _extract_header(response_header: str, key: str) -> str:
-        key_lower = str(key).lower()
-        for line in response_header.split("\r\n"):
-            if ":" not in line:
-                continue
-            name, value = line.split(":", 1)
-            if name.strip().lower() == key_lower:
-                return value.strip()
+    def _get_session_key(context: dict) -> str:
+        if not isinstance(context, dict):
+            return ""
+        workspace_root = str(context.get("__workspace_root") or "").strip()
+        flow_dir = str(context.get("__flow_dir") or "").strip()
+        if workspace_root or flow_dir:
+            return f"{workspace_root}|{flow_dir}"
+        run_id = str(context.get("__run_id") or "").strip()
+        workspace_tab_id = str(context.get("__workspace_tab_id") or "").strip()
+        if run_id and workspace_tab_id:
+            return f"{workspace_tab_id}:{run_id}"
         return ""
 
-    def _send_text(self, text: str) -> None:
-        payload = text.encode("utf-8")
-        frame = bytearray()
-        frame.append(0x81)
-        payload_length = len(payload)
-        if payload_length < 126:
-            frame.append(0x80 | payload_length)
-        elif payload_length < (1 << 16):
-            frame.append(0x80 | 126)
-            frame.extend(payload_length.to_bytes(2, "big"))
-        else:
-            frame.append(0x80 | 127)
-            frame.extend(payload_length.to_bytes(8, "big"))
-        mask_key = random.randbytes(4) if hasattr(random, "randbytes") else os.urandom(4)
-        frame.extend(mask_key)
-        masked = bytes(payload[i] ^ mask_key[i % 4] for i in range(payload_length))
-        frame.extend(masked)
-        self._socket.sendall(bytes(frame))
+    def _resolve_element(self, page, params: dict):
+        self._require(params, ["selector"])
+        timeout_ms = int(params.get("timeout_ms") or self.DEFAULT_TIMEOUT_MS)
+        by, query = self._to_locator(params)
+        wait = WebDriverWait(page, max(1, timeout_ms / 1000))
+        return wait.until(EC.presence_of_element_located((by, query)))
 
-    def _receive_json(self) -> Any:
-        payload = self._receive_frame()
-        if payload is None:
-            return None
-        try:
-            return json.loads(payload.decode("utf-8", errors="ignore"))
-        except json.JSONDecodeError:
-            return None
+    def _require(self, params: dict, keys: list[str]) -> None:
+        missing = [key for key in keys if params.get(key) is None or params.get(key) == ""]
+        if missing:
+            raise ValueError(f"必須パラメータが不足しています: {', '.join(missing)}")
 
-    def _receive_frame(self) -> Optional[bytes]:
-        first = self._recv_exact(2)
-        if not first:
-            return None
-        first_byte, second_byte = first[0], first[1]
-        opcode = first_byte & 0x0F
-        masked = (second_byte & 0x80) != 0
-        length = second_byte & 0x7F
-        if length == 126:
-            length = int.from_bytes(self._recv_exact(2), "big")
-        elif length == 127:
-            length = int.from_bytes(self._recv_exact(8), "big")
-        mask_key = self._recv_exact(4) if masked else b""
-        payload = self._recv_exact(length) if length else b""
-        if masked and mask_key:
-            payload = bytes(payload[i] ^ mask_key[i % 4] for i in range(len(payload)))
-        if opcode == 0x8:
-            return None
-        return payload
+    def _save_output(self, params: dict, context: dict, df):
+        output_var = params.get("output_var")
+        if output_var:
+            context[output_var] = df
+        return df
 
-    def _recv_exact(self, nbytes: int) -> bytes:
-        chunks = bytearray()
-        while len(chunks) < nbytes:
-            chunk = self._socket.recv(nbytes - len(chunks))
-            if not chunk:
-                raise RuntimeError("WebSocket 接続が切断されました。")
-            chunks.extend(chunk)
-        return bytes(chunks)
+    def _to_locator(self, params: dict):
+        selector = str(params.get("selector") or "")
+        selector_type = str(params.get("selector_type") or "css").strip().lower()
+        if selector_type == "css":
+            return By.CSS_SELECTOR, selector
+        if selector_type == "xpath":
+            return By.XPATH, selector
+        if selector_type == "text":
+            return By.XPATH, f"//*[normalize-space(.)={self._xpath_literal(selector)}]"
+        raise ValueError(f"selector_type が不正です: {selector_type}")
+
+    def _open_new_tab(self, runtime: dict) -> str:
+        driver = runtime["driver"]
+        driver.switch_to.new_window("tab")
+        return driver.current_window_handle
+
+    def _switch_to_handle(self, runtime: dict, handle: str) -> None:
+        driver = runtime["driver"]
+        handles = set(driver.window_handles)
+        if handle not in handles:
+            raise ValueError("操作対象タブが閉じられています。再度 navigate を実行してください。")
+        driver.switch_to.window(handle)
+
+    def _wait_after_navigate(self, driver, wait_until: str, timeout_ms: int) -> None:
+        state = "complete" if wait_until in {"load", "networkidle"} else "interactive"
+        wait = WebDriverWait(driver, max(1, timeout_ms / 1000))
+        wait.until(self._document_ready_condition(state))
+
+    def _document_ready_condition(self, state: str):
+        expected = str(state or "interactive").strip().lower()
+        if expected == "networkidle":
+            expected = "complete"
+
+        def _cond(driver):
+            try:
+                ready = str(driver.execute_script("return document.readyState") or "").lower()
+            except Exception:
+                return False
+            if expected == "interactive":
+                return ready in {"interactive", "complete"}
+            return ready == "complete"
+
+        return _cond
+
+    @staticmethod
+    def _xpath_literal(value: str) -> str:
+        text = str(value or "")
+        if "'" not in text:
+            return f"'{text}'"
+        if '"' not in text:
+            return f'"{text}"'
+        parts = text.split("'")
+        return "concat(" + ", \"'\", ".join(f"'{part}'" for part in parts) + ")"

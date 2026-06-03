@@ -17,6 +17,9 @@ from connectors.base_connector import BaseConnector
 warnings.filterwarnings("ignore")
 
 class WorkflowEngine:
+    VARIABLE_NAME_CHAR_CLASS = r"a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005"
+    TEMPLATE_REF_PATTERN = rf"[{VARIABLE_NAME_CHAR_CLASS}]+(?:\.[{VARIABLE_NAME_CHAR_CLASS}]+)*(?:\(\))?"
+
     def __init__(self, logger, step_status_callback=None):
         self.logger = logger
         self.step_status_callback = step_status_callback
@@ -25,6 +28,8 @@ class WorkflowEngine:
         self._connector_lock = threading.Lock()
         self._cancel_event = None
         self._context_ref_param_keys = {"input_data", "input_data_rename"}
+        self._loop_children_by_owner = {}
+        self._inline_loop_children_enabled = False
 
     def _to_snake_case(self, name: str) -> str:
         text = str(name or "")
@@ -112,7 +117,7 @@ class WorkflowEngine:
         text = str(value or "").strip()
         if not text:
             return ""
-        double_brace_match = re.match(r"^\{\{\s*([a-zA-Z0-9_]+)\s*\}\}$", text)
+        double_brace_match = re.match(rf"^\{{\{{\s*([{self.VARIABLE_NAME_CHAR_CLASS}]+)\s*\}}\}}$", text)
         if double_brace_match:
             return double_brace_match.group(1).strip()
         match = re.match(r"^\$?\{([^}]+)\}$", text)
@@ -220,11 +225,11 @@ class WorkflowEngine:
         if key in self._context_ref_param_keys:
             return ref_name
 
-        exact_match = re.fullmatch(r"\{\{\s*([a-zA-Z0-9_\.]+(?:\(\))?)\s*\}\}", text.strip())
+        exact_match = re.fullmatch(rf"\{{\{{\s*({self.TEMPLATE_REF_PATTERN})\s*\}}\}}", text.strip())
         if exact_match:
             return self._resolve_scalar_reference(exact_match.group(1).strip())
 
-        pattern = re.compile(r"\{\{\s*([a-zA-Z0-9_\.]+(?:\(\))?)\s*\}\}")
+        pattern = re.compile(rf"\{{\{{\s*({self.TEMPLATE_REF_PATTERN})\s*\}}\}}")
         if not pattern.search(text):
             return value
 
@@ -247,6 +252,7 @@ class WorkflowEngine:
     def _build_execution_runtime(self, config):
         steps = config.get("steps", []) or []
         step_by_id = {}
+        step_owner_by_id = {}
         ordered_step_ids = []
         sequential_steps = []
 
@@ -255,6 +261,7 @@ class WorkflowEngine:
             if not step_id or step_id in step_by_id:
                 continue
             step_by_id[step_id] = step
+            step_owner_by_id[step_id] = str(step.get("loop_owner_id") or "").strip()
             ordered_step_ids.append(step_id)
             sequential_steps.append(step)
 
@@ -275,6 +282,12 @@ class WorkflowEngine:
             if from_id != "START" and from_id not in step_by_id:
                 continue
             if to_id != "END" and to_id not in step_by_id:
+                continue
+            # loop内ノードは loop_tasks 側でのみ実行するため、
+            # 本体DAGには含めない。
+            if from_id != "START" and step_owner_by_id.get(from_id):
+                continue
+            if to_id != "END" and step_owner_by_id.get(to_id):
                 continue
             order = edge.get("order", 0)
             try:
@@ -325,7 +338,10 @@ class WorkflowEngine:
             if indegree.get(step_id, 0) == 0:
                 heapq.heappush(ready, (visit_rank.get(step_id, len(visit_rank)), step_id))
 
-        unreachable_ids = [step_id for step_id in ordered_step_ids if step_id not in reachable]
+        unreachable_ids = [
+            step_id for step_id in ordered_step_ids
+            if step_id not in reachable and not step_owner_by_id.get(step_id)
+        ]
         if unreachable_ids:
             self.logger.warning(
                 "START から到達できないステップは実行対象外です: %s",
@@ -342,6 +358,128 @@ class WorkflowEngine:
             "reachable": reachable,
         }
 
+    def _index_loop_children(self, config):
+        self._loop_children_by_owner = {}
+        steps = config.get("steps") if isinstance(config.get("steps"), list) else []
+        step_by_id = {}
+        owner_children_ids = defaultdict(list)
+        for step in steps:
+            step_id = str(step.get("step_id") or "").strip()
+            if not step_id:
+                continue
+            step_by_id[step_id] = step
+            owner_id = str(step.get("loop_owner_id") or "").strip()
+            if owner_id:
+                owner_children_ids[owner_id].append(step_id)
+        if not owner_children_ids:
+            return
+
+        loop_edges_by_owner = defaultdict(list)
+        flows = config.get("flows", {}) or {}
+        raw_edges = flows.get("edges", [])
+        if isinstance(raw_edges, list):
+            for edge in raw_edges:
+                from_id = str(edge.get("from") or "").strip()
+                to_id = str(edge.get("to") or "").strip()
+                if not from_id or not to_id or to_id == "END":
+                    continue
+                target_step = step_by_id.get(to_id)
+                if not target_step:
+                    continue
+                owner_id = str(target_step.get("loop_owner_id") or "").strip()
+                if not owner_id:
+                    continue
+                source_owner_id = ""
+                source_step = step_by_id.get(from_id)
+                if source_step:
+                    source_owner_id = str(source_step.get("loop_owner_id") or "").strip()
+                if from_id != owner_id and source_owner_id != owner_id:
+                    continue
+                try:
+                    order_num = int(edge.get("order", 0))
+                except (TypeError, ValueError):
+                    order_num = 0
+                loop_edges_by_owner[owner_id].append((from_id, to_id, order_num))
+
+        # 新形式: loop.flows.<owner_id>.edges（互換: flows.loop.flows）
+        loop_config = config.get("loop", {}) or {}
+        loop_flows = loop_config.get("flows", {}) if isinstance(loop_config, dict) else {}
+        flows_loop_config = flows.get("loop", {}) if isinstance(flows, dict) else {}
+        flows_loop_flows = flows_loop_config.get("flows", {}) if isinstance(flows_loop_config, dict) else {}
+        merged_loop_flows = {}
+        if isinstance(flows_loop_flows, dict):
+            merged_loop_flows.update(flows_loop_flows)
+        if isinstance(loop_flows, dict):
+            merged_loop_flows.update(loop_flows)
+        if isinstance(merged_loop_flows, dict):
+            for owner_id, owner_flow in merged_loop_flows.items():
+                owner_key = str(owner_id or "").strip()
+                if not owner_key:
+                    continue
+                edges = owner_flow.get("edges", []) if isinstance(owner_flow, dict) else []
+                if not isinstance(edges, list):
+                    continue
+                for edge in edges:
+                    from_id = str(edge.get("from") or "").strip()
+                    to_id = str(edge.get("to") or "").strip()
+                    if not from_id or not to_id or to_id == "END":
+                        continue
+                    try:
+                        order_num = int(edge.get("order", 0))
+                    except (TypeError, ValueError):
+                        order_num = 0
+                    loop_edges_by_owner[owner_key].append((from_id, to_id, order_num))
+
+        for owner_id, child_ids in owner_children_ids.items():
+            visited = set()
+            ordered_ids = []
+            adjacency = defaultdict(list)
+            for from_id, to_id, order_num in loop_edges_by_owner.get(owner_id, []):
+                adjacency[from_id].append((order_num, to_id))
+            for edge_list in adjacency.values():
+                edge_list.sort(key=lambda item: (item[0], item[1]))
+
+            def visit(node_id):
+                for _, next_id in adjacency.get(node_id, []):
+                    if next_id not in child_ids or next_id in visited:
+                        continue
+                    visited.add(next_id)
+                    ordered_ids.append(next_id)
+                    visit(next_id)
+
+            visit("START")
+            visit(owner_id)
+            for child_id in child_ids:
+                if child_id in visited:
+                    continue
+                visited.add(child_id)
+                ordered_ids.append(child_id)
+            self._loop_children_by_owner[owner_id] = [
+                copy.deepcopy(step_by_id[child_id])
+                for child_id in ordered_ids
+                if child_id in step_by_id
+            ]
+
+    def _normalize_loop_records(self, value):
+        if value is None:
+            return []
+        if hasattr(value, "to_dict") and callable(getattr(value, "to_dict", None)) and hasattr(value, "columns"):
+            try:
+                return value.to_dict(orient="records")
+            except Exception:
+                pass
+        if isinstance(value, dict):
+            return [copy.copy(value)]
+        if isinstance(value, list):
+            records = []
+            for item in value:
+                if isinstance(item, dict):
+                    records.append(copy.copy(item))
+                else:
+                    records.append({"value": item})
+            return records
+        raise TypeError(f"繰り返しデータをレコード配列へ変換できません: {type(value).__name__}")
+
     def _build_step_report(self, step, status, result=None, error=None):
         return {
             "step_id": step.get("step_id"),
@@ -353,6 +491,186 @@ class WorkflowEngine:
             "result": result,
             "error": error,
         }
+
+    def _looks_like_dataframe(self, value):
+        return hasattr(value, "columns") and hasattr(value, "head") and hasattr(value, "attrs")
+
+    def _is_missing_preview_value(self, value):
+        if value is None:
+            return True
+        try:
+            result = value != value
+        except Exception:
+            return False
+        try:
+            return bool(result)
+        except Exception:
+            return False
+
+    def _build_dataframe_ui_cache(self, dataframe):
+        try:
+            preview = dataframe.head(100)
+            columns = [str(column) for column in preview.columns]
+            rows = []
+            for _, row in preview.iterrows():
+                values = []
+                for value in row.tolist():
+                    if self._is_missing_preview_value(value):
+                        values.append("")
+                    else:
+                        values.append(str(value))
+                rows.append(values)
+            schema_items = []
+            existing_schema = dataframe.attrs.get("ziz_schema")
+            if isinstance(existing_schema, list) and existing_schema:
+                schema_items = existing_schema
+            else:
+                for column in dataframe.columns:
+                    schema_items.append({
+                        "origin_name": str(column),
+                        "new_name": str(column),
+                        "description": str(column),
+                        "ziz_datatype": str(getattr(dataframe[column], "dtype", "") or ""),
+                    })
+            return {
+                "kind": "dataframe",
+                "preview": {
+                    "columns": columns,
+                    "rows": rows,
+                    "row_count": len(rows),
+                    "truncated": bool(len(dataframe.index) > len(rows)),
+                },
+                "schema": {
+                    "columns": [
+                        {
+                            "origin_name": str(item.get("origin_name") or item.get("name_ja") or item.get("name_en") or ""),
+                            "new_name": str(item.get("new_name") or item.get("name_en") or item.get("origin_name") or ""),
+                            "description": str(item.get("description") or item.get("name_ja") or item.get("origin_name") or ""),
+                            "ziz_datatype": str(item.get("ziz_datatype") or ""),
+                        }
+                        for item in schema_items
+                    ]
+                },
+                "row_count": int(len(dataframe.index)),
+            }
+        except Exception:
+            return {
+                "kind": "dataframe",
+                "preview": {"columns": [], "rows": [], "row_count": 0, "truncated": False},
+                "schema": {"columns": []},
+                "row_count": 0,
+            }
+
+    def _collect_step_context_refs(self, value):
+        refs = set()
+        if isinstance(value, dict):
+            for sub_value in value.values():
+                refs.update(self._collect_step_context_refs(sub_value))
+            return refs
+        if isinstance(value, list):
+            for item in value:
+                refs.update(self._collect_step_context_refs(item))
+            return refs
+        if not isinstance(value, str):
+            return refs
+        text = str(value)
+        exact_match = re.fullmatch(rf"\{{\{{\s*({self.TEMPLATE_REF_PATTERN})\s*\}}\}}", text.strip())
+        if exact_match:
+            refs.add(exact_match.group(1).strip().split(".")[0].strip())
+            return refs
+        pattern = re.compile(rf"\{{\{{\s*({self.TEMPLATE_REF_PATTERN})\s*\}}\}}")
+        for match in pattern.findall(text):
+            refs.add(str(match).split(".")[0].strip())
+        shell_match = re.fullmatch(r"^\$?\{([^}]+)\}$", text.strip())
+        if shell_match:
+            refs.add(str(shell_match.group(1) or "").split(".")[0].strip())
+        return refs
+
+    def _build_sequential_lifetime_plan(self, steps):
+        output_var_to_step = {}
+        for step in steps:
+            sid = str(step.get("step_id") or "").strip()
+            output_var = str(step.get("output_variable") or "").strip()
+            if sid and output_var:
+                output_var_to_step[output_var] = sid
+
+        consumers_by_producer = defaultdict(set)
+        producers_by_consumer = defaultdict(set)
+        for step in steps:
+            consumer_id = str(step.get("step_id") or "").strip()
+            if not consumer_id:
+                continue
+            params = step.get("params", {}) or {}
+            refs = self._collect_step_context_refs(params)
+            action = str(step.get("action") or "").strip()
+            if action == "loop_tasks":
+                source_ref = self._normalize_context_ref(
+                    (params.get("source_step_id") or params.get("input_data"))
+                )
+                if source_ref:
+                    refs.add(str(source_ref).split(".")[0].strip())
+            for ref_root in refs:
+                producer_id = output_var_to_step.get(ref_root)
+                if not producer_id or producer_id == consumer_id:
+                    continue
+                consumers_by_producer[producer_id].add(consumer_id)
+                producers_by_consumer[consumer_id].add(producer_id)
+
+        remaining_consumers = {
+            producer_id: len(consumers)
+            for producer_id, consumers in consumers_by_producer.items()
+        }
+        return {
+            "remaining_consumers": remaining_consumers,
+            "producers_by_consumer": producers_by_consumer,
+        }
+
+    def _decrement_lifetime_after_step(self, step_id, plan, report):
+        if not isinstance(plan, dict):
+            return
+        producers = (plan.get("producers_by_consumer") or {}).get(str(step_id), set())
+        remaining = plan.get("remaining_consumers") or {}
+        for producer_id in producers:
+            if producer_id not in remaining:
+                continue
+            remaining[producer_id] = max(0, int(remaining.get(producer_id, 0)) - 1)
+            if remaining[producer_id] != 0:
+                continue
+            producer_output_var = str((plan.get("producer_step_meta") or {}).get(producer_id, "")).strip()
+            if producer_output_var and producer_output_var in self.context:
+                del self.context[producer_output_var]
+                self.logger.info(
+                    "[%s] context寿命管理: %s を解放しました。",
+                    step_id,
+                    producer_output_var,
+                )
+            report_entries = (plan.get("report_entry_by_step_id") or {})
+            producer_entry = report_entries.get(producer_id)
+            if isinstance(producer_entry, dict):
+                producer_entry["result"] = None
+
+    def _apply_define_values_result(self, step, result):
+        if str(step.get("action") or "").strip() != "define_values":
+            return
+        rows = []
+        if hasattr(result, "to_dict") and callable(getattr(result, "to_dict", None)) and hasattr(result, "columns"):
+            try:
+                rows = result.to_dict(orient="records")
+            except Exception:
+                rows = []
+        elif isinstance(result, list):
+            rows = result
+        elif isinstance(result, dict):
+            rows = [result]
+        if not rows:
+            return
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("variable_name") or row.get("name") or row.get("key") or "").strip()
+            if not name:
+                continue
+            self.context[name] = row.get("value")
 
     def _emit_step_status(self, step_id, status, message=None):
         if not self.step_status_callback or not step_id:
@@ -375,12 +693,67 @@ class WorkflowEngine:
         params = self._resolve_step_params(step.get("params", {}) or {})
 
         if action == "loop_tasks":
-            ref_key = self._normalize_context_ref(params.get("input_data"))
-            passthrough = context.get(ref_key) if ref_key else None
-            self._emit_step_status(step_id, "running", f"{conn_name} -> {action}")
-            self.logger.info(f"[{step_id}] loop_tasks は未実装のためスキップします。")
-            self._emit_step_status(step_id, "success", f"{conn_name} -> {action}")
-            return passthrough
+            ref_key = self._normalize_context_ref(params.get("source_step_id") or params.get("input_data"))
+            if not ref_key:
+                raise ValueError("source_step_id は必須です。")
+            source_value = context.get(ref_key)
+            loop_records = self._normalize_loop_records(source_value)
+            try:
+                if not self._inline_loop_children_enabled:
+                    self._emit_step_status(step_id, "running", f"{conn_name} -> {action}")
+                    self.logger.info(f"[{step_id}] loop_tasks は未実装のためスキップします。")
+                    self._emit_step_status(step_id, "success", f"{conn_name} -> {action}")
+                    return loop_records
+                max_iterations = 0
+                try:
+                    max_iterations = int(params.get("max_iterations") or 0)
+                except (TypeError, ValueError):
+                    max_iterations = 0
+                if max_iterations > 0:
+                    loop_records = loop_records[:max_iterations]
+                child_steps = self._loop_children_by_owner.get(str(step_id or ""), [])
+                self._emit_step_status(step_id, "running", f"{conn_name} -> {action}")
+                self.logger.info(
+                    f"[{step_id}] loop_tasks 実行: source={ref_key} iterations={len(loop_records)} child_steps={len(child_steps)}"
+                )
+                if child_steps and loop_records:
+                    had_current_item = "current_item" in self.context
+                    prev_current_item = self.context.get("current_item")
+                    had_current_index = "current_index" in self.context
+                    prev_current_index = self.context.get("current_index")
+                    had_source_ref = ref_key in self.context
+                    prev_source_ref = self.context.get(ref_key)
+                    try:
+                        for index, record in enumerate(loop_records):
+                            if self._is_cancel_requested():
+                                raise RuntimeError("__FLOW_CANCELLED__")
+                            self.context["current_item"] = record
+                            self.context["current_index"] = index
+                            self.context[ref_key] = record
+                            for child_step in child_steps:
+                                child_report = {"steps": [], "error": None, "cancelled": False}
+                                child_error = self._run_step_sequential(child_step, child_report)
+                                if child_error:
+                                    raise RuntimeError(str(child_error))
+                                if child_report.get("cancelled"):
+                                    raise RuntimeError("__FLOW_CANCELLED__")
+                    finally:
+                        if had_current_item:
+                            self.context["current_item"] = prev_current_item
+                        else:
+                            self.context.pop("current_item", None)
+                        if had_current_index:
+                            self.context["current_index"] = prev_current_index
+                        else:
+                            self.context.pop("current_index", None)
+                        if had_source_ref:
+                            self.context[ref_key] = prev_source_ref
+                        else:
+                            self.context.pop(ref_key, None)
+                self._emit_step_status(step_id, "success", f"{conn_name} -> {action}")
+                return loop_records
+            finally:
+                del loop_records
 
         self._emit_step_status(step_id, "running", f"{conn_name} -> {action}")
         self.logger.info(f"[{step_id}] 実行中: {conn_name} -> {action}")
@@ -394,17 +767,26 @@ class WorkflowEngine:
                 connector.clear_execution_logger()
         return result
 
-    def _run_step_sequential(self, step, report):
+    def _run_step_sequential(self, step, report, lifetime_plan=None):
         sid = step.get("step_id")
         if self._is_cancel_requested():
             self._mark_cancelled(report)
             return report["error"]
         try:
             result = self._execute_step(step, copy.copy(self.context))
+            self._apply_define_values_result(step, result)
             output_var = step.get("output_variable")
             if output_var:
                 self.context[output_var] = result
-            report["steps"].append(self._build_step_report(step, "success", result=result))
+            if self._looks_like_dataframe(result):
+                report_entry = self._build_step_report(step, "success", result=None)
+                report_entry["ui_cache"] = self._build_dataframe_ui_cache(result)
+            else:
+                report_entry = self._build_step_report(step, "success", result=result)
+            report["steps"].append(report_entry)
+            report_step_map = (lifetime_plan or {}).get("report_entry_by_step_id")
+            if isinstance(report_step_map, dict):
+                report_step_map[str(sid or "")] = report_entry
             self._emit_step_status(sid, "success", f"{step.get('connector')} -> {step.get('action')}")
             return None
         except Exception as e:
@@ -417,8 +799,10 @@ class WorkflowEngine:
             self._emit_step_status(sid, "error", message)
             self.logger.error(f"[{sid}] エラー発生: {message}")
             return message
+        finally:
+            self._decrement_lifetime_after_step(sid, lifetime_plan, report)
 
-    def _run_ready_queue(self, runtime, report):
+    def _run_ready_queue(self, runtime, report, lifetime_plan=None):
         step_by_id = runtime["step_by_id"]
         adjacency = runtime["adjacency"]
         indegree = dict(runtime["indegree"])
@@ -502,12 +886,22 @@ class WorkflowEngine:
 
                     try:
                         result = future.result()
+                        self._apply_define_values_result(step, result)
                         if self._is_cancel_requested():
                             self._mark_cancelled(report)
                         if output_var:
                             self.context[output_var] = result
-                        report["steps"].append(self._build_step_report(step, "success", result=result))
+                        if self._looks_like_dataframe(result):
+                            report_entry = self._build_step_report(step, "success", result=None)
+                            report_entry["ui_cache"] = self._build_dataframe_ui_cache(result)
+                        else:
+                            report_entry = self._build_step_report(step, "success", result=result)
+                        report["steps"].append(report_entry)
+                        report_step_map = (lifetime_plan or {}).get("report_entry_by_step_id")
+                        if isinstance(report_step_map, dict):
+                            report_step_map[str(sid or "")] = report_entry
                         self._emit_step_status(sid, "success", f"{step.get('connector')} -> {step.get('action')}")
+                        self._decrement_lifetime_after_step(sid, lifetime_plan, report)
                         if not report["error"] and not report.get("cancelled"):
                             for _, next_id in adjacency.get(sid, []):
                                 if next_id == "END" or next_id not in indegree:
@@ -563,6 +957,9 @@ class WorkflowEngine:
             report["error"] = message
             return report
 
+        self._index_loop_children(config)
+        self._inline_loop_children_enabled = True
+
         if only_step_id:
             steps = config.get("steps") if isinstance(config.get("steps"), list) else []
             target_step = None
@@ -575,6 +972,7 @@ class WorkflowEngine:
                 self.logger.error(message)
                 report["error"] = message
                 return report
+            self._inline_loop_children_enabled = str(target_step.get("action") or "").strip() == "loop_tasks"
             config = {
                 "metadata": copy.deepcopy(config.get("metadata") or {}),
                 "variables": copy.deepcopy(config.get("variables") or {}),
@@ -590,15 +988,30 @@ class WorkflowEngine:
         self.logger.info(f"--- フロー開始: {report['flow_name']} ---")
 
         runtime = self._build_execution_runtime(config)
+        steps_for_lifetime = runtime["steps"] if runtime["mode"] == "sequential" else [
+            runtime["step_by_id"][step_id]
+            for step_id in sorted(list(runtime.get("reachable", set())), key=lambda k: runtime.get("visit_rank", {}).get(k, 0))
+            if step_id in runtime["step_by_id"]
+        ]
+        lifetime_plan = self._build_sequential_lifetime_plan(steps_for_lifetime)
+        producer_step_meta = {}
+        for step in steps_for_lifetime:
+            sid = str(step.get("step_id") or "").strip()
+            output_var = str(step.get("output_variable") or "").strip()
+            if sid and output_var:
+                producer_step_meta[sid] = output_var
+        lifetime_plan["producer_step_meta"] = producer_step_meta
+        lifetime_plan["report_entry_by_step_id"] = {}
+
         if runtime["mode"] == "sequential":
             for step in runtime["steps"]:
-                error = self._run_step_sequential(step, report)
+                error = self._run_step_sequential(step, report, lifetime_plan=lifetime_plan)
                 if error:
                     if report.get("cancelled"):
                         return report
                     return report
         else:
-            error = self._run_ready_queue(runtime, report)
+            error = self._run_ready_queue(runtime, report, lifetime_plan=lifetime_plan)
             if error:
                 return report
 

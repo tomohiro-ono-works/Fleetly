@@ -7,6 +7,8 @@
     version: "1.0",
     ready: false,
     backend: null,
+    initRequested: false,
+    initFailed: false,
     pending: new Map(),
     queue: [],
   };
@@ -86,10 +88,42 @@
     }
   }
 
+  function resolveBridgeState() {
+    if (state.ready && state.backend) return "ready";
+    if (state.initFailed) return "failed";
+    if (state.initRequested) return "initializing";
+    return "not_connected";
+  }
+
+  function getBridgeUnavailableMessage() {
+    const bridgeState = resolveBridgeState();
+    if (bridgeState === "initializing") {
+      return "ブリッジ初期化中です。再読み込みしてください。";
+    }
+    if (bridgeState === "failed") {
+      return "ブリッジ初期化に失敗しました。再読み込みしてください。";
+    }
+    return "ブリッジ未接続です。再読み込みしてください。";
+  }
+
+  function markInitFailed() {
+    state.initFailed = true;
+    state.initRequested = false;
+  }
+
   function createBridgeApi() {
     return {
       available() {
         return !!state.ready && !!state.backend;
+      },
+      status() {
+        return {
+          state: resolveBridgeState(),
+          ready: !!state.ready && !!state.backend,
+        };
+      },
+      unavailableMessage() {
+        return getBridgeUnavailableMessage();
       },
       call(type, payload = {}) {
         const id = nextId();
@@ -139,6 +173,8 @@
     const backend = channel?.objects?.backendBridge || null;
     if (!backend || typeof backend.postMessage !== "function") return;
     state.backend = backend;
+    state.initFailed = false;
+    state.initRequested = false;
     if (backend.messageToFrontend && typeof backend.messageToFrontend.connect === "function") {
       backend.messageToFrontend.connect(handleIncoming);
     }
@@ -149,15 +185,30 @@
 
   function loadQtWebChannel() {
     if (!(window.qt && window.qt.webChannelTransport)) return;
+    state.initRequested = true;
+    state.initFailed = false;
     if (window.QWebChannel) {
-      new window.QWebChannel(window.qt.webChannelTransport, installBridge);
+      try {
+        new window.QWebChannel(window.qt.webChannelTransport, installBridge);
+      } catch (_) {
+        markInitFailed();
+      }
       return;
     }
     const script = document.createElement("script");
     script.src = "qrc:///qtwebchannel/qwebchannel.js";
+    script.onerror = function () {
+      markInitFailed();
+    };
     script.onload = function () {
-      if (window.QWebChannel && window.qt && window.qt.webChannelTransport) {
+      if (!(window.QWebChannel && window.qt && window.qt.webChannelTransport)) {
+        markInitFailed();
+        return;
+      }
+      try {
         new window.QWebChannel(window.qt.webChannelTransport, installBridge);
+      } catch (_) {
+        markInitFailed();
       }
     };
     document.head.appendChild(script);

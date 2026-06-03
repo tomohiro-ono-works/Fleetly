@@ -1,0 +1,1028 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Tableau Downloader 4 Panel 1600 Render</title>
+
+  <style>
+    :root {
+      --header: #000;
+      --header-text: #fff;
+      --border: #d9d9d9;
+      --bg: #f4f4f4;
+      --active: #fff3bf;
+      --error: #b00020;
+      --ok: #0a6b2b;
+      --run: #0b57d0;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html, body {
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: #222;
+      background: #fff;
+    }
+
+    .app-header {
+      height: 52px;
+      background: var(--header);
+      color: var(--header-text);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: .02em;
+    }
+
+    .header-sub {
+      font-size: 12px;
+      color: #ddd;
+      font-weight: 500;
+    }
+
+    .app-main {
+      height: calc(100% - 52px);
+      display: grid;
+      grid-template-columns: 500px 1fr;
+      overflow: hidden;
+    }
+
+    .left {
+      border-right: 1px solid var(--border);
+      background: #fafafa;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+    }
+
+    .right {
+      background: #e9e9e9;
+      padding: 10px;
+      overflow: hidden;
+    }
+
+    .tabs {
+      display: flex;
+      background: #111;
+      border-bottom: 1px solid #333;
+    }
+
+    .tab-btn {
+      flex: 1;
+      border: 0;
+      border-right: 1px solid #333;
+      background: #111;
+      color: #ddd;
+      padding: 11px 8px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .tab-btn:last-child {
+      border-right: 0;
+    }
+
+    .tab-btn.active {
+      background: #fff;
+      color: #111;
+    }
+
+    .tab-content {
+      display: none;
+      flex: 1;
+      overflow: auto;
+      padding: 12px;
+    }
+
+    .tab-content.active {
+      display: block;
+    }
+
+    .section-title {
+      font-weight: 700;
+      margin: 0 0 8px;
+      font-size: 14px;
+    }
+
+    .hint {
+      font-size: 12px;
+      color: #444;
+      background: #eef1f4;
+      border: 1px solid var(--border);
+      padding: 8px;
+      line-height: 1.55;
+      margin-bottom: 10px;
+    }
+
+    textarea {
+      width: 100%;
+      height: calc(100vh - 190px);
+      min-height: 360px;
+      resize: none;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      background: #fff;
+    }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      margin: 10px 0;
+    }
+
+    button {
+      padding: 8px 11px;
+      cursor: pointer;
+      border: 1px solid #aaa;
+      background: #fff;
+      border-radius: 4px;
+      font-size: 13px;
+    }
+
+    button.primary {
+      background: #111;
+      color: #fff;
+      border-color: #111;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: .45;
+    }
+
+    input[type="number"] {
+      width: 86px;
+      padding: 7px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      background: #fff;
+    }
+
+    label {
+      font-size: 12px;
+      color: #333;
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .table-wrap {
+      overflow: auto;
+      max-height: calc(100vh - 330px);
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+
+    table {
+      border-collapse: collapse;
+      width: 100%;
+      min-width: 760px;
+      font-size: 12px;
+    }
+
+    th, td {
+      border: 1px solid var(--border);
+      padding: 6px 7px;
+      vertical-align: top;
+    }
+
+    th {
+      background: #f2f2f2;
+      text-align: left;
+      white-space: nowrap;
+      position: sticky;
+      top: 0;
+      z-index: 2;
+    }
+
+    tr.active {
+      background: var(--active);
+    }
+
+    tbody tr {
+      cursor: pointer;
+    }
+
+    .status-pending { color: #777; }
+    .status-running { color: var(--run); font-weight: 700; }
+    .status-done { color: var(--ok); font-weight: 700; }
+    .status-error { color: var(--error); font-weight: 700; }
+    .status-skip { color: #a15c00; font-weight: 700; }
+    .invalid { color: var(--error); font-weight: 700; }
+    .ok { color: var(--ok); font-weight: 700; }
+
+    .log {
+      white-space: pre-wrap;
+      background: #0f0f0f;
+      color: #eee;
+      padding: 10px;
+      height: calc(100vh - 160px);
+      min-height: 360px;
+      overflow: auto;
+      font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+      font-size: 12px;
+      line-height: 1.45;
+      border-radius: 4px;
+      border: 1px solid #333;
+    }
+
+    .dashboard-grid {
+      height: 100%;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 10px;
+    }
+
+    .slot {
+      border: 1px solid #bbb;
+      background: #fff;
+      min-width: 0;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .slot-head {
+      height: 34px;
+      background: #000;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      padding: 0 10px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .slot-body {
+      flex: 1;
+      min-height: 0;
+      background: #fafafa;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /*
+      重要:
+      小窓の中に 1600x900 の実寸tableau-vizを置き、
+      見た目だけ transform: scale() で縮小する。
+      これにより、Tableau側には小窓サイズではなく 1600px 幅として認識させる。
+    */
+    .scaled-canvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      transform-origin: top left;
+      background: #fff;
+    }
+
+    tableau-viz {
+      display: block;
+    }
+
+    code {
+      background: #e5e5e5;
+      padding: 1px 4px;
+      border-radius: 3px;
+    }
+
+    @media (max-width: 1100px) {
+      html, body {
+        overflow: auto;
+      }
+
+      .app-main {
+        height: auto;
+        min-height: calc(100% - 52px);
+        grid-template-columns: 1fr;
+      }
+
+      .left {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .right {
+        height: 900px;
+      }
+
+      textarea, .log {
+        height: 360px;
+      }
+    }
+  </style>
+
+  <script type="module">
+    import {
+      TableauEventType,
+      PrintScaling,
+      PrintPageSize,
+      PrintOrientation
+    } from "https://public.tableau.com/javascripts/api/tableau.embedding.3.latest.min.js";
+
+    const INITIAL_CONFIG = [
+  {
+    "format": "pdf",
+    "orientation": "portrait",
+    "url": "https://www.tableau.com/ja-jp/community/public"
+  },
+  {
+    "format": "pdf",
+    "orientation": "portrait",
+    "url": "https://public.tableau.com/app/profile/bigxpt/viz/OPERATTIONALEFFICIENCY/EFFICIENCY"
+  },
+  {
+    "format": "pdf",
+    "orientation": "portrait",
+    "url": "https://public.tableau.com/app/profile/bigxpt/viz/PERSONALFINANCE_17408026366260/skill"
+  },
+  {
+    "format": "pdf",
+    "orientation": "portrait",
+    "url": "https://public.tableau.com/app/profile/bigxpt/viz/SERVICEMANAGEMENT/design"
+  },
+  {
+    "format": "pdf",
+    "orientation": "portrait",
+    "url": "https://public.tableau.com/app/profile/bigxpt/viz/OKRIKA/RETAILSTORE"
+  },
+  {
+    "format": "pdf",
+    "orientation": "portrait",
+    "url": "https://public.tableau.com/app/profile/bigxpt/viz/SOLARPVMONITORING/Site"
+  },
+  {
+    "format": "pdf",
+    "orientation": "landscape",
+    "url": "https://public.tableau.com/app/profile/yusukenakanishi/viz/B2VB2026_Week_7VirginiaIsAmericasDataCenterCapital/goal"
+  },
+  {
+    "format": "pdf",
+    "orientation": "portrait",
+    "url": "https://public.tableau.com/app/profile/dennis.kao/viz/CanadasSocialWorkers/Final"
+  }
+];
+
+    let targets = structuredClone(INITIAL_CONFIG);
+    let statuses = [];
+    let selectedIndex = 0;
+    let busy = false;
+    let cancelRequested = false;
+    let currentManualViz = null;
+    let currentManualVizIndex = null;
+
+    const $ = (id) => document.getElementById(id);
+
+    function log(message) {
+      const time = new Date().toLocaleTimeString();
+      $("log").textContent += `[${time}] ${message}\n`;
+      $("log").scrollTop = $("log").scrollHeight;
+    }
+
+    function switchTab(tabName) {
+      document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.classList.toggle("active", btn.dataset.tab === tabName);
+      });
+      document.querySelectorAll(".tab-content").forEach(panel => {
+        panel.classList.toggle("active", panel.id === `tab-${tabName}`);
+      });
+    }
+
+    function resetStatuses() {
+      statuses = targets.map(() => ({ state: "pending", message: "" }));
+    }
+
+    function setStatus(index, state, message = "") {
+      statuses[index] = { state, message };
+      renderTable();
+    }
+
+    function setBusy(value) {
+      busy = value;
+      $("applyJsonBtn").disabled = value;
+      $("loadBtn").disabled = value;
+      $("downloadBtn").disabled = value || currentManualViz === null;
+      $("downloadAllBtn").disabled = value;
+      $("cancelBtn").disabled = !value;
+    }
+
+    function normalizeOrientation(value) {
+      const v = String(value || "").trim().toLowerCase();
+      if (v === "landscape") return "landscape";
+      return "portrait";
+    }
+
+    function normalizeFormat(value) {
+      const v = String(value || "").trim().toLowerCase();
+      if (v === "pptx") return "pptx";
+      return "pdf";
+    }
+
+    function normalizeTableauUrl(rawUrl) {
+      let u;
+      try {
+        u = new URL(rawUrl);
+      } catch {
+        return { ok: false, src: null, reason: "URL形式が不正" };
+      }
+
+      if (u.hostname === "public.tableau.com") {
+        const parts = u.pathname.split("/").filter(Boolean);
+        const vizIndex = parts.indexOf("viz");
+
+        if (vizIndex >= 0 && parts[vizIndex + 1] && parts[vizIndex + 2]) {
+          const workbook = parts[vizIndex + 1];
+          const sheet = parts[vizIndex + 2];
+          return {
+            ok: true,
+            src: `https://public.tableau.com/views/${encodeURIComponent(workbook)}/${encodeURIComponent(sheet)}?:showVizHome=no`,
+            reason: ""
+          };
+        }
+
+        if (parts[0] === "views" && parts[1] && parts[2]) {
+          return { ok: true, src: rawUrl, reason: "" };
+        }
+      }
+
+      if (u.pathname.includes("/views/") || u.hash.includes("/views/")) {
+        return { ok: true, src: rawUrl, reason: "" };
+      }
+
+      return {
+        ok: false,
+        src: null,
+        reason: "TableauビューURLではないため、Embedding API対象外"
+      };
+    }
+
+    function getRenderSize() {
+      const width = Math.max(320, Number($("renderWidth").value || 1600));
+      const height = Math.max(240, Number($("renderHeight").value || 900));
+      return { width, height };
+    }
+
+    function fitScaledCanvas(slotBody, canvas) {
+      const renderWidth = Number(canvas.dataset.renderWidth);
+      const renderHeight = Number(canvas.dataset.renderHeight);
+      const bodyWidth = slotBody.clientWidth || 1;
+      const bodyHeight = slotBody.clientHeight || 1;
+
+      const scale = Math.min(bodyWidth / renderWidth, bodyHeight / renderHeight);
+      const left = Math.max(0, (bodyWidth - renderWidth * scale) / 2);
+      const top = Math.max(0, (bodyHeight - renderHeight * scale) / 2);
+
+      canvas.style.transform = `translate(${left}px, ${top}px) scale(${scale})`;
+    }
+
+    function fitAllScaledCanvases() {
+      document.querySelectorAll(".slot-body").forEach(slotBody => {
+        const canvas = slotBody.querySelector(".scaled-canvas");
+        if (canvas) fitScaledCanvas(slotBody, canvas);
+      });
+    }
+
+    function createScaledViz(slotBody, src) {
+      const { width, height } = getRenderSize();
+
+      const canvas = document.createElement("div");
+      canvas.className = "scaled-canvas";
+      canvas.dataset.renderWidth = String(width);
+      canvas.dataset.renderHeight = String(height);
+      canvas.style.width = `${width}px`;
+      canvas.style.height = `${height}px`;
+
+      const viz = document.createElement("tableau-viz");
+      viz.setAttribute("src", src);
+      viz.setAttribute("toolbar", "bottom");
+      viz.setAttribute("hide-tabs", "");
+      viz.style.width = `${width}px`;
+      viz.style.height = `${height}px`;
+
+      canvas.appendChild(viz);
+      slotBody.appendChild(canvas);
+      fitScaledCanvas(slotBody, canvas);
+
+      return viz;
+    }
+
+    function getPdfOptions(orientation) {
+      return {
+        pageSize: PrintPageSize.Unspecified,
+        orientation: normalizeOrientation(orientation) === "landscape"
+          ? PrintOrientation.Landscape
+          : PrintOrientation.Portrait,
+        scaling: PrintScaling.Automatic
+      };
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function statusClass(state) {
+      if (state === "running") return "status-running";
+      if (state === "done") return "status-done";
+      if (state === "error") return "status-error";
+      if (state === "skip") return "status-skip";
+      return "status-pending";
+    }
+
+    function renderTable() {
+      const tbody = $("targetBody");
+      tbody.innerHTML = "";
+
+      targets.forEach((target, index) => {
+        const normalized = normalizeTableauUrl(target.url);
+        const status = statuses[index] || { state: "pending", message: "" };
+        const tr = document.createElement("tr");
+
+        if (index === selectedIndex) tr.classList.add("active");
+
+        tr.dataset.index = String(index);
+        tr.innerHTML = `
+          <td><input type="radio" name="targetRadio" ${index === selectedIndex ? "checked" : ""}></td>
+          <td>${String(index + 1).padStart(2, "0")}</td>
+          <td>${escapeHtml(normalizeFormat(target.format))}</td>
+          <td>${escapeHtml(normalizeOrientation(target.orientation))}</td>
+          <td>${escapeHtml(target.url)}</td>
+          <td>${normalized.ok ? '<span class="ok">OK</span>' : '<span class="invalid">' + escapeHtml(normalized.reason) + '</span>'}</td>
+          <td><span class="${statusClass(status.state)}">${escapeHtml(status.state)}</span>${status.message ? "<br>" + escapeHtml(status.message) : ""}</td>
+        `;
+
+        tbody.appendChild(tr);
+      });
+    }
+
+    function applyJson() {
+      const raw = $("configJson").value;
+      let parsed;
+
+      try {
+        parsed = JSON.parse(raw);
+      } catch (err) {
+        throw new Error(`JSONパースエラー: ${err.message}`);
+      }
+
+      if (!Array.isArray(parsed)) {
+        throw new Error("JSONは配列にしてください。");
+      }
+
+      parsed.forEach((item, index) => {
+        if (!item || typeof item !== "object") {
+          throw new Error(`${index + 1}件目がオブジェクトではありません。`);
+        }
+        if (!("format" in item) || !("orientation" in item) || !("url" in item)) {
+          throw new Error(`${index + 1}件目に format / orientation / url のいずれかがありません。`);
+        }
+      });
+
+      targets = parsed.map(item => ({
+        format: normalizeFormat(item.format),
+        orientation: normalizeOrientation(item.orientation),
+        url: String(item.url).trim()
+      }));
+
+      selectedIndex = 0;
+      currentManualViz = null;
+      currentManualVizIndex = null;
+      resetStatuses();
+      clearSlots();
+      renderTable();
+      log(`JSON反映: ${targets.length}件`);
+    }
+
+    function waitFirstInteractive(viz, timeoutMs = 120000) {
+      return new Promise((resolve, reject) => {
+        let done = false;
+
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          resolve();
+        };
+
+        const fail = (event) => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          reject(new Error(`VizLoadError: ${JSON.stringify(event.detail ?? {})}`));
+        };
+
+        const timer = setTimeout(() => {
+          if (done) return;
+          done = true;
+          reject(new Error("FirstInteractive待機がタイムアウトしました。URL、認証、埋め込み可否、BigQuery処理時間を確認してください。"));
+        }, timeoutMs);
+
+        const firstInteractiveName = TableauEventType.FirstInteractive || "firstinteractive";
+        const errorName = TableauEventType.VizLoadError || "vizloaderror";
+
+        viz.addEventListener(firstInteractiveName, finish, { once: true });
+        viz.addEventListener("firstinteractive", finish, { once: true });
+        viz.addEventListener(errorName, fail, { once: true });
+        viz.addEventListener("vizloaderror", fail, { once: true });
+      });
+    }
+
+    function clearSlots() {
+      for (let i = 1; i <= 4; i++) {
+        $(`slotHead${i}`).textContent = `Slot ${i}`;
+        $(`slotBody${i}`).innerHTML = "";
+      }
+    }
+
+    function getSlot(workerId) {
+      return {
+        head: $(`slotHead${workerId}`),
+        body: $(`slotBody${workerId}`)
+      };
+    }
+
+    async function loadVizIntoSlot(index, workerId) {
+      const target = targets[index];
+      const normalized = normalizeTableauUrl(target.url);
+      const slot = getSlot(workerId);
+
+      if (!normalized.ok) {
+        throw new Error(normalized.reason);
+      }
+
+      const { width, height } = getRenderSize();
+      slot.head.textContent = `Slot ${workerId}: ${String(index + 1).padStart(2, "0")} 読込中 / ${width}x${height}`;
+      slot.body.innerHTML = "";
+
+      const viz = createScaledViz(slot.body, normalized.src);
+      const wait = waitFirstInteractive(viz);
+
+      log(`Slot ${workerId}: 読み込み開始 ${index + 1}件目 / 内部サイズ ${width}x${height}`);
+      await wait;
+
+      slot.head.textContent = `Slot ${workerId}: ${String(index + 1).padStart(2, "0")} 読込完了 / ${width}x${height}`;
+      log(`Slot ${workerId}: 読み込み完了 ${index + 1}件目`);
+
+      return viz;
+    }
+
+    async function exportTarget(viz, index, workerId) {
+      const target = targets[index];
+      const format = normalizeFormat(target.format);
+
+      if (format === "pdf") {
+        const options = getPdfOptions(target.orientation);
+        log(`Slot ${workerId}: PDF開始 ${index + 1}件目 / orientation=${target.orientation} / pageSize=Unspecified / scaling=Automatic`);
+        await viz.exportPDFAsync(undefined, options);
+        log(`Slot ${workerId}: PDFダウンロード開始 ${index + 1}件目`);
+        return;
+      }
+
+      if (format === "pptx") {
+        log(`Slot ${workerId}: PPTX開始 ${index + 1}件目`);
+        await viz.exportPowerPointAsync();
+        log(`Slot ${workerId}: PPTXダウンロード開始 ${index + 1}件目`);
+        return;
+      }
+
+      throw new Error(`未対応format: ${format}`);
+    }
+
+    function sleep(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function processOne(index, workerId) {
+      const slot = getSlot(workerId);
+      setStatus(index, "running", `Slot ${workerId}`);
+
+      try {
+        const viz = await loadVizIntoSlot(index, workerId);
+
+        const beforeExportMs = Number($("beforeExportMs").value || 0);
+        if (beforeExportMs > 0) {
+          log(`Slot ${workerId}: PDF/PPTX前待機 ${beforeExportMs}ms`);
+          await sleep(beforeExportMs);
+        }
+
+        if (cancelRequested) {
+          setStatus(index, "skip", "キャンセル");
+          return;
+        }
+
+        await exportTarget(viz, index, workerId);
+
+        const afterDownloadMs = Number($("afterDownloadMs").value || 10000);
+        slot.head.textContent = `Slot ${workerId}: ${String(index + 1).padStart(2, "0")} DL後待機`;
+        await sleep(afterDownloadMs);
+
+        setStatus(index, "done", "ダウンロード開始済み");
+      } catch (err) {
+        const normalized = normalizeTableauUrl(targets[index].url);
+        const state = normalized.ok ? "error" : "skip";
+        setStatus(index, state, err.message);
+        log(`Slot ${workerId}: ${state.toUpperCase()} ${index + 1}件目: ${err.message}`);
+      } finally {
+        slot.body.innerHTML = "";
+        slot.head.textContent = `Slot ${workerId}: 空き`;
+      }
+    }
+
+    async function downloadAllParallel() {
+      cancelRequested = false;
+      resetStatuses();
+      renderTable();
+      clearSlots();
+
+      const maxParallel = Math.max(1, Math.min(4, Number($("parallelCount").value || 3)));
+      const { width, height } = getRenderSize();
+      let nextIndex = 0;
+
+      async function worker(workerId) {
+        while (nextIndex < targets.length && !cancelRequested) {
+          const index = nextIndex++;
+          await processOne(index, workerId);
+        }
+      }
+
+      log(`並列処理開始: 最大${maxParallel}件同時 / 内部表示 ${width}x${height}`);
+      switchTab("log");
+
+      const workers = [];
+      for (let i = 1; i <= maxParallel; i++) {
+        workers.push(worker(i));
+      }
+
+      await Promise.all(workers);
+
+      if (cancelRequested) {
+        log("キャンセルしました。すでに開始済みのダウンロードは止まりません。");
+      } else {
+        log("全件処理終了");
+      }
+    }
+
+    async function loadSelectedManual() {
+      const target = targets[selectedIndex];
+      const normalized = normalizeTableauUrl(target.url);
+
+      if (!normalized.ok) {
+        throw new Error(`${selectedIndex + 1}件目は読み込めません: ${normalized.reason}`);
+      }
+
+      currentManualViz = null;
+      currentManualVizIndex = null;
+
+      const slot = getSlot(1);
+      const { width, height } = getRenderSize();
+      slot.head.textContent = `Slot 1: 手動読込中 / ${width}x${height}`;
+      slot.body.innerHTML = "";
+
+      const viz = createScaledViz(slot.body, normalized.src);
+      const wait = waitFirstInteractive(viz);
+
+      log(`手動読み込み開始: ${selectedIndex + 1}件目 / 内部サイズ ${width}x${height}`);
+      await wait;
+
+      currentManualViz = viz;
+      currentManualVizIndex = selectedIndex;
+      slot.head.textContent = `Slot 1: 手動読込完了 ${selectedIndex + 1}件目 / ${width}x${height}`;
+      log(`手動読み込み完了: ${selectedIndex + 1}件目`);
+    }
+
+    async function downloadManual() {
+      if (!currentManualViz) {
+        throw new Error("先に読み込んでください。");
+      }
+
+      await exportTarget(currentManualViz, currentManualVizIndex, 1);
+    }
+
+    window.addEventListener("DOMContentLoaded", () => {
+      $("configJson").value = JSON.stringify(INITIAL_CONFIG, null, 2);
+      resetStatuses();
+      renderTable();
+      clearSlots();
+      setBusy(false);
+
+      document.querySelectorAll(".tab-btn").forEach(btn => {
+        btn.addEventListener("click", () => switchTab(btn.dataset.tab));
+      });
+
+      $("targetBody").addEventListener("click", (event) => {
+        if (busy) return;
+        const row = event.target.closest("tr");
+        if (!row) return;
+
+        selectedIndex = Number(row.dataset.index);
+        renderTable();
+        log(`選択: ${selectedIndex + 1}件目`);
+      });
+
+      $("applyJsonBtn").addEventListener("click", () => {
+        try {
+          applyJson();
+          switchTab("operation");
+        } catch (err) {
+          log(`ERROR: ${err.message}`);
+          switchTab("log");
+        }
+      });
+
+      $("loadBtn").addEventListener("click", async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+          await loadSelectedManual();
+        } catch (err) {
+          log(`ERROR: ${err.message}`);
+          switchTab("log");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      $("downloadBtn").addEventListener("click", async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+          await downloadManual();
+        } catch (err) {
+          log(`ERROR: ${err.message}`);
+          switchTab("log");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      $("downloadAllBtn").addEventListener("click", async () => {
+        if (busy) return;
+        setBusy(true);
+        try {
+          await downloadAllParallel();
+        } catch (err) {
+          log(`ERROR: ${err.message}`);
+          switchTab("log");
+        } finally {
+          setBusy(false);
+        }
+      });
+
+      $("cancelBtn").addEventListener("click", () => {
+        cancelRequested = true;
+        log("キャンセル要求を受け付けました。実行中の1件は完了またはタイムアウトまで待ちます。");
+        switchTab("log");
+      });
+
+      $("fitBtn").addEventListener("click", () => {
+        fitAllScaledCanvases();
+        const { width, height } = getRenderSize();
+        log(`表示倍率を再計算しました。内部サイズ ${width}x${height}`);
+      });
+
+      window.addEventListener("resize", fitAllScaledCanvases);
+
+      log("準備完了。小窓表示でも内部tableau-vizは1600px幅扱いです。");
+    });
+  </script>
+</head>
+
+<body>
+  <header class="app-header">
+    <div>Tableau PDF / PPTX Downloader</div>
+    <div class="header-sub">4 panel / internal render 1600×900</div>
+  </header>
+
+  <main class="app-main">
+    <aside class="left">
+      <nav class="tabs">
+        <button class="tab-btn active" data-tab="settings">JSON設定</button>
+        <button class="tab-btn" data-tab="operation">操作</button>
+        <button class="tab-btn" data-tab="log">ログ</button>
+      </nav>
+
+      <section id="tab-settings" class="tab-content active">
+        <div class="section-title">JSON設定</div>
+        <div class="hint">
+          JSON項目は <code>format</code> / <code>orientation</code> / <code>url</code> の3つだけです。<br>
+          PDF設定は固定で <code>pageSize=Unspecified</code>、<code>scaling=Automatic</code> です。<br>
+          B2VB2026のURLのみ、初期値を <code>orientation: landscape</code> にしています。
+        </div>
+        <textarea id="configJson"></textarea>
+        <div class="controls">
+          <button id="applyJsonBtn" class="primary">JSONを反映</button>
+        </div>
+      </section>
+
+      <section id="tab-operation" class="tab-content">
+        <div class="section-title">操作画面</div>
+        <div class="hint">
+          右側は2×2の小窓表示ですが、各Tableauは内部的に指定した幅・高さで生成し、CSSで縮小表示します。<br>
+          初期値は <code>1600×900</code> です。
+        </div>
+
+        <div class="controls">
+          <button id="loadBtn">選択URLを読み込み</button>
+          <button id="downloadBtn" disabled>表示中をダウンロード</button>
+          <button id="downloadAllBtn" class="primary">全件ダウンロード</button>
+          <button id="cancelBtn" disabled>キャンセル</button>
+        </div>
+
+        <div class="controls">
+          <label>
+            並列数
+            <input id="parallelCount" type="number" min="1" max="4" step="1" value="3">
+          </label>
+          <label>
+            内部幅
+            <input id="renderWidth" type="number" min="320" step="100" value="1600">
+          </label>
+          <label>
+            内部高
+            <input id="renderHeight" type="number" min="240" step="100" value="900">
+          </label>
+          <button id="fitBtn">表示倍率を再計算</button>
+        </div>
+
+        <div class="controls">
+          <label>
+            DL後待機(ms)
+            <input id="afterDownloadMs" type="number" min="1000" step="1000" value="10000">
+          </label>
+          <label>
+            DL前待機(ms)
+            <input id="beforeExportMs" type="number" min="0" step="1000" value="2000">
+          </label>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>選択</th>
+                <th>No</th>
+                <th>形式</th>
+                <th>向き</th>
+                <th>URL</th>
+                <th>判定</th>
+                <th>状態</th>
+              </tr>
+            </thead>
+            <tbody id="targetBody"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="tab-log" class="tab-content">
+        <div class="section-title">ログ画面</div>
+        <div id="log" class="log"></div>
+      </section>
+    </aside>
+
+    <section class="right">
+      <div class="dashboard-grid">
+        <div class="slot">
+          <div id="slotHead1" class="slot-head">Slot 1</div>
+          <div id="slotBody1" class="slot-body"></div>
+        </div>
+        <div class="slot">
+          <div id="slotHead2" class="slot-head">Slot 2</div>
+          <div id="slotBody2" class="slot-body"></div>
+        </div>
+        <div class="slot">
+          <div id="slotHead3" class="slot-head">Slot 3</div>
+          <div id="slotBody3" class="slot-body"></div>
+        </div>
+        <div class="slot">
+          <div id="slotHead4" class="slot-head">Slot 4</div>
+          <div id="slotBody4" class="slot-body"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

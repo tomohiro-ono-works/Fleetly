@@ -3,12 +3,12 @@
   const corePkg = packages.core || {};
   const uiPkg = packages.ui || {};
   const bridgeApi = corePkg.bridge || null;
+  const embeddedMode = new URLSearchParams(window.location.search).get("embedded") === "1";
   const dialogApi = corePkg.dialog || null;
-  const codeEditors = corePkg.codeEditors || null;
   const { el } = (corePkg.utils || {});
-  const { wrapWithVarSuggest } = (uiPkg.suggest || {});
-  const VARIABLE_NAME_PATTERN = /^[a-zA-Z0-9_]+$/;
-  const FUNCTION_REF_NAME_PATTERN = /^[a-zA-Z0-9_\.]+(?:\(\))?$/;
+  const VARIABLE_NAME_CHAR_CLASS = "a-zA-Z0-9_\\u3040-\\u309F\\u30A0-\\u30FF\\u3400-\\u4DBF\\u4E00-\\u9FFF\\u3005";
+  const VARIABLE_NAME_PATTERN = new RegExp(`^[${VARIABLE_NAME_CHAR_CLASS}]+$`);
+  const FUNCTION_REF_NAME_PATTERN = new RegExp(`^[${VARIABLE_NAME_CHAR_CLASS}]+(?:\\.[${VARIABLE_NAME_CHAR_CLASS}]+)*(?:\\(\\))?$`);
   const DEFINE_VALUE_SYSTEM_DEFAULTS = Object.freeze([
     { name: "current_date" },
     { name: "user_name" }
@@ -21,6 +21,53 @@
   );
   let runtimeContextDefaultsCache = null;
   let runtimeContextDefaultsPromise = null;
+
+  function resolveActiveBridgeApi() {
+    const localBridge = window.zizBridge || (window.zizPackages || {})?.core?.bridge || bridgeApi || null;
+    if (localBridge?.available?.()) return localBridge;
+    if (!embeddedMode) return localBridge;
+    const parentBridge = window.parent?.zizBridge || (window.parent?.zizPackages || {})?.core?.bridge || null;
+    if (parentBridge?.available?.()) return parentBridge;
+    return localBridge || parentBridge;
+  }
+  function getBridgeUnavailableMessage(activeBridge) {
+    const message = activeBridge?.unavailableMessage?.();
+    return String(message || "ブリッジ未接続です。再読み込みしてください。");
+  }
+
+  function getShellApi() {
+    return window.zizShell || {};
+  }
+
+  function getCodeEditorsApi() {
+    const core = (window.zizPackages && window.zizPackages.core) || {};
+    return core.codeEditors || window.codeEditors || null;
+  }
+
+  function getUiSuggestApi() {
+    const ui = (window.zizPackages && window.zizPackages.ui) || {};
+    return ui.suggest || uiPkg.suggest || window.uiSuggest || null;
+  }
+
+  async function ensureCodeEditorsApi() {
+    const existing = getCodeEditorsApi();
+    if (existing && typeof existing.mountCodeEditor === "function") return existing;
+    const shellApi = getShellApi();
+    if (typeof shellApi.loadScriptOnce === "function") {
+      await shellApi.loadScriptOnce("./js/code.editor.js");
+    }
+    return getCodeEditorsApi();
+  }
+
+  async function ensureUiSuggestApi() {
+    const existing = getUiSuggestApi();
+    if (existing && typeof existing.wrapWithVarSuggest === "function") return existing;
+    const shellApi = getShellApi();
+    if (typeof shellApi.loadScriptOnce === "function") {
+      await shellApi.loadScriptOnce("./js/ui.suggest.js");
+    }
+    return getUiSuggestApi();
+  }
 
   function toYmdDateText(dateLike) {
     const date = dateLike instanceof Date ? dateLike : new Date(dateLike);
@@ -66,9 +113,10 @@
       runtimeContextDefaultsCache = statusDefaults;
       return getRuntimeContextDefaults();
     }
-    if (!bridgeApi?.available?.()) return getRuntimeContextDefaults();
+    const activeBridge = resolveActiveBridgeApi();
+    if (!activeBridge?.available?.()) return getRuntimeContextDefaults();
     if (runtimeContextDefaultsPromise) return runtimeContextDefaultsPromise;
-    runtimeContextDefaultsPromise = bridgeApi.call("app.getStatus", {})
+    runtimeContextDefaultsPromise = activeBridge.call("app.getStatus", {})
       .then((status) => {
         const nextDefaults = normalizeRuntimeContextDefaults(status?.runtime_context_defaults);
         if (nextDefaults) runtimeContextDefaultsCache = nextDefaults;
@@ -255,9 +303,10 @@
     const fromForm = toSchemaText(sourceSchema);
     if (fromForm) return fromForm;
 
-    if (!bridgeApi?.available?.()) return "";
+    const activeBridge = resolveActiveBridgeApi();
+    if (!activeBridge?.call) return "";
     try {
-      const schemaDto = await bridgeApi.call("result.getSchema", {
+      const schemaDto = await activeBridge.call("result.getSchema", {
         mode: String(state?.appMode || ""),
         step_id: String(sourceNode.stepName || "")
       });
@@ -502,7 +551,7 @@
     const text = String(name || "").trim();
     if (!text) return "";
     if (VARIABLE_NAME_PATTERN.test(text)) return "";
-    return "変数名には英数字と _ のみ使用できます。日本語や記号は使えません。";
+    return "変数名には ひらがな / カタカナ / 漢字 / 英数字 / _ のみ使用できます。";
   }
 
   function normalizeDefineValueRows(value) {
@@ -586,10 +635,11 @@
     const fromForm = extractSchemaFieldNames(sourceNode?.form?.schema || "");
     if (fromForm.length) return fromForm;
 
-    if (!bridgeApi?.available?.()) return [];
+    const activeBridge = resolveActiveBridgeApi();
+    if (!activeBridge?.call) return [];
 
     try {
-      const schemaDto = await bridgeApi.call("result.getSchema", {
+      const schemaDto = await activeBridge.call("result.getSchema", {
         mode: String(state?.appMode || ""),
         step_id: String(sourceNode.stepName || "")
       });
@@ -944,7 +994,7 @@
     const parsed = parseSchemaText(current);
     const canUseInputMode = canUseSchemaFormMode(parsed);
     const preferredModeRaw = String(node?.__schemaEditorMode || "").trim();
-    const preferredMode = ["input", "json", "output"].includes(preferredModeRaw) ? preferredModeRaw : "";
+    const preferredMode = ["input", "json", "output", "log"].includes(preferredModeRaw) ? preferredModeRaw : "";
     const initialMode = preferredMode === "input"
       ? (canUseInputMode ? "input" : "json")
       : (preferredMode || (canUseInputMode ? "input" : "json"));
@@ -955,11 +1005,13 @@
     const inputBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("スキーマ定義")]);
     const jsonBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("スキーマ定義（JSON）")]);
     const outputBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("データ出力")]);
+    const logBtn = el("button", { type: "button", class: "schema-mode-btn" }, [document.createTextNode("ログ")]);
     const hint = el("div", { class: "schema-editor-hint" }, []);
     const body = el("div", { class: "schema-editor-body" }, []);
     const formPane = el("div", { class: "schema-form-pane" }, []);
     const jsonPane = el("div", { class: "schema-json-pane" }, []);
     const outputPane = el("div", { class: "schema-output-pane" }, []);
+    const logPane = el("div", { class: "schema-log-pane" }, []);
     const addRowBtn = el("button", { type: "button", class: "schema-add-row-btn" }, [document.createTextNode("+ カラム追加")]);
     const outputStatusNote = el("div", { class: "schema-output-note node-data-note" }, []);
     const validationNote = el("div", { class: "schema-validation-note node-data-note", hidden: "hidden" }, []);
@@ -967,6 +1019,12 @@
     const outputPreviewBody = el("tbody", {}, []);
     const outputPreviewTable = el("table", { class: "node-data-table" }, [outputPreviewHead, outputPreviewBody]);
     const outputPreviewWrap = el("div", { class: "schema-output-wrap node-data-wrap is-preview" }, [outputPreviewTable]);
+    const logText = el("textarea", {
+      class: "node-log-view",
+      readonly: "readonly",
+      spellcheck: "false",
+      "aria-label": "処理ログ"
+    });
     const addRowRow = el("div", { class: "schema-form-add-row" }, [addRowBtn]);
     const headerCells = [
       el("div", { class: "schema-form-header__cell" }, [document.createTextNode("元フィールド名")]),
@@ -1037,12 +1095,13 @@
 
     async function syncSchemaAutoextractFromResult() {
       if (!shouldApplySchemaAutoextract(field)) return;
-      if (!bridgeApi?.available?.()) return;
+      const activeBridge = resolveActiveBridgeApi();
+      if (!activeBridge?.call) return;
       const stepId = String(node?.stepName || "").trim();
       if (!stepId) return;
       const requestSeq = ++autoextractRequestSeq;
       try {
-        const schemaDto = await bridgeApi.call("result.getSchema", {
+        const schemaDto = await activeBridge.call("result.getSchema", {
           mode: String(state?.appMode || ""),
           step_id: stepId
         });
@@ -1076,10 +1135,37 @@
       outputPreviewWrap.hidden = true;
     }
 
+    function buildSchemaByNameFromFormItems(items) {
+      const schemaByName = {};
+      (Array.isArray(items) ? items : []).forEach((item) => {
+        if (!item || item.is_disabled) return;
+        const normalized = String(item.ziz_datatype || "").trim().toUpperCase();
+        const originName = String(item.origin_name || "").trim();
+        const newName = String(item.new_name || "").trim();
+        if (originName) schemaByName[originName] = normalized;
+        if (newName) schemaByName[newName] = normalized;
+      });
+      return schemaByName;
+    }
+
+    function formatDatePreviewValue(value) {
+      const text = String(value ?? "").trim();
+      if (!text) return "";
+      const datePrefix = text.match(/^(\d{4}-\d{2}-\d{2})(?:[ T].*)?$/);
+      if (datePrefix) return datePrefix[1];
+      return text;
+    }
+
+    function formatOutputValue(value, datatype) {
+      if (String(datatype || "").toUpperCase() === "DATE") return formatDatePreviewValue(value);
+      return String(value ?? "");
+    }
+
     function renderOutputPreview(previewDto) {
       const columns = Array.isArray(previewDto?.columns) ? previewDto.columns : [];
       const sourceRows = Array.isArray(previewDto?.rows) ? previewDto.rows : [];
       const rows = sourceRows.slice(0, 200);
+      const schemaByName = buildSchemaByNameFromFormItems(formItems);
       outputPreviewHead.innerHTML = "";
       outputPreviewBody.innerHTML = "";
 
@@ -1089,16 +1175,16 @@
         return;
       }
 
-      outputPreviewHead.appendChild(
-        el("tr", {}, columns.map((column) => el("th", {}, [document.createTextNode(String(column || ""))])))
-      );
+      const headerCells = columns.map((column) => el("th", {}, [document.createTextNode(String(column || ""))]));
+      headerCells.push(el("th", { class: "node-data-spacer", "aria-hidden": "true" }, []));
+      outputPreviewHead.appendChild(el("tr", {}, headerCells));
 
       if (!rows.length) {
         outputPreviewBody.appendChild(
           el("tr", {}, [
             el(
               "td",
-              { class: "node-data-value", colspan: String(Math.max(columns.length, 1)) },
+              { class: "node-data-value", colspan: String(Math.max(columns.length + 1, 1)) },
               [document.createTextNode("データがありません。")]
             )
           ])
@@ -1106,10 +1192,16 @@
       } else {
         rows.forEach((row) => {
           const values = Array.isArray(row) ? row : [];
+          const rowCells = columns.map((_, index) =>
+            el(
+              "td",
+              { class: "node-data-value" },
+              [document.createTextNode(formatOutputValue(values[index], schemaByName[String(columns[index] || "")]))]
+            )
+          );
+          rowCells.push(el("td", { class: "node-data-spacer", "aria-hidden": "true" }, []));
           outputPreviewBody.appendChild(
-            el("tr", {}, columns.map((_, index) =>
-              el("td", { class: "node-data-value" }, [document.createTextNode(String(values[index] ?? ""))])
-            ))
+            el("tr", {}, rowCells)
           );
         });
       }
@@ -1122,8 +1214,9 @@
 
     async function syncOutputPreview() {
       clearOutputTable();
-      if (!bridgeApi?.available?.()) {
-        setOutputStatus("WebView モードでのみ利用できます。");
+      const activeBridge = resolveActiveBridgeApi();
+      if (!activeBridge?.available?.()) {
+        setOutputStatus(getBridgeUnavailableMessage(activeBridge));
         return;
       }
       const stepId = String(node?.stepName || "").trim();
@@ -1134,7 +1227,7 @@
       const requestSeq = ++outputRequestSeq;
       setOutputStatus("実行結果を取得しています...");
       try {
-        const previewDto = await bridgeApi.call("result.getPreview", {
+        const previewDto = await activeBridge.call("result.getPreview", {
           mode: String(state?.appMode || ""),
           step_id: stepId
         });
@@ -1149,6 +1242,15 @@
         }
         setOutputStatus(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`);
       }
+    }
+
+    function syncRuntimeLog() {
+      const lines = Array.isArray(node?.runtimeLogs) ? node.runtimeLogs : [];
+      if (!lines.length) {
+        logText.value = "ログがないです。";
+        return;
+      }
+      logText.value = lines.join("\n");
     }
 
     function renderFormRows() {
@@ -1247,6 +1349,11 @@
         hint.className = "schema-editor-hint";
         return;
       }
+      if (mode === "log") {
+        hint.textContent = "※このノードの実行ログを表示します。";
+        hint.className = "schema-editor-hint";
+        return;
+      }
       if (!isSchemaSddDescription) {
         hint.textContent = "";
         hint.className = "schema-editor-hint";
@@ -1299,13 +1406,18 @@
       inputBtn.classList.toggle("is-active", mode === "input");
       jsonBtn.classList.toggle("is-active", mode === "json");
       outputBtn.classList.toggle("is-active", mode === "output");
+      logBtn.classList.toggle("is-active", mode === "log");
       formPane.classList.toggle("is-hidden", mode !== "input");
       jsonPane.classList.toggle("is-hidden", mode !== "json");
       outputPane.classList.toggle("is-hidden", mode !== "output");
+      logPane.classList.toggle("is-hidden", mode !== "log");
       addRowRow.classList.toggle("is-hidden", mode !== "input");
       if (mode === "output") {
         void syncOutputPreview();
         void syncSchemaAutoextractFromResult();
+      }
+      if (mode === "log") {
+        syncRuntimeLog();
       }
       syncHint();
     }
@@ -1325,10 +1437,14 @@
     outputBtn.addEventListener("click", () => {
       setMode("output");
     });
+    logBtn.addEventListener("click", () => {
+      setMode("log");
+    });
 
     modeSwitch.appendChild(inputBtn);
     modeSwitch.appendChild(jsonBtn);
     modeSwitch.appendChild(outputBtn);
+    modeSwitch.appendChild(logBtn);
     toolbarMain.appendChild(modeSwitch);
     toolbar.appendChild(toolbarMain);
     formPane.appendChild(headerRow);
@@ -1337,10 +1453,12 @@
     jsonPane.appendChild(textarea);
     outputPane.appendChild(outputStatusNote);
     outputPane.appendChild(outputPreviewWrap);
+    logPane.appendChild(el("div", { class: "node-log-wrap" }, [logText]));
     outputPreviewWrap.hidden = true;
     body.appendChild(jsonPane);
     body.appendChild(formPane);
     body.appendChild(outputPane);
+    body.appendChild(logPane);
     wrapper.appendChild(toolbar);
     wrapper.appendChild(hint);
     wrapper.appendChild(validationNote);
@@ -1378,9 +1496,11 @@
     textarea.value = current || "";
     const wrapper = el("div", { class: "code-editor" }, [textarea]);
 
-    if (codeEditors && typeof codeEditors.mountCodeEditor === "function" && language) {
-      codeEditors
-        .mountCodeEditor({
+    if (language) {
+      ensureCodeEditorsApi()
+        .then((codeEditorsApi) => {
+          if (!codeEditorsApi || typeof codeEditorsApi.mountCodeEditor !== "function") return;
+          return codeEditorsApi.mountCodeEditor({
           input: textarea,
           value: textarea.value,
           language,
@@ -1397,8 +1517,10 @@
             textarea.value = value;
             if (onCommitChanged) onCommitChanged();
           }
+          });
         })
-        .then(() => {
+        .then((mounted) => {
+          if (!mounted) return;
           wrapper.classList.add("is-code-editor-ready");
         })
         .catch((err) => {
@@ -1426,17 +1548,37 @@
         : "";
   }
 
+  function isFieldVisibleForNode(node, field) {
+    const rule = field?.visible_if;
+    if (!rule || typeof rule !== "object") return true;
+    const targetKey = String(rule.key || "").trim();
+    if (!targetKey) return true;
+    const rawValue = (node && node.form && Object.prototype.hasOwnProperty.call(node.form, targetKey))
+      ? node.form[targetKey]
+      : undefined;
+    const current = rawValue === undefined || rawValue === null ? "" : String(rawValue).trim();
+    if (Object.prototype.hasOwnProperty.call(rule, "equals")) {
+      return current === String(rule.equals ?? "").trim();
+    }
+    if (Array.isArray(rule.in)) {
+      const candidates = rule.in.map((item) => String(item ?? "").trim());
+      return candidates.includes(current);
+    }
+    return true;
+  }
+
   function extractReferencedVariableNames(value) {
     const text = String(value || "");
     const refs = new Set();
     const patterns = [
-      /\{\{\s*([a-zA-Z0-9_\.]+(?:\(\))?)\s*\}\}/g,
-      /\$\{([a-zA-Z0-9_\.]+(?:\(\))?)(?:[^}]*)\}/g
+      /\{\{\s*([^}]+?)\s*\}\}/g,
+      /\$\{([^}]+?)\}/g
     ];
     patterns.forEach((re) => {
       let match = re.exec(text);
       while (match) {
-        refs.add(match[1]);
+        const name = String(match[1] || "").trim();
+        if (name) refs.add(name);
         match = re.exec(text);
       }
     });
@@ -1473,19 +1615,12 @@
   function getDefineValuesValidationErrors(value) {
     const rows = normalizeDefineValueRows(value);
     const errors = [];
-    const seen = new Set();
     rows.forEach((row) => {
       const name = String(row?.name || "").trim();
       if (!name) return;
       if (!VARIABLE_NAME_PATTERN.test(name)) {
-        errors.push(`変数名 ${name} は無効です。英数字と _ のみ使用できます。`);
-        return;
+        errors.push(`変数名 ${name} は無効です。ひらがな / カタカナ / 漢字 / 英数字 / _ のみ使用できます。`);
       }
-      if (seen.has(name)) {
-        errors.push(`同一ステップ内で変数名 ${name} が重複しています。`);
-        return;
-      }
-      seen.add(name);
     });
     return errors;
   }
@@ -1543,6 +1678,7 @@
   }
 
   function getFieldReferenceWarnings({ node, field, upstreamSteps, availableVariableNames }) {
+    if (!isFieldVisibleForNode(node, field)) return [];
     const value = getFieldCurrentValue(node, field);
     const normalizedUpstream = Array.from(new Set((upstreamSteps || []).filter(Boolean)));
     const upstreamSet = new Set(normalizedUpstream);
@@ -1558,7 +1694,7 @@
       const ref = normalizeInputDataReference(value);
       if (!ref) return [];
       if (!/^[a-zA-Z0-9_]+$/.test(ref)) {
-        return [`変数名には英数字と _ のみ使用できます。日本語や記号は使えません。`];
+        return [`参照先は step 名（英数字と _）で指定してください。`];
       }
       if (upstreamSet.has(ref)) return [];
       return [`参照先 ${ref} は上流に存在しません。`];
@@ -1567,17 +1703,40 @@
     if (!supportsVars) return [];
 
     const isHiddenRefName = (ref) => String(ref || "").startsWith("hidden.");
+    const isLoopRuntimeRefName = (ref) => {
+      const text = String(ref || "").trim();
+      return text === "current_item" || text === "current_index" || text.startsWith("current_item.");
+    };
+    const resolveStepRootName = (ref) => {
+      const text = String(ref || "").trim();
+      if (!text) return "";
+      const dotIndex = text.indexOf(".");
+      return dotIndex >= 0 ? text.slice(0, dotIndex) : text;
+    };
+    const isResolvableReference = (ref) => {
+      const normalized = normalizeFunctionReferenceName(ref);
+      if (!normalized) return true;
+      if (variableSet.has(normalized)) return true;
+      if (upstreamSet.has(normalized)) return true;
+      if (isLoopRuntimeRefName(normalized)) return true;
+      const stepRoot = resolveStepRootName(normalized);
+      if (stepRoot && upstreamSet.has(stepRoot)) return true;
+      return false;
+    };
     const invalidRefs = extractInvalidTemplateReferenceNames(value)
-      .map((ref) => `変数名 ${ref} は無効です。英数字、_、.（末尾の ()）のみ使用できます。`);
+      .map((ref) => `変数名 ${ref} は無効です。ひらがな / カタカナ / 漢字 / 英数字 / _ と .（末尾の ()）のみ使用できます。`);
     const missingRefs = extractReferencedVariableNames(value)
       .filter((ref) => !isHiddenRefName(ref))
       .map((ref) => normalizeFunctionReferenceName(ref))
-      .filter((ref) => !variableSet.has(ref))
+      .filter((ref) => !isResolvableReference(ref))
       .map((ref) => `変数 ${ref} は定義されていません。`);
     return [...invalidRefs, ...missingRefs];
   }
 
   function renderField({ node, field, upstreamSteps, availableVariableNames, hiddenBindings, state, config, onStateChanged }) {
+    if (!isFieldVisibleForNode(node, field)) {
+      return el("div", { class: "row", hidden: "hidden" }, []);
+    }
     const row = el("div", { class: "row" }, []);
     if (field.kind === "textarea") {
       row.classList.add("row--textarea");
@@ -1723,13 +1882,15 @@
           title: String(field.buttonLabel || "Googleログイン"),
           "aria-label": String(field.buttonLabel || "Googleログイン"),
           onclick: async () => {
-            if (!bridgeApi?.available?.()) {
-              if (dialogApi?.show) dialogApi.show("WebView モードでのみ利用できます。", { kind: "warning", title: "認証" });
-              else window.alert("WebView モードでのみ利用できます。");
+            const activeBridge = resolveActiveBridgeApi();
+            if (!activeBridge?.available?.()) {
+              const message = getBridgeUnavailableMessage(activeBridge);
+              if (dialogApi?.show) dialogApi.show(message, { kind: "warning", title: "認証" });
+              else window.alert(message);
               return;
             }
             try {
-              await bridgeApi.call("app.googleAuthLogin", { mode: "application-default" });
+              await activeBridge.call("app.googleAuthLogin", { mode: "application-default" });
               if (dialogApi?.show) {
                 dialogApi.show("Googleログインを起動しました。開いたターミナルで認証を完了してください。", {
                   kind: "info",
@@ -1835,21 +1996,28 @@
       wrapper = r.wrapper;
     } else if (field.kind === "file" || field.kind === "dir") {
       async function openNativePicker() {
-        if (bridgeApi?.available?.()) {
+        const activeBridge = resolveActiveBridgeApi();
+        if (activeBridge?.available?.()) {
           try {
             const type = field.kind === "dir" ? "file.pickFolder" : "file.pickFile";
             const currentValue = getFieldCurrentValue(node, field);
+            const workspaceTabId = String(
+              window.zizEmbeddedApi?.getWorkspaceTabId?.()
+              || window.__zizWorkspaceTabId?.()
+              || "__standalone__"
+            ).trim();
             const payload = {
               title: field.kind === "dir" ? `${field.label || "フォルダ"}を選択` : `${field.label || "ファイル"}を選択`,
               step_name: String(node.stepName || "global"),
               field_key: String(field.key || ""),
               current_ref: isHiddenBindingRef(currentValue) ? currentValue : "",
-              current_value: isHiddenBindingRef(currentValue) ? "" : String(currentValue || "")
+              current_value: isHiddenBindingRef(currentValue) ? "" : String(currentValue || ""),
+              workspace_tab_id: workspaceTabId,
             };
             if (field.kind !== "dir") {
               payload.filters = buildFileDialogFilters(field);
             }
-            const result = await bridgeApi.call(type, payload);
+            const result = await activeBridge.call(type, payload);
             if (!result || result.selected === false || !result.ref) return true;
             node.form[field.key] = result.ref;
             if (hiddenBindings && typeof hiddenBindings === "object") {
@@ -1883,7 +2051,8 @@
           notifyCommitted();
         },
         onclick: async (e) => {
-          if (!bridgeApi?.available?.()) return;
+          const activeBridge = resolveActiveBridgeApi();
+          if (!activeBridge?.available?.()) return;
           const currentValue = getFieldCurrentValue(node, field);
           if (!isHiddenBindingRef(currentValue)) return;
           e.preventDefault();
@@ -1956,7 +2125,21 @@
 
     const supportsVars = !!field.allowVars || field.kind === "combo";
     if (supportsVars && inputEl && inputEl.tagName !== "SELECT" && !field.__skipVarSuggest) {
-      wrapper = wrapWithVarSuggest(inputEl, availableVariableNames || [], onStateChanged, wrapper);
+      const suggestApi = getUiSuggestApi();
+      if (suggestApi && typeof suggestApi.wrapWithVarSuggest === "function") {
+        wrapper = suggestApi.wrapWithVarSuggest(inputEl, availableVariableNames || [], onStateChanged, wrapper);
+      } else {
+        ensureUiSuggestApi()
+          .then((lazySuggestApi) => {
+            if (!lazySuggestApi || typeof lazySuggestApi.wrapWithVarSuggest !== "function") return;
+            if (!inputEl.isConnected) return;
+            if (inputEl.closest(".suggest")) return;
+            if (typeof onStateChanged === "function") onStateChanged({ history: false });
+          })
+          .catch((err) => {
+            console.warn("ui.suggest lazy load failed", err);
+          });
+      }
     }
     delete field.__skipVarSuggest;
 
@@ -2007,7 +2190,7 @@
     return row;
   }
 
-  const uiFields = { renderField, getFieldReferenceWarnings };
+  const uiFields = { renderField, getFieldReferenceWarnings, isFieldVisibleForNode };
   window.uiFields = uiFields;
 })();
 

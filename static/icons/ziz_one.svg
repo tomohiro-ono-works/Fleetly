@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg"
+     width="22"
+     height="22"
+     viewBox="44 -21 252 252"
+     aria-label="Icon shapes only">
+  <polygon id="D" fill="#5e1ef6" points="170,-4.845 253.27,26.577 170,58 86.73,26.577" />
+  <polygon id="A" fill="#5e1ef6" points="44,42 44,134 150,82" />
+  <polygon id="B" fill="#5e1ef6" points="66,172 154,128 154,210" />
+  <polygon id="C" fill="#5e1ef6" points="188,78 188,184 292,38.8" />
+  <polygon id="E" fill="#5e1ef6" points="216,200 296,169.8 296,88" />
+</svg>

@@ -8,6 +8,21 @@ from openpyxl import load_workbook
 from connectors.base_connector import BaseConnector
 
 class ExcelConnector(BaseConnector):
+    def _resolve_usecols_from_schema_origin(self, schema: Any):
+        if schema is None or str(schema).strip() == "":
+            return None
+        items = self.parse_schema_definition(schema)
+        if not isinstance(items, list):
+            return None
+        usecols = []
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            origin_name = str(item.get("origin_name") or "").strip()
+            if origin_name and origin_name not in usecols:
+                usecols.append(origin_name)
+        return usecols or None
+
     @staticmethod
     def _normalize_excel_value(value: Any) -> Any:
         if pd.isna(value):
@@ -26,17 +41,15 @@ class ExcelConnector(BaseConnector):
         header_row: int,
         data_start_row: int,
         schema: Any = None,
-        date_field_mode: str = "speed",
-        keep_raw_date_field=False,
         date_serial_system: str = "excel_1900",
+        date_cleansing: bool = True,
     ) -> pd.DataFrame:
         if not rows:
             return self.attach_dataframe_schema(
                 pd.DataFrame(),
                 schema_override=schema,
-                date_field_mode=date_field_mode,
-                keep_raw_date_field=keep_raw_date_field,
                 date_serial_system=date_serial_system,
+                date_cleansing=date_cleansing,
             )
         if header_row < 1:
             raise ValueError("header_row は 1 以上で指定してください。")
@@ -61,9 +74,8 @@ class ExcelConnector(BaseConnector):
         return self.attach_dataframe_schema(
             pd.DataFrame(records),
             schema_override=schema,
-            date_field_mode=date_field_mode,
-            keep_raw_date_field=keep_raw_date_field,
             date_serial_system=date_serial_system,
+            date_cleansing=date_cleansing,
         )
 
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
@@ -77,8 +89,7 @@ class ExcelConnector(BaseConnector):
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
                 schema=params.get('schema'),
-                date_field_mode=params.get("date_field_mode", "speed"),
-                keep_raw_date_field=params.get("keep_raw_date_field", False),
+                date_cleansing=self._to_bool_flag(params.get("date_cleansing", True)),
             )
         elif action == "read_excel_range":
             file_path = params.get('file_path')
@@ -94,8 +105,7 @@ class ExcelConnector(BaseConnector):
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
                 schema=params.get('schema'),
-                date_field_mode=params.get("date_field_mode", "speed"),
-                keep_raw_date_field=params.get("keep_raw_date_field", False),
+                date_cleansing=self._to_bool_flag(params.get("date_cleansing", True)),
             )
         elif action == "write_excel":
             input_data = params.get('input_data')
@@ -152,8 +162,7 @@ class ExcelConnector(BaseConnector):
         header_row: int,
         data_start_row: int,
         schema: Any = None,
-        date_field_mode: str = "speed",
-        keep_raw_date_field=False,
+        date_cleansing: bool = True,
     ) -> pd.DataFrame:
         normalized_path = self.normalize_file_path(path)
         if normalized_path is None or not os.path.exists(normalized_path):
@@ -165,6 +174,7 @@ class ExcelConnector(BaseConnector):
 
         skiprows = list(range(header_row, data_start_row - 1)) if data_start_row > header_row + 1 else None
         target_sheet = sheet_name or 0
+        usecols = self._resolve_usecols_from_schema_origin(schema)
 
         try:
             df = pd.read_excel(
@@ -174,9 +184,16 @@ class ExcelConnector(BaseConnector):
                 skiprows=skiprows,
                 dtype=object,
                 engine="openpyxl",
+                usecols=usecols,
             )
         except ValueError as exc:
-            raise ValueError(f"シートが見つかりませんでした: {sheet_name}") from exc
+            message = str(exc)
+            if "Worksheet" in message or "sheet" in message.lower():
+                raise ValueError(f"シートが見つかりませんでした: {sheet_name}") from exc
+            if usecols:
+                missing = ", ".join(usecols)
+                raise ValueError(f"schema適用エラー(列存在チェック): 指定列が存在しません [{missing}]") from exc
+            raise
 
         if not isinstance(df, pd.DataFrame):
             raise ValueError("Excel の読み込み結果が不正です。")
@@ -190,9 +207,8 @@ class ExcelConnector(BaseConnector):
         result = self.attach_dataframe_schema(
             normalized_df,
             schema_override=schema,
-            date_field_mode=date_field_mode,
-            keep_raw_date_field=keep_raw_date_field,
             date_serial_system=date_serial_system,
+            date_cleansing=date_cleansing,
         )
         self.log_date_parse_metrics(result)
         return result
@@ -205,8 +221,7 @@ class ExcelConnector(BaseConnector):
         header_row: int,
         data_start_row: int,
         schema: Any = None,
-        date_field_mode: str = "speed",
-        keep_raw_date_field=False,
+        date_cleansing: bool = True,
     ) -> pd.DataFrame:
         normalized_path = self.normalize_file_path(path)
         if normalized_path is None or not os.path.exists(normalized_path):
@@ -242,9 +257,8 @@ class ExcelConnector(BaseConnector):
             header_row=header_row,
             data_start_row=data_start_row,
             schema=schema,
-            date_field_mode=date_field_mode,
-            keep_raw_date_field=keep_raw_date_field,
             date_serial_system=date_serial_system,
+            date_cleansing=date_cleansing,
         )
         self.log_date_parse_metrics(result)
         return result

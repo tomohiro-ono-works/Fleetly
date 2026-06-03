@@ -88,26 +88,6 @@
     return section;
   }
 
-  function createHomeCreateButton({ title, hint, actionType, onHomeAction }) {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "home-screen__create-btn";
-    button.addEventListener("click", () => {
-      if (typeof onHomeAction === "function") onHomeAction({ type: actionType });
-    });
-
-    const titleEl = document.createElement("div");
-    titleEl.className = "home-screen__create-btn-title";
-    titleEl.textContent = title;
-    button.appendChild(titleEl);
-
-    const hintEl = document.createElement("div");
-    hintEl.className = "home-screen__create-btn-hint";
-    hintEl.textContent = hint;
-    button.appendChild(hintEl);
-    return button;
-  }
-
   function renderHomeScreen({ flowRoot, detailRoot, detailBottomRoot, homeViewModel, onHomeAction }) {
     if (detailRoot) detailRoot.innerHTML = "";
     if (detailBottomRoot && detailBottomRoot !== detailRoot) detailBottomRoot.innerHTML = "";
@@ -144,35 +124,12 @@
     hero.appendChild(divider);
     shell.appendChild(hero);
 
-    const createSection = document.createElement("section");
-    createSection.className = "home-screen__section home-screen__section--create";
-    const createHeading = document.createElement("h2");
-    createHeading.className = "home-screen__section-title";
-    createHeading.textContent = "作成する";
-    createSection.appendChild(createHeading);
-    const createBody = document.createElement("div");
-    createBody.className = "home-screen__create-actions";
-    createBody.appendChild(createHomeCreateButton({
-      title: "ワークフローを新規で作る",
-      hint: "データフロー画面を開きます",
-      actionType: "create-flow",
-      onHomeAction
-    }));
-    createBody.appendChild(createHomeCreateButton({
-      title: "SQLを新規で作る",
-      hint: "クエリビルダー画面を開きます",
-      actionType: "create-sql",
-      onHomeAction
-    }));
-    createSection.appendChild(createBody);
-    shell.appendChild(createSection);
-
     const grid = document.createElement("div");
     grid.className = "home-screen__grid";
     grid.appendChild(createHomeSection({
-      title: "最近使ったファイル",
-      items: (homeViewModel?.recentFiles || []).slice(0, 10),
-      emptyMessage: "ファイルがありません。",
+      title: "最近使ったプロジェクト",
+      items: (homeViewModel?.recentProjects || []).slice(0, 10),
+      emptyMessage: "プロジェクトがありません。",
       kind: "recent",
       onHomeAction
     }));
@@ -272,7 +229,7 @@
       }
       const splitDetail = !!detailRoot && !!detailBottomRoot && detailBottomRoot !== detailRoot;
       if (splitDetail) {
-        const activeRightPanel = ["detail", "yaml", "variables", "log"].includes(String(rightPanelTab || ""))
+        const activeRightPanel = ["detail", "yaml", "variables"].includes(String(rightPanelTab || ""))
           ? String(rightPanelTab || "")
           : "detail";
         uiNode.renderNodeDetail({
@@ -280,10 +237,11 @@
           state,
           config,
           onStateChanged,
-          tabKeys: ["detail", "yaml", "variables", "log"],
+          tabKeys: ["detail", "yaml", "variables"],
           defaultTab: "detail",
           includePanelRunAction: false,
-          hideTabs: true,
+          hideTabs: false,
+          topbarConnectorFirst: true,
           forcedActiveTab: activeRightPanel
         });
         uiNode.renderNodeDetail({

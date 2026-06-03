@@ -5,16 +5,35 @@
       title: document.getElementById("appDialogTitle"),
       message: document.getElementById("appDialogMessage"),
       icon: document.getElementById("appDialogIcon"),
+      actions: document.querySelector("#appDialog .app-dialog__actions"),
       cancel: document.getElementById("appDialogCancel"),
       ok: document.getElementById("appDialogOk"),
+      extra: document.getElementById("appDialogExtra"),
     };
   }
 
   const dialogState = {
     resolver: null,
+    choiceResolver: null,
+    choiceValues: null,
+    choiceCancelValue: "cancel",
     mode: "alert",
     lastActiveElement: null,
   };
+
+  function ensureExtraButton() {
+    const els = getDialogElements();
+    if (!els.actions) return null;
+    if (els.extra) return els.extra;
+    const extra = document.createElement("button");
+    extra.id = "appDialogExtra";
+    extra.className = "app-dialog__button app-dialog__button--secondary";
+    extra.type = "button";
+    extra.hidden = true;
+    extra.textContent = "追加";
+    els.actions.insertBefore(extra, els.ok || null);
+    return extra;
+  }
 
   function closeDialog() {
     const els = getDialogElements();
@@ -26,6 +45,11 @@
     els.root.classList.remove("is-open", "app-dialog--error", "app-dialog--warning", "app-dialog--success");
     els.root.setAttribute("aria-hidden", "true");
     if (els.cancel) els.cancel.hidden = true;
+    if (els.extra) els.extra.hidden = true;
+    dialogState.resolver = null;
+    dialogState.choiceResolver = null;
+    dialogState.choiceValues = null;
+    dialogState.choiceCancelValue = "cancel";
     dialogState.mode = "alert";
     const restoreTarget = dialogState.lastActiveElement;
     dialogState.lastActiveElement = null;
@@ -36,6 +60,8 @@
 
   function renderMessage(container, text, options) {
     container.innerHTML = "";
+    container.classList.remove("app-dialog__message--kv");
+    container.classList.remove("app-dialog__message--runlog");
     if (options?.format === "kv") {
       const lines = String(text || "")
         .split(/\r?\n/)
@@ -69,6 +95,41 @@
         return;
       }
     }
+    if (options?.format === "runlog") {
+      const rows = Array.isArray(options?.logRows) ? options.logRows : [];
+      container.classList.add("app-dialog__message--runlog");
+      const table = document.createElement("div");
+      table.className = "app-dialog__runlog";
+      const head = document.createElement("div");
+      head.className = "app-dialog__runlog-row app-dialog__runlog-row--head";
+      ["日時", "ステータス", "内容"].forEach((label) => {
+        const cell = document.createElement("span");
+        cell.className = "app-dialog__runlog-cell";
+        cell.textContent = label;
+        head.appendChild(cell);
+      });
+      table.appendChild(head);
+      rows.forEach((row) => {
+        const line = document.createElement("div");
+        line.className = "app-dialog__runlog-row";
+        const at = document.createElement("span");
+        at.className = "app-dialog__runlog-cell";
+        at.textContent = String(row?.at || "");
+        const status = document.createElement("span");
+        const normalized = String(row?.status || "");
+        status.className = `app-dialog__runlog-cell app-dialog__runlog-status app-dialog__runlog-status--${normalized === "失敗" ? "fail" : "ok"}`;
+        status.textContent = normalized || "成功";
+        const message = document.createElement("span");
+        message.className = "app-dialog__runlog-cell";
+        message.textContent = String(row?.message || "");
+        line.appendChild(at);
+        line.appendChild(status);
+        line.appendChild(message);
+        table.appendChild(line);
+      });
+      container.appendChild(table);
+      return;
+    }
     container.classList.remove("app-dialog__message--kv");
     container.textContent = text;
   }
@@ -96,8 +157,12 @@
     els.title.textContent = title;
     renderMessage(els.message, text, options);
     els.icon.textContent = iconMap[kind] || "i";
+    if (els.ok) els.ok.textContent = "OK";
+    if (els.cancel) els.cancel.textContent = "キャンセル";
+    if (els.extra) els.extra.textContent = "追加";
     if (els.cancel) els.cancel.hidden = true;
-    dialogState.mode = "alert";
+    if (els.extra) els.extra.hidden = true;
+    dialogState.mode = String(options?.mode || "alert");
     els.root.classList.add("is-open");
     els.root.setAttribute("aria-hidden", "false");
     els.ok?.focus?.();
@@ -108,12 +173,48 @@
     if (!els.root) {
       return Promise.resolve(window.confirm(String(message ?? "")));
     }
-    dialogState.mode = "confirm";
     return new Promise((resolve) => {
       dialogState.resolver = resolve;
-      showDialog(message, { ...options, kind: options?.kind || "warning" });
+      showDialog(message, { ...options, kind: options?.kind || "warning", mode: "confirm" });
       if (els.cancel) els.cancel.hidden = false;
       els.cancel?.focus?.();
+    });
+  }
+
+  function chooseDialog(message, options = {}) {
+    const els = getDialogElements();
+    if (!els.root) {
+      return Promise.resolve("cancel");
+    }
+    const values = options?.values && typeof options.values === "object"
+      ? options.values
+      : { ok: "save", cancel: "discard", extra: "cancel" };
+    const labels = options?.labels && typeof options.labels === "object"
+      ? options.labels
+      : { ok: "保存", cancel: "保存しない", extra: "キャンセル" };
+    const extraBtn = ensureExtraButton();
+    return new Promise((resolve) => {
+      dialogState.choiceResolver = resolve;
+      dialogState.choiceValues = {
+        ok: values.ok ?? "save",
+        cancel: values.cancel ?? "discard",
+        extra: values.extra ?? "cancel",
+      };
+      dialogState.choiceCancelValue = String(values.extra ?? "cancel");
+      showDialog(message, { ...options, kind: options?.kind || "warning", mode: "choice" });
+      if (els.ok) {
+        els.ok.textContent = String(labels.ok || "OK");
+        els.ok.hidden = false;
+      }
+      if (els.cancel) {
+        els.cancel.textContent = String(labels.cancel || "キャンセル");
+        els.cancel.hidden = false;
+      }
+      if (extraBtn) {
+        extraBtn.textContent = String(labels.extra || "閉じる");
+        extraBtn.hidden = false;
+      }
+      extraBtn?.focus?.();
     });
   }
 
@@ -126,10 +227,23 @@
     closeDialog();
   }
 
+  function settleChoice(result) {
+    if (typeof dialogState.choiceResolver === "function") {
+      const resolve = dialogState.choiceResolver;
+      dialogState.choiceResolver = null;
+      resolve(result);
+    }
+    closeDialog();
+  }
+
   document.addEventListener("click", (event) => {
     const target = event.target;
     if (!(target instanceof HTMLElement)) return;
     if (target.id === "appDialogOk") {
+      if (dialogState.mode === "choice") {
+        settleChoice(dialogState.choiceValues?.ok ?? "save");
+        return;
+      }
       if (dialogState.mode === "confirm") {
         settleConfirm(true);
         return;
@@ -138,10 +252,26 @@
       return;
     }
     if (target.id === "appDialogCancel") {
+      if (dialogState.mode === "choice") {
+        settleChoice(dialogState.choiceValues?.cancel ?? "discard");
+        return;
+      }
       settleConfirm(false);
       return;
     }
+    if (target.id === "appDialogExtra") {
+      if (dialogState.mode === "choice") {
+        settleChoice(dialogState.choiceValues?.extra ?? "cancel");
+        return;
+      }
+      closeDialog();
+      return;
+    }
     if (target.hasAttribute("data-app-dialog-close")) {
+      if (dialogState.mode === "choice") {
+        settleChoice(dialogState.choiceCancelValue || "cancel");
+        return;
+      }
       if (dialogState.mode === "confirm") {
         settleConfirm(false);
         return;
@@ -152,6 +282,10 @@
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape") {
+      if (dialogState.mode === "choice") {
+        settleChoice(dialogState.choiceCancelValue || "cancel");
+        return;
+      }
       closeDialog();
     }
   });
@@ -159,6 +293,7 @@
   const dialogApi = {
     show: showDialog,
     confirm: confirmDialog,
+    choose: chooseDialog,
     close: closeDialog,
   };
   window.zizDialog = dialogApi;

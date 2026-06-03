@@ -123,3 +123,67 @@
   background: color-mix(in srgb, var(--success-100) 85%, white);
   color: var(--success-700);
 }
+
+.app-dialog__message--runlog {
+  display: grid;
+  gap: 8px;
+}
+
+.app-dialog__runlog {
+  max-height: min(52vh, 420px);
+  overflow: auto;
+  border: 1px solid var(--border-default);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-page) 94%, white);
+}
+
+.app-dialog__runlog-row {
+  display: grid;
+  grid-template-columns: 172px 72px minmax(220px, 1fr);
+  gap: 6px;
+  align-items: start;
+  padding: 6px 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-default) 60%, transparent);
+  font-size: 11px;
+}
+
+.app-dialog__runlog-row:last-child {
+  border-bottom: 0;
+}
+
+.app-dialog__runlog-row--head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  font-weight: 700;
+  background: color-mix(in srgb, var(--brand-100) 55%, white);
+}
+
+.app-dialog__runlog-cell {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.app-dialog__runlog-status {
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  align-self: center;
+  padding: 1px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+  font-size: 11px;
+  line-height: 1.4;
+  color: #ffffff;
+}
+
+.app-dialog__runlog-status--ok {
+  background: #2d9b63;
+  border-color: #2d9b63;
+}
+
+.app-dialog__runlog-status--fail {
+  background: #d54c4c;
+  border-color: #d54c4c;
+}

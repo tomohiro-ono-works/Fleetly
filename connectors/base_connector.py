@@ -54,9 +54,8 @@ class BaseConnector(ABC):
     def attach_dataframe_schema(
         dataframe: pd.DataFrame,
         schema_override=None,
-        date_field_mode: str = "speed",
-        keep_raw_date_field=False,
         date_serial_system: str = "excel_1900",
+        date_cleansing: bool = True,
     ) -> pd.DataFrame:
         if isinstance(dataframe, pd.DataFrame):
             from core.type_registry import build_dataframe_schema
@@ -69,9 +68,8 @@ class BaseConnector(ABC):
             dataframe = BaseConnector.apply_schema_to_dataframe(
                 dataframe,
                 schema_items,
-                date_field_mode=date_field_mode,
-                keep_raw_date_field=keep_raw_date_field,
                 date_serial_system=date_serial_system,
+                date_cleansing=date_cleansing,
             )
             dataframe.attrs["ziz_schema"] = schema_items
         return dataframe
@@ -94,81 +92,136 @@ class BaseConnector(ABC):
     def apply_schema_to_dataframe(
         dataframe: pd.DataFrame,
         schema_items,
-        date_field_mode: str = "speed",
-        keep_raw_date_field=False,
         date_serial_system: str = "excel_1900",
+        date_cleansing: bool = True,
     ) -> pd.DataFrame:
         if not isinstance(dataframe, pd.DataFrame):
             return dataframe
         if not isinstance(schema_items, list):
             return dataframe
 
-        normalized_mode = BaseConnector._normalize_date_field_mode(date_field_mode)
-        keep_raw = BaseConnector._to_bool_flag(keep_raw_date_field)
         normalized_df = dataframe.copy()
+        available_columns = [str(column) for column in normalized_df.columns]
         selected_columns = []
         selected_items = []
+        selected_sources = []
         seen_columns = set()
+        missing_specs = []
         metrics = {
-            "mode": normalized_mode,
+            "date_cleansing": bool(date_cleansing),
             "target_columns": 0,
-            "raw_shadow_columns": 0,
             "serial_fallback_count": 0,
-            "text_fallback_count": 0,
             "parse_failure_count": 0,
+            "input_column_count": len(available_columns),
+            "selected_column_count": 0,
+            "renamed_column_count": 0,
+            "renamed_columns": [],
+            "selected_columns": [],
         }
+
+        # 1) 列存在チェック
         for item in schema_items:
             if not isinstance(item, dict):
                 continue
+            origin_name, new_name = BaseConnector._extract_schema_column_candidates(item)
+            if not origin_name and not new_name:
+                continue
             source_name = BaseConnector._resolve_schema_source_column(normalized_df, item)
             if not source_name:
+                requested = origin_name or new_name
+                missing_specs.append(requested)
                 continue
             if source_name in seen_columns:
                 continue
             selected_columns.append(source_name)
             selected_items.append(item)
+            selected_sources.append(source_name)
             seen_columns.add(source_name)
 
+        if missing_specs:
+            missing_unique = list(dict.fromkeys(missing_specs))
+            available_text = ", ".join(available_columns)
+            missing_text = ", ".join(missing_unique)
+            raise ValueError(
+                "schema適用エラー(列存在チェック): "
+                f"指定列が存在しません [{missing_text}] / 利用可能列 [{available_text}]"
+            )
+
+        # 2) 列選択（未指定列は削除）
         if selected_columns:
             normalized_df = normalized_df.loc[:, selected_columns].copy()
+            metrics["selected_columns"] = [str(column) for column in selected_columns]
+            metrics["selected_column_count"] = len(selected_columns)
 
-        for item in selected_items:
-            source_name = BaseConnector._resolve_schema_source_column(normalized_df, item)
-            if not source_name:
-                continue
+        # 3) 型変換
+        string_columns_to_cast = []
+        for index, item in enumerate(selected_items):
+            source_name = selected_sources[index]
             target_type = str(item.get("ziz_datatype") or "").strip().upper()
             if not target_type:
                 continue
+            if target_type == "STRING":
+                string_columns_to_cast.append(source_name)
+                continue
             raw_series = normalized_df[source_name].copy()
-            coerced_series, coercion_meta = BaseConnector._coerce_series_by_ziz_type(
-                raw_series,
-                target_type,
-                date_field_mode=normalized_mode,
-                date_serial_system=date_serial_system,
-                return_meta=True,
-            )
+            try:
+                coerced_series, coercion_meta = BaseConnector._coerce_series_by_ziz_type(
+                    raw_series,
+                    target_type,
+                    date_serial_system=date_serial_system,
+                    date_cleansing=date_cleansing,
+                    return_meta=True,
+                )
+            except Exception as error:
+                raise ValueError(
+                    "schema適用エラー(型変換): "
+                    f"列 '{source_name}' を {target_type} へ変換できません: {error}"
+                ) from error
             normalized_df[source_name] = coerced_series
             if BaseConnector._is_temporal_target_type(target_type):
                 metrics["target_columns"] += 1
                 metrics["serial_fallback_count"] += int(coercion_meta.get("serial_fallback_count") or 0)
-                metrics["text_fallback_count"] += int(coercion_meta.get("text_fallback_count") or 0)
                 metrics["parse_failure_count"] += int(coercion_meta.get("parse_failure_count") or 0)
+
+        # STRING はまとめて一括変換
+        if string_columns_to_cast:
+            try:
+                cast_map = {column_name: "string" for column_name in string_columns_to_cast}
+                normalized_df = normalized_df.astype(cast_map)
+            except Exception as error:
+                columns_text = ", ".join(string_columns_to_cast)
+                raise ValueError(
+                    "schema適用エラー(型変換): "
+                    f"列 '{columns_text}' を STRING へ変換できません: {error}"
+                ) from error
+
+        # 4) リネーム
+        rename_pairs = []
+        for index, item in enumerate(selected_items):
+            source_name = selected_sources[index]
             renamed = str(item.get("new_name") or item.get("name_en") or "").strip()
-            final_name = source_name
             if renamed and renamed != source_name:
-                normalized_df = normalized_df.rename(columns={source_name: renamed})
-                final_name = renamed
-            if keep_raw and BaseConnector._is_temporal_target_type(target_type):
-                raw_column = BaseConnector._build_raw_shadow_column_name(normalized_df, final_name)
-                normalized_df[raw_column] = raw_series.astype("object")
-                metrics["raw_shadow_columns"] += 1
+                rename_pairs.append((source_name, renamed))
+        if rename_pairs:
+            try:
+                normalized_df = normalized_df.rename(columns={source: target for source, target in rename_pairs})
+            except Exception as error:
+                raise ValueError(f"schema適用エラー(リネーム): {error}") from error
+            metrics["renamed_column_count"] = len(rename_pairs)
+            metrics["renamed_columns"] = [f"{source}->{target}" for source, target in rename_pairs]
+
         normalized_df.attrs["ziz_date_parse_metrics"] = metrics
         return normalized_df
 
     @staticmethod
-    def _resolve_schema_source_column(dataframe: pd.DataFrame, item: dict):
+    def _extract_schema_column_candidates(item: dict) -> tuple[str, str]:
         origin_name = str(item.get("origin_name") or item.get("name_ja") or "").strip()
         new_name = str(item.get("new_name") or item.get("name_en") or "").strip()
+        return origin_name, new_name
+
+    @staticmethod
+    def _resolve_schema_source_column(dataframe: pd.DataFrame, item: dict):
+        origin_name, new_name = BaseConnector._extract_schema_column_candidates(item)
         if origin_name and origin_name in dataframe.columns:
             return origin_name
         if new_name and new_name in dataframe.columns:
@@ -179,13 +232,12 @@ class BaseConnector(ABC):
     def _coerce_series_by_ziz_type(
         series: pd.Series,
         ziz_type: str,
-        date_field_mode: str = "speed",
         date_serial_system: str = "excel_1900",
+        date_cleansing: bool = True,
         return_meta: bool = False,
     ) -> pd.Series | tuple[pd.Series, dict]:
         meta = {
             "serial_fallback_count": 0,
-            "text_fallback_count": 0,
             "parse_failure_count": 0,
         }
         if ziz_type == "STRING":
@@ -198,25 +250,58 @@ class BaseConnector(ABC):
             coerced = pd.to_numeric(series, errors="coerce")
             return (coerced, meta) if return_meta else coerced
         if ziz_type == "NUMERIC":
-            coerced = series.map(BaseConnector._to_decimal_or_na)
+            coerced = BaseConnector._coerce_numeric_series_fast(series)
             return (coerced, meta) if return_meta else coerced
         if ziz_type == "BOOL":
-            coerced = series.map(BaseConnector._to_bool_or_na).astype("boolean")
+            coerced = BaseConnector._coerce_bool_series_fast(series)
             return (coerced, meta) if return_meta else coerced
         if ziz_type in {"DATE", "DATETIME", "TIMESTAMP"}:
             coerced, temporal_meta = BaseConnector._coerce_temporal_series(
                 series,
                 ziz_type,
-                date_field_mode=date_field_mode,
                 date_serial_system=date_serial_system,
+                date_cleansing=date_cleansing,
             )
             if return_meta:
                 return coerced, temporal_meta
             return coerced
         if ziz_type == "TIME":
-            coerced = series.map(BaseConnector._to_time_or_na)
+            coerced = BaseConnector._coerce_time_series_fast(series)
             return (coerced, meta) if return_meta else coerced
         return (series, meta) if return_meta else series
+
+    @staticmethod
+    def _coerce_numeric_series_fast(series: pd.Series) -> pd.Series:
+        text_series = series.astype("string").str.strip().str.replace(",", "", regex=False)
+        numeric_series = pd.to_numeric(text_series, errors="coerce")
+        coerced = pd.Series([None] * len(series), index=series.index, dtype="object")
+        valid_mask = numeric_series.notna()
+        if valid_mask.any():
+            coerced.loc[valid_mask] = numeric_series.loc[valid_mask].map(lambda value: Decimal(str(value)))
+        return coerced
+
+    @staticmethod
+    def _coerce_bool_series_fast(series: pd.Series) -> pd.Series:
+        text_series = series.astype("string").str.strip().str.lower()
+        coerced = pd.Series(pd.NA, index=series.index, dtype="boolean")
+        true_mask = text_series.isin({"1", "true", "yes", "on"})
+        false_mask = text_series.isin({"0", "false", "no", "off"})
+        coerced.loc[true_mask] = True
+        coerced.loc[false_mask] = False
+        return coerced
+
+    @staticmethod
+    def _coerce_time_series_fast(series: pd.Series) -> pd.Series:
+        parsed = pd.to_datetime(series, errors="coerce")
+        coerced = pd.Series([None] * len(series), index=series.index, dtype="object")
+        success_mask = parsed.notna()
+        if success_mask.any():
+            coerced.loc[success_mask] = parsed.loc[success_mask].dt.time
+
+        failure_mask = (~success_mask) & (~BaseConnector._is_empty_series(series))
+        if failure_mask.any():
+            coerced.loc[failure_mask] = series.loc[failure_mask].map(BaseConnector._to_time_or_na)
+        return coerced
 
     @staticmethod
     def _to_bool_or_na(value):
@@ -273,9 +358,8 @@ class BaseConnector(ABC):
         return text
 
     @staticmethod
-    def _normalize_date_field_mode(mode: str) -> str:
-        text = str(mode or "").strip().lower()
-        return text if text in {"speed", "cleansing"} else "speed"
+    def _is_temporal_target_type(ziz_type: str) -> bool:
+        return str(ziz_type or "").strip().upper() in {"DATE", "DATETIME", "TIMESTAMP"}
 
     @staticmethod
     def _to_bool_flag(value) -> bool:
@@ -285,57 +369,65 @@ class BaseConnector(ABC):
         return text in {"1", "true", "yes", "on"}
 
     @staticmethod
-    def _is_temporal_target_type(ziz_type: str) -> bool:
-        return str(ziz_type or "").strip().upper() in {"DATE", "DATETIME", "TIMESTAMP"}
-
-    @staticmethod
-    def _build_raw_shadow_column_name(dataframe: pd.DataFrame, base_name: str) -> str:
-        candidate = f"{base_name}__raw"
-        if candidate not in dataframe.columns:
-            return candidate
-        suffix = 2
-        while True:
-            next_name = f"{candidate}_{suffix}"
-            if next_name not in dataframe.columns:
-                return next_name
-            suffix += 1
-
-    @staticmethod
     def _coerce_temporal_series(
         series: pd.Series,
         ziz_type: str,
-        date_field_mode: str = "speed",
         date_serial_system: str = "excel_1900",
+        date_cleansing: bool = True,
     ) -> tuple[pd.Series, dict]:
-        mode = BaseConnector._normalize_date_field_mode(date_field_mode)
-        normalized = series.map(BaseConnector._normalize_temporal_text)
-        parse_with_utc = ziz_type == "TIMESTAMP"
-        parsed_primary = pd.to_datetime(normalized, errors="coerce", utc=parse_with_utc)
-        parsed_secondary = None
-        if mode == "cleansing":
-            parsed_secondary = pd.to_datetime(series, errors="coerce", utc=parse_with_utc)
-
-        combined = parsed_primary.copy()
-        text_fallback_count = 0
-        if parsed_secondary is not None:
-            text_fallback_mask = combined.isna() & parsed_secondary.notna()
-            text_fallback_count = int(text_fallback_mask.sum())
-            if text_fallback_count > 0:
-                combined = combined.where(~text_fallback_mask, parsed_secondary)
-
-        serial_parsed = BaseConnector._coerce_excel_serial_series(series, date_serial_system=date_serial_system)
-        serial_fallback_mask = combined.isna() & serial_parsed.notna()
-        serial_fallback_count = int(serial_fallback_mask.sum())
-        if serial_fallback_count > 0:
-            combined = combined.where(~serial_fallback_mask, serial_parsed)
+        serial_fallback_count = 0
+        if ziz_type == "DATE" and date_cleansing:
+            combined, serial_fallback_count = BaseConnector._coerce_date_series_with_cleansing(
+                series,
+                date_serial_system=date_serial_system,
+            )
+        elif ziz_type == "DATE":
+            combined = pd.to_datetime(series, errors="coerce")
+        else:
+            parse_with_utc = ziz_type == "TIMESTAMP"
+            combined = pd.to_datetime(series, errors="coerce", utc=parse_with_utc)
 
         coerced = BaseConnector._coerce_to_target_temporal_type(combined, ziz_type)
-        parse_failure_count = int(((~series.map(BaseConnector._is_empty_scalar)) & pd.isna(coerced)).sum())
+        parse_failure_count = int((~BaseConnector._is_empty_series(series) & pd.isna(coerced)).sum())
         return coerced, {
             "serial_fallback_count": serial_fallback_count,
-            "text_fallback_count": text_fallback_count,
             "parse_failure_count": parse_failure_count,
         }
+
+    @staticmethod
+    def _coerce_date_series_with_cleansing(
+        series: pd.Series,
+        date_serial_system: str = "excel_1900",
+    ) -> tuple[pd.Series, int]:
+        # 1) まずは素の一括パース
+        result = pd.to_datetime(series, errors="coerce")
+
+        # 2) NaT のうち和文日付のみ補完 (yyyy年mm月dd日 / yyyy年m月d日)
+        na_mask = result.isna()
+        if na_mask.any():
+            text_series = series.astype("string")
+            jp_mask = na_mask & text_series.str.match(r"^\d{4}年\d{1,2}月\d{1,2}日$", na=False)
+            if jp_mask.any():
+                jp_norm = (
+                    text_series.loc[jp_mask]
+                    .str.replace("年", "-", regex=False)
+                    .str.replace("月", "-", regex=False)
+                    .str.replace("日", "", regex=False)
+                )
+                jp_parsed = pd.to_datetime(jp_norm, errors="coerce")
+                result.loc[jp_mask] = jp_parsed
+
+        # 3) まだ NaT のうち、Excelシリアルのみ補完
+        serial_fallback_count = 0
+        na_mask = result.isna()
+        if na_mask.any():
+            serial_parsed = BaseConnector._coerce_excel_serial_series(series, date_serial_system=date_serial_system)
+            serial_mask = na_mask & serial_parsed.notna()
+            serial_fallback_count = int(serial_mask.sum())
+            if serial_fallback_count > 0:
+                result.loc[serial_mask] = serial_parsed.loc[serial_mask]
+
+        return pd.to_datetime(result, errors="coerce"), serial_fallback_count
 
     @staticmethod
     def _coerce_to_target_temporal_type(parsed: pd.Series, ziz_type: str) -> pd.Series:
@@ -402,6 +494,11 @@ class BaseConnector(ABC):
         return False
 
     @staticmethod
+    def _is_empty_series(series: pd.Series) -> pd.Series:
+        text_series = series.astype("string").str.strip()
+        return series.isna() | text_series.eq("")
+
+    @staticmethod
     def _is_na_value(value) -> bool:
         try:
             marker = pd.isna(value)
@@ -418,13 +515,11 @@ class BaseConnector(ABC):
         target_columns = int(metrics.get("target_columns") or 0)
         if target_columns <= 0:
             return
-        mode = str(metrics.get("mode") or "speed")
+        cleansing = bool(metrics.get("date_cleansing"))
         serial_count = int(metrics.get("serial_fallback_count") or 0)
-        text_count = int(metrics.get("text_fallback_count") or 0)
         failed_count = int(metrics.get("parse_failure_count") or 0)
-        raw_columns = int(metrics.get("raw_shadow_columns") or 0)
         self.log_execution(
-            f"日付変換 mode={mode} 対象列={target_columns} serial補完={serial_count} text補完={text_count} 失敗={failed_count} raw保持列={raw_columns}"
+            f"日付変換 cleansing={cleansing} 対象列={target_columns} serial補完={serial_count} 失敗={failed_count}"
         )
 
     @staticmethod

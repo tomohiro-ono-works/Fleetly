@@ -1,0 +1,44 @@
+[
+  {
+    "target_folder_path": "xxxxxx\\Downloads",
+    "target_file_name": "EFFICIENCY",
+    "search_text": "Total",
+    "rename_file_path": "xxxxxx\\Downloads\\renamed\\OPERATTIONAL_EFFICIENCY.pdf"
+  },
+  {
+    "target_folder_path": "xxxxxx\\Downloads",
+    "target_file_name": "Final",
+    "search_text": "Total",
+    "rename_file_path": "xxxxxx\\Downloads\\renamed\\CanadasSocialWorkers_Final.pdf"
+  },
+  {
+    "target_folder_path": "xxxxxx\\Downloads",
+    "target_file_name": "RETAIL STORE",
+    "search_text": "Total",
+    "rename_file_path": "xxxxxx\\Downloads\\renamed\\OKRIKA_RETAIL_STORE.pdf"
+  },
+  {
+    "target_folder_path": "xxxxxx\\Downloads",
+    "target_file_name": "Site",
+    "search_text": "Total",
+    "rename_file_path": "xxxxxx\\Downloads\\renamed\\SOLAR_PV_MONITORING_Site.pdf"
+  },
+  {
+    "target_folder_path": "xxxxxx\\Downloads",
+    "target_file_name": "goal",
+    "search_text": "Total",
+    "rename_file_path": "xxxxxx\\Downloads\\renamed\\B2VB2026_Week_7_Virginia_goal.pdf"
+  },
+  {
+    "target_folder_path": "xxxxxx\\Downloads",
+    "target_file_name": "skill",
+    "search_text": "Total",
+    "rename_file_path": "xxxxxx\\Downloads\\renamed\\PERSONAL_FINANCE_skill.pdf"
+  },
+  {
+    "target_folder_path": "xxxxxx\\Downloads",
+    "target_file_name": "design",
+    "search_text": "Total",
+    "rename_file_path": "xxxxxx\\Downloads\\renamed\\SERVICE_MANAGEMENT_design.pdf"
+  }
+]

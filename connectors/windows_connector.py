@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -14,7 +15,12 @@ from connectors.base_connector import BaseConnector
 
 
 class WindowsConnector(BaseConnector):
+    VARIABLE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005]+$")
+    SYSTEM_FIXED_VARIABLES = {"current_date", "user_name"}
+
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]):
+        if action == "define_values":
+            return self.define_values(params.get("define_values"), context)
         if action == "rename_and_move_file":
             return self.rename_and_move_file(params)
         if action == "create_markdown_file":
@@ -24,6 +30,74 @@ class WindowsConnector(BaseConnector):
         if action == "search_text_in_files":
             return self.search_text_in_files(params)
         raise ValueError(f"Unknown action: {action}")
+
+    def _normalize_define_values(self, raw_define_values):
+        if raw_define_values is None:
+            return []
+
+        parsed = raw_define_values
+        if isinstance(parsed, str):
+            text = parsed.strip()
+            if not text:
+                return []
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError as error:
+                raise ValueError(f"define_values は JSON 形式で指定してください: {error}") from error
+
+        if isinstance(parsed, dict):
+            parsed = [{"name": key, "value": value} for key, value in parsed.items()]
+
+        if not isinstance(parsed, list):
+            raise ValueError("define_values は配列で指定してください。")
+
+        rows = []
+        for item in parsed:
+            if not isinstance(item, dict):
+                raise ValueError("define_values の各要素はオブジェクトで指定してください。")
+            rows.append({
+                "name": str(item.get("name") or item.get("key") or "").strip(),
+                "value": item.get("value", item.get("val")),
+            })
+        return rows
+
+    def _validate_define_values(self, rows):
+        for row in rows:
+            name = str(row.get("name") or "").strip()
+            if not name:
+                continue
+            if not self.VARIABLE_NAME_PATTERN.fullmatch(name):
+                raise ValueError(f"変数名 '{name}' は無効です。ひらがな / カタカナ / 漢字 / 英数字 / _ のみ使用できます。")
+
+    def define_values(self, define_values, context):
+        rows = self._normalize_define_values(define_values)
+        self._validate_define_values(rows)
+
+        output_rows = []
+        for row in rows:
+            name = str(row.get("name") or "").strip()
+            if not name:
+                continue
+            existed_before = name in context
+            if name in self.SYSTEM_FIXED_VARIABLES:
+                fixed_value = context.get(name, row.get("value"))
+                context[name] = fixed_value
+                output_rows.append({
+                    "variable_name": name,
+                    "value": fixed_value,
+                    "definition_type": "overwritten" if existed_before else "defined",
+                })
+                continue
+
+            value = row.get("value")
+            context[name] = value
+            output_rows.append({
+                "variable_name": name,
+                "value": value,
+                "definition_type": "overwritten" if existed_before else "defined",
+            })
+
+        return self.to_dataframe(output_rows)
 
     def rename_and_move_file(self, params: dict[str, Any]) -> pd.DataFrame:
         source_file_path = self._required_path_text(params, "source_file_path")

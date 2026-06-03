@@ -10,7 +10,7 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: #e3e3f3;
+  background: #292941;
   border-right: 1px solid var(--border-default);
   box-shadow: var(--shadow-soft-weak);
   backdrop-filter: blur(18px);
@@ -124,8 +124,7 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: linear-gradient(160deg, var(--brand-100) 0%, var(--surface-page) 100%);
-  border: 1px solid var(--border-default);
+  background: #474764;
 }
 
 .sidebar-toggle-icon img,
@@ -201,7 +200,7 @@
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  background: #ffffff;
+  background: #e3e3f3;
   border-left: 1px solid var(--border-default);
   box-shadow: var(--shadow-soft-weak);
   backdrop-filter: blur(18px);
@@ -209,21 +208,18 @@
   overflow: hidden;
 }
 
-.right-sidebar-rail {
-  position: sticky;
-  top: var(--shell-header-height, 0px);
-  height: var(--shell-content-height, calc(100vh - var(--shell-header-height, 0px)));
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  background: #e3e3f3;
-  border-left: 1px solid var(--border-default);
-  box-shadow: var(--shadow-soft-weak);
-  backdrop-filter: blur(18px);
-  z-index: 81;
-  overflow: hidden;
-  padding: 6px 4px;
+/* Flow workspace ではコネクタポップアップが中央エリアの前面に出るようにする */
+.flow-layout-page .right-sidebar {
+  z-index: 180;
+  overflow: visible !important;
+}
+
+.flow-layout-page .right-sidebar-content {
+  overflow: visible !important;
+}
+
+.flow-layout-page .right-sidebar-content > #nodeDetail {
+  overflow: visible !important;
 }
 
 .right-sidebar-resizer {
@@ -240,75 +236,12 @@
   content: none;
 }
 
-.right-sidebar-toggle {
-  width: 40px;
-  height: 40px;
-  margin: 8px auto 0;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: transparent;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.right-sidebar-toggle .sidebar-item-icon {
-  width: 28px;
-  height: 28px;
-}
-
-.right-sidebar-nav {
-  margin-top: 8px;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.right-rail-item {
-  width: 100%;
-  min-height: 40px;
-  padding: 0;
-  border: 1px solid transparent;
-  border-radius: 12px;
-  background: transparent;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.right-rail-item .sidebar-item-icon {
-  width: 28px;
-  height: 28px;
-}
-
-.right-sidebar-toggle:hover,
-.right-rail-item:hover {
-  background: var(--surface-hover);
-}
-
-.right-rail-item.is-current {
-  background: var(--surface-page);
-  border-color: var(--brand-600);
-  box-shadow: 0 4px 10px var(--alpha-shadow-06);
-}
-
-.right-rail-item.is-current .sidebar-item-icon {
-  background: var(--brand-600);
-  border-color: var(--brand-600);
-}
-
-.right-rail-item.is-current .sidebar-item-icon img {
-  filter: brightness(0) invert(1);
-  opacity: 1;
-}
-
 .right-sidebar-content {
   flex: 1 1 auto;
   min-height: 0;
   overflow: hidden;
   padding: 12px;
+  background: #e3e3f3;
 }
 
 .right-sidebar-content > #nodeDetail {

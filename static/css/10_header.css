@@ -5,7 +5,7 @@ header {
   position: sticky;
   top: 0;
   z-index: 120;
-  background: #352480;
+  background: #5e1ef6;
   color: var(--text-primary);
   /* border-bottom: 1px solid var(--border-default); */
   overflow: hidden;
@@ -34,21 +34,6 @@ header .actions {
   gap: 8px;
 }
 
-.flow-name-input {
-  min-width: 320px;
-  max-width: 560px;
-  width: min(560px, 42vw);
-  position: absolute;
-  left: 50%;
-  transform: translateX(-50%);
-  /* border: 1px solid var(--border-default); */
-  /* background: #6f5ccf; */
-  color: var(--text-primary);
-  line-height: 1.2;
-  padding: 5px 10px;
-  /* border-radius: 9px; */
-}
-
 .header-left,
 header .actions {
   position: relative;
@@ -73,21 +58,9 @@ header .header-icon-btn img[src$=".svg"] {
 }
 
 header .header-home-btn img[src$=".svg"] {
-  filter: none;
+  filter: brightness(0) saturate(100%) invert(100%);
 }
 
 header .header-icon-btn:disabled img[src$=".svg"] {
   opacity: 0.55;
-}
-
-.flow-name-input:focus {
-  outline: none;
-  border-color: var(--brand-600);
-  box-shadow: 0 0 0 2px var(--alpha-brand-15);
-}
-
-#flowName {
-  background: #483698; /* 好きな色 */
-  color: #ffffff;
-  border: 1px solid #483698;
 }

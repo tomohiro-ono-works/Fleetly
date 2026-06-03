@@ -64,14 +64,15 @@
   const bodyRoot = document.body;
   const rightSidebarRefs = shellApi.getRightSidebarRefs?.() || {};
   const rightSidebar = rightSidebarRefs.container || document.getElementById("rightSidebar");
-  const rightSidebarRail = rightSidebarRefs.rail || document.getElementById("rightSidebarRail");
-  const rightSidebarToggle = rightSidebarRefs.toggle || document.getElementById("rightSidebarToggle");
   const rightSidebarResizer = rightSidebarRefs.resizer || document.getElementById("rightSidebarResizer");
   const detailPanelResizer = document.getElementById("detailPanelResizer");
   const splitDetailLayout = !!detailRoot && !!detailBottomRoot && detailBottomRoot !== detailRoot;
   const bodyDataset = bodyRoot?.dataset || {};
   const urlParams = new URLSearchParams(window.location.search);
   const runtimeVersion = urlParams.get("v") || "";
+  const embeddedMode = urlParams.get("embedded") === "1";
+  const embeddedOpenScope = String(urlParams.get("open_scope") || "").trim();
+  const embeddedOpenRelPath = String(urlParams.get("open_rel_path") || "").trim();
   let importInput = null;
   const APP_MODES = CONFIG.modes || {};
   const DEFAULT_APP_MODE = APP_MODES.dataflow ? "dataflow" : (Object.keys(APP_MODES)[0] || "dataflow");
@@ -79,6 +80,9 @@
     modeStates: "ziz.modeStates.v1",
     pendingFlow: "ziz.pendingFlow.v1",
   };
+  const RECENT_ROOTS_CONFIG_SCOPE = "config";
+  const RECENT_ROOTS_CONFIG_PATH = "recent_roots.json";
+  const WORKFLOWS_DIR_NAME = "workflows";
   const modeStates = {};
   let persistTimer = 0;
   const HISTORY_MAX_DIFFS_PER_SNAPSHOT = 30;
@@ -353,6 +357,25 @@
       // UI 操作ログ送信失敗で操作本体を止めない
     }
   }
+  function resolveBridgeApi() {
+    const localBridge = window.zizBridge || (window.zizPackages || {})?.core?.bridge || bridgeApi || null;
+    if (localBridge?.available?.()) return localBridge;
+    if (!embeddedMode) return localBridge;
+    const parentBridge = window.parent?.zizBridge || (window.parent?.zizPackages || {})?.core?.bridge || null;
+    if (parentBridge?.available?.()) return parentBridge;
+    return localBridge || parentBridge;
+  }
+  function getBridgeUnavailableMessage(activeBridge) {
+    const message = activeBridge?.unavailableMessage?.();
+    return String(message || "ブリッジ未接続です。再読み込みしてください。");
+  }
+  function toDebugJson(value) {
+    try {
+      return JSON.stringify(value);
+    } catch (_) {
+      return String(value);
+    }
+  }
   function describeButton(button) {
     if (!button) return "";
     return String(
@@ -364,20 +387,39 @@
       || "button"
     ).replace(/\s+/g, " ").trim();
   }
+  function describeButtonId(button) {
+    if (!button) return "";
+    return String(
+      button.id
+      || button.getAttribute("data-pane-action")
+      || button.getAttribute("data-action")
+      || button.getAttribute("aria-label")
+      || button.getAttribute("name")
+      || ""
+    ).replace(/\s+/g, " ").trim();
+  }
   let activeMode = DEFAULT_APP_MODE;
   let state;
-  const RIGHT_PANEL_KEYS = ["detail", "yaml", "variables", "log"];
+  const RIGHT_PANEL_KEYS = ["detail", "yaml", "variables"];
   let activeRightPanel = "detail";
+  let rightSidebarVisibleBySelection = false;
+  let rightSidebarCollapsed = false;
   let currentRunId = "";
   const runKindById = Object.create(null);
   const runMetaById = Object.create(null);
+  const ownedRunIds = new Set();
+  const handledTerminalRunIds = new Set();
+  let activeFlowRunId = "";
+  let lastRunTerminalDialogKey = "";
+  const runLogsById = Object.create(null);
+  let workspaceActiveFlowTabId = "";
+  let embeddedLastDirtySignature = "";
   let lastRunSummary = null;
   let stateChangeFrameId = 0;
   let pendingStateChangeOptions = null;
   let stepStatusFlushTimer = 0;
   const pendingStepStatuses = {};
   let lastHeaderSyncSignature = "";
-  let lastRightPanelSyncKey = "";
   let successStatusResetObserver = null;
   const renderPerf = {
     count: 0,
@@ -389,7 +431,7 @@
   window.__zizRenderPerf = renderPerf;
   const homeViewModel = {
     visible: String(bodyDataset.homeVisible || "false").toLowerCase() === "true",
-    recentFiles: [],
+    recentProjects: [],
     templates: [],
     refreshToken: 0,
   };
@@ -423,6 +465,36 @@
     return state.nodes.find((node) => String(node?.id || "").trim() === selectedNodeId) || null;
   }
 
+  function getCurrentSelectedNodeIds() {
+    if (!state || typeof state !== "object") return [];
+    if (typeof getSelectedNodeIds === "function") {
+      return getSelectedNodeIds(state, { allowEmpty: true });
+    }
+    return Array.isArray(state.selectedNodeIds)
+      ? state.selectedNodeIds.map((nodeId) => String(nodeId || "").trim()).filter(Boolean)
+      : [];
+  }
+
+  function shouldShowRightSidebar() {
+    if (!splitDetailLayout || !rightSidebar) return false;
+    if (homeViewModel.visible) return false;
+    if (!rightSidebarVisibleBySelection) return false;
+    const selectedIds = getCurrentSelectedNodeIds();
+    if (selectedIds.length !== 1) return false;
+    if (selectedIds[0] === "__start__") return false;
+    return true;
+  }
+
+  function applyRightSidebarVisibility(visible) {
+    if (!splitDetailLayout || !rightSidebar) return;
+    const nextCollapsed = !visible;
+    if (rightSidebarCollapsed === nextCollapsed) return;
+    rightSidebarCollapsed = nextCollapsed;
+    shellApi.setRightSidebarCollapsed?.(nextCollapsed, () => {
+      applyFlowViewportHeight();
+    });
+  }
+
   function setRunAllEditLock(locked) {
     if (!state || typeof state !== "object") return false;
     const next = !!locked;
@@ -431,11 +503,69 @@
     return true;
   }
 
+  function setRunButtonLocked(locked) {
+    if (!btnRun) return;
+    btnRun.disabled = !!locked;
+    btnRun.setAttribute("aria-disabled", locked ? "true" : "false");
+  }
+
+  function notifyWorkspaceRunState(running, runId = "", source = "app") {
+    window.dispatchEvent(new CustomEvent("ziz:workspace-run-state", {
+      detail: {
+        running: !!running,
+        run_id: String(runId || ""),
+        tab_id: String(workspaceActiveFlowTabId || ""),
+        source: String(source || "app"),
+      }
+    }));
+  }
+
+  function postEmbeddedEvent(type, detail = {}) {
+    if (!embeddedMode) return;
+    try {
+      window.parent?.postMessage({
+        source: "ziz-embedded",
+        type: String(type || ""),
+        detail: (detail && typeof detail === "object") ? detail : {},
+      }, window.location.origin);
+    } catch (_) {
+      // ignore
+    }
+  }
+
+  function getEmbeddedDirtyState() {
+    const store = getActiveHistoryStore();
+    return !!(store && store.undoStack && store.undoStack.length);
+  }
+
+  function publishEmbeddedStateIfNeeded(force = false) {
+    if (!embeddedMode) return;
+    const dirty = getEmbeddedDirtyState();
+    const signature = `${state?.flowName || ""}|${dirty ? "1" : "0"}|${state?.appMode || ""}`;
+    if (!force && signature === embeddedLastDirtySignature) return;
+    embeddedLastDirtySignature = signature;
+    postEmbeddedEvent("state", {
+      flow_name: String(state?.flowName || ""),
+      dirty: !!dirty,
+      mode: String(state?.appMode || ""),
+    });
+  }
+
   function clearStepStatusesForVisuals() {
     if (!state || !state.stepStatuses || typeof state.stepStatuses !== "object") return;
     if (!Object.keys(state.stepStatuses).length) return;
     state.stepStatuses = {};
     refreshFlowStatusOnly();
+  }
+
+  function resolveWorkspaceTabId() {
+    const explicit = String(workspaceActiveFlowTabId || "").trim();
+    if (explicit) return explicit;
+    if (!embeddedMode) return "__standalone__";
+    const rel = String(embeddedOpenRelPath || "").trim().replace(/\\/g, "/").toLowerCase();
+    const scope = embeddedOpenScope === "config" ? "config" : "root";
+    if (rel) return `embedded:${scope}:${rel}`;
+    return "__embedded__";
   }
 
   function armSuccessStatusResetOnDialogClose() {
@@ -464,9 +594,110 @@
 
   function showRunCompletedDialog(summary, runId) {
     const flowName = String(summary?.flow_name || state?.flowName || "フロー");
+    showFlowRunLogDialog(runId, {
+      flowName,
+      success: true,
+      errorMessage: "",
+    });
+    console.info(`[run:${runId || "-"}] 実行ログダイアログを表示(success)`);
+  }
+
+  function showRunFailedDialog(summary, payload, runId) {
+    const flowName = String(summary?.flow_name || state?.flowName || "フロー");
+    const status = String(payload?.status || summary?.status || "").trim().toLowerCase();
+    const errorMessage = String(
+      summary?.error?.message
+      || payload?.message
+      || (status === "cancelled" ? "実行がキャンセルされました。" : "実行に失敗しました。")
+    ).trim();
+    const isCancelled = status === "cancelled";
+    showFlowRunLogDialog(runId, {
+      flowName,
+      success: false,
+      errorMessage: isCancelled ? "実行がキャンセルされました。" : errorMessage,
+    });
+    console.info(`[run:${runId || "-"}] 実行ログダイアログを表示(failed) status=${status || "-"}`);
+  }
+
+  function formatRunLogTimestamp(date = new Date()) {
+    const d = date instanceof Date ? date : new Date();
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    const hh = String(d.getHours()).padStart(2, "0");
+    const mi = String(d.getMinutes()).padStart(2, "0");
+    const ss = String(d.getSeconds()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd} ${hh}:${mi}:${ss}`;
+  }
+
+  function normalizeRunLogStatus(status) {
+    const text = String(status || "").trim().toLowerCase();
+    if (text === "success" || text === "ok") return "成功";
+    return "失敗";
+  }
+
+  function getOrCreateRunLog(runId) {
+    const key = String(runId || "").trim();
+    if (!key) return null;
+    if (!runLogsById[key]) {
+      runLogsById[key] = {
+        rows: [],
+        started: false,
+        finalized: false,
+      };
+    }
+    return runLogsById[key];
+  }
+
+  function appendRunLogRow(runId, status, message, at = new Date()) {
+    const entry = getOrCreateRunLog(runId);
+    if (!entry) return;
+    entry.rows.push({
+      at: formatRunLogTimestamp(at),
+      status: normalizeRunLogStatus(status),
+      message: String(message || ""),
+    });
+  }
+
+  function resolveStepLogMessage(stepId, fallbackMessage) {
+    const key = String(stepId || "").trim();
+    if (!key) return String(fallbackMessage || "ステップ");
+    const node = findNodeByStepId(key);
+    const desc = String(node?.description || "").trim();
+    if (desc) return `[${key}] ${desc}`;
+    const connector = String(node?.connector || "").trim();
+    const action = String(node?.action || "").trim();
+    if (connector || action) return `[${key}] ${connector}${connector && action ? " / " : ""}${action}`.trim();
+    return `[${key}] ステップ`;
+  }
+
+  function ensureFlowRunLogStarted(runId, flowName) {
+    const entry = getOrCreateRunLog(runId);
+    if (!entry || entry.started) return;
+    entry.started = true;
+    appendRunLogRow(runId, "success", "ワークフロー開始");
+  }
+
+  function showFlowRunLogDialog(runId, options = {}) {
+    const entry = getOrCreateRunLog(runId);
+    const flowName = String(options?.flowName || state?.flowName || "ワークフロー");
+    const success = !!options?.success;
+    const errorMessage = String(options?.errorMessage || "").trim();
+    if (entry && !entry.finalized) {
+      if (errorMessage) {
+        appendRunLogRow(runId, "failed", errorMessage);
+      }
+      appendRunLogRow(runId, success ? "success" : "failed", "ワークフロー完了");
+      entry.finalized = true;
+    }
     armSuccessStatusResetOnDialogClose();
-    showDialog(`${flowName} の実行が完了しました。`, { kind: "success", title: "実行完了" });
-    console.info(`[run:${runId || "-"}] 実行完了ダイアログを表示`);
+    const rows = Array.isArray(entry?.rows) ? entry.rows : [];
+    showDialog("", {
+      kind: success ? "success" : "error",
+      title: `${flowName} 実行ログ`,
+      format: "runlog",
+      logRows: rows,
+    });
   }
 
   function mergeStateChangeOptions(base, incoming) {
@@ -555,18 +786,15 @@
       }
       const nodeIds = new Set((Array.isArray(state.nodes) ? state.nodes : []).map((node) => String(node?.id || "")));
       if (typeof getSelectedNodeIds === "function") {
-        getSelectedNodeIds(state);
+        getSelectedNodeIds(state, { allowEmpty: true });
       } else {
         const selectedNodeIds = Array.isArray(state.selectedNodeIds)
           ? state.selectedNodeIds.map((nodeId) => String(nodeId || "").trim()).filter(Boolean)
           : [];
-        const validSelectedNodeIds = selectedNodeIds.filter((nodeId, index, arr) => nodeIds.has(nodeId) && arr.indexOf(nodeId) === index);
-        const fallbackId = state.nodes?.[0]?.id || null;
-        const normalizedSelectedNodeIds = validSelectedNodeIds.length
-          ? validSelectedNodeIds
-          : (fallbackId ? [String(fallbackId)] : []);
+        const normalizedSelectedNodeIds = selectedNodeIds
+          .filter((nodeId, index, arr) => nodeIds.has(nodeId) && arr.indexOf(nodeId) === index);
         if (typeof setSelectedNodes === "function") {
-          setSelectedNodes(state, normalizedSelectedNodeIds);
+          setSelectedNodes(state, normalizedSelectedNodeIds, { allowEmpty: true });
         } else {
           state.selectedNodeIds = normalizedSelectedNodeIds;
           state.selectedNodeId = normalizedSelectedNodeIds[0] || null;
@@ -586,25 +814,22 @@
       if (bodyRoot) {
         bodyRoot.dataset.homeVisible = homeViewModel.visible ? "true" : "false";
       }
+      if (homeViewModel.visible) {
+        rightSidebarVisibleBySelection = false;
+      }
       if (detailPanel) {
         detailPanel.hidden = !!homeViewModel.visible;
       }
       if (rightSidebar) {
         rightSidebar.hidden = !!homeViewModel.visible;
       }
-      if (rightSidebarRail) {
-        rightSidebarRail.hidden = !!homeViewModel.visible;
-      }
+      applyRightSidebarVisibility(shouldShowRightSidebar());
       if (mainRoot) {
         if (splitDetailLayout) {
           mainRoot.style.paddingBottom = homeViewModel.visible ? "0px" : "";
         } else {
           mainRoot.style.paddingBottom = homeViewModel.visible ? "0px" : (detailPanel ? `${(detailPanel.getBoundingClientRect().height || 300) + 20}px` : "0px");
         }
-      }
-      if (lastRightPanelSyncKey !== activeRightPanel) {
-        lastRightPanelSyncKey = activeRightPanel;
-        shellApi.setActiveRightPanel?.(activeRightPanel);
       }
       const schemaEditorViewState = captureBottomSchemaEditorViewState();
       renderApp({
@@ -621,6 +846,7 @@
       applyFlowViewportHeight();
       restoreBottomSchemaEditorViewState(schemaEditorViewState);
       schedulePersistModeStates();
+      publishEmbeddedStateIfNeeded(false);
     } catch (err) {
       showFatal("???????????", err);
     } finally {
@@ -748,6 +974,11 @@
     } catch (_) {
       // ignore storage failures
     }
+  }
+
+  function clearAppSessionCaches() {
+    removeSessionValue(STORAGE_KEYS.modeStates);
+    removeSessionValue(STORAGE_KEYS.pendingFlow);
   }
 
   function getModeMeta(mode) {
@@ -890,6 +1121,132 @@
     return payload;
   }
 
+  function normalizeRootPath(pathValue) {
+    const text = String(pathValue || "").trim();
+    if (!text) return "";
+    return text.replace(/[\\/]+/g, "\\").replace(/[\\]+$/, "");
+  }
+
+  function getRootFolderName(pathValue) {
+    const normalized = normalizeRootPath(pathValue);
+    if (!normalized) return "(未選択)";
+    const parts = normalized.split(/[\\/]/).filter(Boolean);
+    return parts.length ? parts[parts.length - 1] : normalized;
+  }
+
+  function normalizeRecentProjectEntries(entries) {
+    const list = Array.isArray(entries) ? entries : [];
+    const dedup = new Map();
+    list.forEach((entry) => {
+      let path = "";
+      let lastAccessedAt = "";
+      if (typeof entry === "string") {
+        path = normalizeRootPath(entry);
+      } else if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        path = normalizeRootPath(entry.path);
+        lastAccessedAt = String(entry.last_accessed_at || "").trim();
+      }
+      if (!path) return;
+      const key = path.toLowerCase();
+      if (!dedup.has(key)) {
+        dedup.set(key, { path, last_accessed_at: lastAccessedAt });
+      }
+    });
+    return Array.from(dedup.values())
+      .sort((a, b) => {
+        const av = Date.parse(String(a.last_accessed_at || "")) || 0;
+        const bv = Date.parse(String(b.last_accessed_at || "")) || 0;
+        return bv - av;
+      })
+      .slice(0, 10)
+      .map((entry) => ({
+        root_path: entry.path,
+        display_name: getRootFolderName(entry.path),
+        display_hint: entry.path,
+        opened_at: entry.last_accessed_at || "",
+      }));
+  }
+
+  async function loadRecentProjects() {
+    if (!bridgeApi?.available?.()) return [];
+    try {
+      const payload = await bridgeApi.call("workspace.readText", {
+        scope: RECENT_ROOTS_CONFIG_SCOPE,
+        rel_path: RECENT_ROOTS_CONFIG_PATH,
+      });
+      const raw = String(payload?.content || "").trim();
+      if (!raw) return [];
+      const parsed = JSON.parse(raw);
+      return normalizeRecentProjectEntries(parsed);
+    } catch (error) {
+      if (String(error?.code || "") !== "E_NOT_FOUND") {
+        console.error("failed to load recent projects", error);
+      }
+      return [];
+    }
+  }
+
+  function getParentDir(pathValue) {
+    const text = String(pathValue || "").trim();
+    if (!text) return "";
+    const normalized = text.replace(/[\\/]+$/, "");
+    const slash = Math.max(normalized.lastIndexOf("/"), normalized.lastIndexOf("\\"));
+    if (slash <= 0) return "";
+    return normalized.slice(0, slash);
+  }
+
+  function joinPath(baseDir, childName) {
+    const base = String(baseDir || "").trim().replace(/[\\/]+$/, "");
+    const child = String(childName || "").trim().replace(/^[\\/]+/, "");
+    if (!base) return child;
+    const sep = base.includes("\\") ? "\\" : "/";
+    return `${base}${sep}${child}`;
+  }
+
+  async function ensureWorkflowsRoot() {
+    if (!bridgeApi?.available?.()) return "";
+    const rootStatus = await bridgeApi.call("workspace.getRoot", {});
+    const configRoot = String(rootStatus?.config_path || "").trim();
+    const baseDir = getParentDir(configRoot);
+    const workflowsPath = joinPath(baseDir, WORKFLOWS_DIR_NAME);
+    if (workflowsPath) {
+      try {
+        const applied = await bridgeApi.call("workspace.setRoot", { root_path: workflowsPath });
+        return String(applied?.root_path || workflowsPath);
+      } catch (error) {
+        if (String(error?.code || "") !== "E_NOT_FOUND") {
+          throw error;
+        }
+      }
+    }
+    const picked = await bridgeApi.call("workspace.pickRoot", {
+      title: "プロジェクトルートを選択",
+      current_value: workflowsPath || String(rootStatus?.root_path || ""),
+    });
+    if (!picked?.selected) return "";
+    const applied = await bridgeApi.call("workspace.setRoot", { root_path: String(picked.root_path || "") });
+    return String(applied?.root_path || picked.root_path || "");
+  }
+
+  function toTemplateFileExtension(payload) {
+    const sourceName = String(payload?.file_name || "").trim();
+    const dot = sourceName.lastIndexOf(".");
+    if (dot >= 0) {
+      const ext = sourceName.slice(dot);
+      if (/^\.[a-z0-9]+$/i.test(ext)) return ext;
+    }
+    const mode = String(payload?.mode || "").trim().toLowerCase();
+    if (mode === "dataflow") return ".zizd";
+    return ".ziz";
+  }
+
+  function buildAutoSavedTemplateFileName(payload) {
+    const now = new Date();
+    const pad = (value, width = 2) => String(value).padStart(width, "0");
+    const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}_${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}_${pad(now.getMilliseconds(), 3)}`;
+    return `new_flow_${stamp}${toTemplateFileExtension(payload)}`;
+  }
+
   function toAbsolutePageUrl(relativeUrl) {
     try {
       const target = new URL(String(relativeUrl || ""), window.location.href);
@@ -916,9 +1273,6 @@
         target.searchParams.delete("mode");
       }
       return target.toString();
-    }
-    if (normalized === "query-builder") {
-      return toAbsolutePageUrl(bodyDataset.queryBuilderUrl || "./query-builder.html");
     }
     return "";
   }
@@ -1027,8 +1381,17 @@
     return max + 1;
   }
 
-  function parseYamlText(text) {
-    const parser = window.jsyaml;
+  async function ensureYamlParserLoaded() {
+    const existing = window.jsyaml;
+    if (existing && typeof existing.load === "function") return existing;
+    if (typeof shellApi?.loadScriptOnce === "function") {
+      await shellApi.loadScriptOnce("./vendor/js-yaml/js-yaml.min.js");
+    }
+    return window.jsyaml || null;
+  }
+
+  async function parseYamlText(text) {
+    const parser = await ensureYamlParserLoaded();
     if (!parser || typeof parser.load !== "function") {
       throw new Error("YAMLパーサーが見つかりません");
     }
@@ -1066,7 +1429,7 @@
       w: Math.max(120, Math.round(w)),
       h: Math.max(72, Math.round(h)),
       text: String(value.text || ""),
-      color: String(value.color || "#fff2a8"),
+      color: String(value.color || "#ebebf2"),
       anchorNodeId: value.anchorNodeId ? String(value.anchorNodeId) : null
     };
   }
@@ -1192,6 +1555,16 @@
     });
 
     const incomingByStep = new Map();
+    const topLevelLoopFlows = (data.loop && typeof data.loop === "object" && data.loop.flows && typeof data.loop.flows === "object")
+      ? data.loop.flows
+      : {};
+    const legacyFlowsLoop = (data.flows && typeof data.flows === "object" && data.flows.loop && typeof data.flows.loop === "object")
+      ? data.flows.loop
+      : {};
+    const nestedLoopFlows = (legacyFlowsLoop.flows && typeof legacyFlowsLoop.flows === "object")
+      ? legacyFlowsLoop.flows
+      : {};
+    const loopFlows = { ...nestedLoopFlows, ...topLevelLoopFlows };
     const edges = data.flows.edges || [];
     edges.forEach((edge, edgeIndex) => {
       const from = String(edge?.from || "");
@@ -1213,10 +1586,39 @@
         edgeIndex
       });
     });
+    Object.entries(loopFlows).forEach(([ownerStepId, ownerFlow]) => {
+      const ownerStep = String(ownerStepId || "").trim();
+      if (!ownerStep) return;
+      const loopEdges = Array.isArray(ownerFlow?.edges) ? ownerFlow.edges : [];
+      loopEdges.forEach((edge, edgeIndex) => {
+        const from = String(edge?.from || "").trim();
+        const to = String(edge?.to || "").trim();
+        if (!to || to === "END") return;
+        if (!nodeByStep.has(to)) {
+          throw new Error(`loop.flows.${ownerStep}.edges.to が steps に存在しません: ${to}`);
+        }
+        const parentStep = from === "START" ? ownerStep : from;
+        if (parentStep && !nodeByStep.has(parentStep)) {
+          throw new Error(`loop.flows.${ownerStep}.edges.from が steps に存在しません: ${from}`);
+        }
+        if (!incomingByStep.has(to)) incomingByStep.set(to, []);
+        incomingByStep.get(to).push({
+          parentStep,
+          order: Number(edge?.order),
+          kind: String(edge?.kind || "").trim().toLowerCase(),
+          edgeIndex: Number(edgeIndex) + 100000
+        });
+      });
+    });
 
     const missingParents = nodes
       .map((n) => n.stepName)
-      .filter((stepName) => !incomingByStep.has(stepName));
+      .filter((stepName) => {
+        if (incomingByStep.has(stepName)) return false;
+        const node = nodeByStep.get(stepName);
+        const loopOwnerStep = String(node?._importLoopOwnerStep || "").trim();
+        return !loopOwnerStep;
+      });
     if (missingParents.length) {
       throw new Error(`flows.edges に接続が不足しています: ${missingParents.join(", ")}`);
     }
@@ -1238,7 +1640,9 @@
         .map((edge) => edge.parentStep)
         .filter((parentStep) => !!parentStep);
       const parentStep = primaryIncoming ? primaryIncoming.parentStep : null;
-      node.parentId = parentStep ? nodeByStep.get(parentStep).id : null;
+      const importedLoopOwnerStep = String(node?._importLoopOwnerStep || "").trim();
+      const effectiveParentStep = parentStep || importedLoopOwnerStep || null;
+      node.parentId = effectiveParentStep ? nodeByStep.get(effectiveParentStep).id : null;
       node.mergeParentIds = mergeParents
         .map((parentStep) => nodeByStep.get(parentStep)?.id || null)
         .filter(Boolean);
@@ -1438,14 +1842,6 @@
       };
     }
 
-    if (meta.id === "query-builder") {
-      return {
-        ...base,
-        goal: "single_sql",
-        step_unit: "cte"
-      };
-    }
-
     return base;
   }
 
@@ -1472,6 +1868,7 @@
     const stepNameById = new Map(
       nodes.map((node, idx) => [node.id, String(node.stepName || `step${idx + 1}`)])
     );
+    const nodeById = new Map(nodes.map((node) => [String(node.id || ""), node]));
 
     const childrenByParent = new Map();
     const parentKey = (id) => id || "__START__";
@@ -1485,13 +1882,41 @@
     });
 
     const edges = [];
+    const loopEdgesByOwnerStep = {};
+    function pushLoopEdge(ownerStep, edge) {
+      const ownerKey = String(ownerStep || "").trim();
+      if (!ownerKey) return;
+      if (!Array.isArray(loopEdgesByOwnerStep[ownerKey])) loopEdgesByOwnerStep[ownerKey] = [];
+      loopEdgesByOwnerStep[ownerKey].push(edge);
+    }
     childrenByParent.forEach((children, key) => {
       const fromStep = key === "__START__" ? "START" : (stepNameById.get(key) || "START");
-      children.forEach((child, idx) => {
+      const parentNode = key === "__START__" ? null : nodeById.get(String(key || ""));
+      const parentId = parentNode ? String(parentNode.id || "") : "";
+      let mainOrder = 0;
+      let loopOrderByOwner = {};
+      children.forEach((child) => {
+        const toStep = stepNameById.get(child.id) || "";
+        if (!toStep) return;
+        const childLoopOwnerId = String(child.loopOwnerId || "").trim();
+        if (parentId && childLoopOwnerId && childLoopOwnerId === parentId) {
+          const ownerStep = stepNameById.get(parentId) || "";
+          if (!ownerStep) return;
+          const nextOrder = Number(loopOrderByOwner[ownerStep] || 0) + 1;
+          loopOrderByOwner[ownerStep] = nextOrder;
+          pushLoopEdge(ownerStep, {
+            from: fromStep,
+            to: toStep,
+            order: nextOrder,
+            kind: "primary"
+          });
+          return;
+        }
+        mainOrder += 1;
         edges.push({
           from: fromStep,
-          to: stepNameById.get(child.id) || "",
-          order: idx + 1,
+          to: toStep,
+          order: mainOrder,
           kind: "primary"
         });
       });
@@ -1503,6 +1928,22 @@
       mergeParentIds.forEach((parentId) => {
         const fromStep = stepNameById.get(parentId);
         if (!fromStep || !targetStep) return;
+        const targetLoopOwnerId = String(node.loopOwnerId || "").trim();
+        if (targetLoopOwnerId) {
+          const sourceNode = nodeById.get(String(parentId || ""));
+          const sourceLoopOwnerId = String(sourceNode?.loopOwnerId || "").trim();
+          if (String(parentId || "") === targetLoopOwnerId || sourceLoopOwnerId === targetLoopOwnerId) {
+            const ownerStep = stepNameById.get(targetLoopOwnerId) || "";
+            if (!ownerStep) return;
+            pushLoopEdge(ownerStep, {
+              from: fromStep,
+              to: targetStep,
+              order: 0,
+              kind: "merge"
+            });
+            return;
+          }
+        }
         edges.push({
           from: fromStep,
           to: targetStep,
@@ -1512,28 +1953,58 @@
       });
     });
 
-    const parentSet = new Set(nodes.map((n) => n.parentId).filter(Boolean));
-    nodes.forEach((node) => {
-      const mergeParentIds = Array.isArray(node.mergeParentIds) ? node.mergeParentIds : [];
-      mergeParentIds.forEach((parentId) => {
-        if (parentId) parentSet.add(parentId);
-      });
-    });
+    const mainOutgoing = new Set(
+      edges
+        .map((edge) => String(edge?.from || "").trim())
+        .filter((from) => from && from !== "START" && from !== "END")
+    );
     nodes
-      .filter((n) => !parentSet.has(n.id))
-      .forEach((leaf) => {
+      .filter((n) => !String(n?.loopOwnerId || "").trim())
+      .forEach((node) => {
+        const stepId = stepNameById.get(node.id) || "";
+        if (!stepId || mainOutgoing.has(stepId)) return;
         edges.push({
-          from: stepNameById.get(leaf.id) || "",
+          from: stepId,
           to: "END",
           order: 0
         });
       });
 
-    return {
+    const loopFlows = {};
+    Object.entries(loopEdgesByOwnerStep).forEach(([ownerStep, ownerEdges]) => {
+      const outgoing = new Set(
+        (ownerEdges || [])
+          .map((edge) => String(edge?.from || "").trim())
+          .filter((from) => from && from !== "START" && from !== "END")
+      );
+      const ownerNodeId = [...stepNameById.entries()].find(([, step]) => step === ownerStep)?.[0] || null;
+      nodes
+        .filter((n) => String(n?.loopOwnerId || "").trim() === String(ownerNodeId || ""))
+        .forEach((node) => {
+          const stepId = stepNameById.get(node.id) || "";
+          if (!stepId || outgoing.has(stepId)) return;
+          ownerEdges.push({
+            from: stepId,
+            to: "END",
+            order: 0
+          });
+        });
+      loopFlows[ownerStep] = {
+        start: "START",
+        end: "END",
+        edges: ownerEdges
+      };
+    });
+
+    const output = {
       start: "START",
       end: "END",
       edges
     };
+    if (Object.keys(loopFlows).length) {
+      output.loop = { flows: loopFlows };
+    }
+    return output;
   }
 
   function validateRequiredFields(nodes, config) {
@@ -1542,6 +2013,7 @@
       const schema = getFormSchema(config, node.connector, node.action);
       const stepId = String(node.stepName || `step${idx + 1}`);
       schema.forEach((field) => {
+        if (!isFieldVisibleForNode(node, field)) return;
         if (!field.required) return;
         const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
         const useDefaultWhenUnset = field.key !== "input_data";
@@ -1563,6 +2035,29 @@
     const braceMatch = text.match(/^\$?\{([a-zA-Z0-9_]+)(?:[^}]*)\}$/);
     if (braceMatch) return braceMatch[1];
     return text;
+  }
+
+  function isFieldVisibleForNode(node, field) {
+    const uiFieldsApi = ((window.zizPackages || {}).ui || {}).fields || window.uiFields || {};
+    if (typeof uiFieldsApi.isFieldVisibleForNode === "function") {
+      return !!uiFieldsApi.isFieldVisibleForNode(node, field);
+    }
+    const rule = field?.visible_if;
+    if (!rule || typeof rule !== "object") return true;
+    const targetKey = String(rule.key || "").trim();
+    if (!targetKey) return true;
+    const rawValue = (node && node.form && Object.prototype.hasOwnProperty.call(node.form, targetKey))
+      ? node.form[targetKey]
+      : undefined;
+    const current = rawValue === undefined || rawValue === null ? "" : String(rawValue).trim();
+    if (Object.prototype.hasOwnProperty.call(rule, "equals")) {
+      return current === String(rule.equals ?? "").trim();
+    }
+    if (Array.isArray(rule.in)) {
+      const candidates = rule.in.map((item) => String(item ?? "").trim());
+      return candidates.includes(current);
+    }
+    return true;
   }
 
   function validateInputDataSelfReference(nodes, config) {
@@ -1590,6 +2085,7 @@
     const schema = getFormSchema(config, node.connector, node.action);
     const stepId = String(node.stepName || "step");
     schema.forEach((field) => {
+      if (!isFieldVisibleForNode(node, field)) return;
       if (!field.required) return;
       const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
       const useDefaultWhenUnset = field.key !== "input_data";
@@ -1634,11 +2130,17 @@
 
   function buildCompiledFlowPayload(targetState = state) {
     const activeConfig = buildConfigForMode(targetState.appMode);
+    const builtFlows = buildFlows(targetState.nodes);
+    const loopPayload = builtFlows && typeof builtFlows === "object" ? builtFlows.loop : null;
+    if (loopPayload && typeof loopPayload === "object") {
+      delete builtFlows.loop;
+    }
     return {
       metadata: buildMetadataForMode(targetState.appMode, getFlowName()),
       variables: buildVariablesPayload(targetState.startParameters),
       steps: buildExportSteps(targetState.nodes, activeConfig),
-      flows: buildFlows(targetState.nodes),
+      flows: builtFlows,
+      ...(loopPayload ? { loop: loopPayload } : {}),
       notes: buildExportNotes(targetState.stickyNotes)
     };
   }
@@ -1656,6 +2158,21 @@
     resetHistoryStoreForMode(importedMode, importedState);
     hideHomeScreen();
     shellApi.setActiveSidebar?.(importedMode);
+    onStateChanged({ history: false });
+  }
+
+  function resetEmbeddedFlowStateOnLoadError(modeHint = "dataflow") {
+    const fallbackMode = normalizeAppMode(modeHint || state?.appMode || "dataflow");
+    const blankState = createStateForMode(fallbackMode);
+    blankState.fileName = "";
+    blankState.hiddenBindings = {};
+    blankState.stepStatuses = {};
+    modeStates[fallbackMode] = blankState;
+    activeMode = fallbackMode;
+    state = blankState;
+    resetHistoryStoreForMode(fallbackMode, blankState);
+    hideHomeScreen();
+    shellApi.setActiveSidebar?.(fallbackMode);
     onStateChanged({ history: false });
   }
 
@@ -1701,26 +2218,26 @@
   async function refreshHomeLists() {
     const startedAt = getPerfNow();
     if (!bridgeApi?.available?.() || !homeViewModel.visible) {
-      homeViewModel.recentFiles = [];
+      homeViewModel.recentProjects = [];
       homeViewModel.templates = [];
       await logUiEvent("home.refresh.skipped", {}, { source: "startup", elapsedMs: getPerfNow() - startedAt });
       return;
     }
     try {
       await logUiEvent("home.refresh.start", {}, { source: "startup" });
-      const [recentPayload, templatePayload] = await Promise.all([
-        bridgeApi.call("flow.list", { scope: "local", kind: "recent" }),
+      const [recentProjects, templatePayload] = await Promise.all([
+        loadRecentProjects(),
         bridgeApi.call("flow.list", { scope: "local", kind: "template" })
       ]);
-      homeViewModel.recentFiles = Array.isArray(recentPayload?.items) ? recentPayload.items.slice(0, 10) : [];
+      homeViewModel.recentProjects = Array.isArray(recentProjects) ? recentProjects.slice(0, 10) : [];
       homeViewModel.templates = Array.isArray(templatePayload?.items) ? templatePayload.items : [];
       await logUiEvent("home.refresh.done", {
-        recent_count: homeViewModel.recentFiles.length,
+        recent_count: homeViewModel.recentProjects.length,
         template_count: homeViewModel.templates.length,
       }, { source: "startup", elapsedMs: getPerfNow() - startedAt });
     } catch (err) {
       console.error("failed to refresh home lists", err);
-      homeViewModel.recentFiles = [];
+      homeViewModel.recentProjects = [];
       homeViewModel.templates = [];
       await logUiEvent("home.refresh.failed", {
         message: err?.message || String(err || ""),
@@ -1730,6 +2247,7 @@
 
   async function handleHomeAction(action) {
     const type = String(action?.type || "");
+    const kind = String(action?.kind || "");
     if (type === "dismiss-home") {
       if (!setActiveMode("dataflow")) {
         hideHomeScreen();
@@ -1738,27 +2256,63 @@
       return;
     }
     if (type === "create-flow") {
+      return;
+    }
+    if (type === "create-sql") {
       if (!setActiveMode("dataflow")) {
         hideHomeScreen();
         onStateChanged({ history: false });
       }
       return;
     }
-    if (type === "create-sql") {
-      if (!setActiveMode("query-builder")) {
-        navigateToUrl(toAbsolutePageUrl(bodyDataset.queryBuilderUrl || "./query-builder.html"));
-      }
-      return;
-    }
     if (type === "open-flow") {
-      const token = String(action?.item?.flow_token || "");
-      if (!token || !bridgeApi?.available?.()) return;
+      if (!bridgeApi?.available?.()) return;
       try {
-        const payload = await bridgeApi.call("flow.load", { ref: token });
-        const applied = applyLoadedFlowPayload(payload);
-        if (applied) {
-          await refreshHomeLists();
+        if (kind === "recent") {
+          const rootPath = normalizeRootPath(action?.item?.root_path || action?.item?.display_hint || "");
+          if (!rootPath) return;
+          await bridgeApi.call("workspace.setRoot", { root_path: rootPath });
+          if (!setActiveMode("dataflow")) {
+            hideHomeScreen();
+            onStateChanged({ history: false });
+          }
+          window.dispatchEvent(new CustomEvent("ziz:sidebar-action", {
+            detail: { action: "explorer" }
+          }));
+          return;
         }
+        const token = String(action?.item?.flow_token || "");
+        if (!token) return;
+        if (kind === "template") {
+          const rootPath = await ensureWorkflowsRoot();
+          if (!rootPath) return;
+          const loaded = await bridgeApi.call("flow.load", {
+            ref: token,
+            workspace_tab_id: resolveWorkspaceTabId()
+          });
+          if (!loaded || loaded.selected === false) return;
+          const fileName = buildAutoSavedTemplateFileName(loaded);
+          await bridgeApi.call("flow.save", {
+            mode: String(loaded.mode || "dataflow"),
+            file_name: fileName,
+            flow: loaded.flow,
+            scope: "root",
+            rel_path: fileName,
+            workspace_tab_id: resolveWorkspaceTabId(),
+          });
+          loaded.file_name = fileName;
+          const appliedTemplate = applyLoadedFlowPayload(loaded);
+          if (appliedTemplate) {
+            await refreshHomeLists();
+          }
+          return;
+        }
+        const payload = await bridgeApi.call("flow.load", {
+          ref: token,
+          workspace_tab_id: resolveWorkspaceTabId()
+        });
+        const applied = applyLoadedFlowPayload(payload);
+        if (applied) await refreshHomeLists();
       } catch (err) {
         showDialog(`読み込みに失敗しました。\n${err?.message || err}`, { kind: "error", title: "読込エラー" });
       }
@@ -1782,7 +2336,10 @@
 
   async function handleBridgeLoad() {
     const startedAt = getPerfNow();
-    const payload = await bridgeApi.call("flow.load", { ref: null });
+    const payload = await bridgeApi.call("flow.load", {
+      ref: null,
+      workspace_tab_id: resolveWorkspaceTabId()
+    });
     const applied = applyLoadedFlowPayload(payload);
     if (!applied) return;
     await refreshHomeLists();
@@ -1792,41 +2349,101 @@
     }, { source: "button", elapsedMs: getPerfNow() - startedAt });
   }
 
+  async function loadEmbeddedFlowByPath() {
+    if (!embeddedMode) return false;
+    if (!bridgeApi?.available?.()) return false;
+    if (!embeddedOpenRelPath) return false;
+    const scope = embeddedOpenScope === "config" ? "config" : "root";
+    const payload = await bridgeApi.call("flow.load", {
+      scope,
+      rel_path: embeddedOpenRelPath.replace(/\\/g, "/"),
+      workspace_tab_id: resolveWorkspaceTabId()
+    });
+    const applied = applyLoadedFlowPayload(payload);
+    if (!applied) return false;
+    postEmbeddedEvent("loaded", {
+      flow_name: String(state?.flowName || ""),
+      mode: String(state?.appMode || ""),
+      rel_path: embeddedOpenRelPath.replace(/\\/g, "/"),
+      scope,
+    });
+    return true;
+  }
+
   async function handleBridgeSave() {
     const startedAt = getPerfNow();
-    ensureBridgeState(state);
-    const flowName = getFlowName();
-    const derivedName = `${toSafeFilename(flowName)}${getModeMeta(state.appMode).fileExtension || ".ziz"}`;
-    const fileName = derivedName || state.fileName || `フロー${getModeMeta(state.appMode).fileExtension || ".ziz"}`;
-    console.info("[save] bridge.request", {
-      mode: state.appMode,
-      file_name: fileName,
-      step_count: Array.isArray(state.nodes) ? state.nodes.length : 0
-    });
-    const payload = await bridgeApi.call("flow.save", {
-      mode: state.appMode,
-      file_name: fileName,
-      flow: buildCompiledFlowPayload(state)
-    });
-    console.info("[save] bridge.response", payload || null);
-    if (payload && payload.saved === false) {
-      showDialog("保存はキャンセルされました。", { kind: "info", title: "保存" });
+    try {
+      const activeBridge = resolveBridgeApi();
+      if (!activeBridge?.call) {
+        throw { code: "E_NOT_READY", message: "保存ブリッジを解決できません。" };
+      }
+      ensureBridgeState(state);
+      const flowName = getFlowName();
+      const derivedName = `${toSafeFilename(flowName)}${getModeMeta(state.appMode).fileExtension || ".ziz"}`;
+      const fileName = derivedName || state.fileName || `フロー${getModeMeta(state.appMode).fileExtension || ".ziz"}`;
+      console.info("[save] bridge.request", {
+        mode: state.appMode,
+        file_name: fileName,
+        step_count: Array.isArray(state.nodes) ? state.nodes.length : 0
+      });
+      const saveRequest = {
+        mode: state.appMode,
+        file_name: fileName,
+        flow: buildCompiledFlowPayload(state),
+        workspace_tab_id: resolveWorkspaceTabId()
+      };
+      if (embeddedMode && embeddedOpenRelPath) {
+        saveRequest.scope = embeddedOpenScope === "config" ? "config" : "root";
+        saveRequest.rel_path = embeddedOpenRelPath.replace(/\\/g, "/");
+      }
+      console.info(`[save-trace][app] flow.save.request ${toDebugJson({
+        mode: saveRequest.mode,
+        file_name: saveRequest.file_name,
+        scope: saveRequest.scope || "",
+        rel_path: saveRequest.rel_path || "",
+        step_count: Array.isArray(state?.nodes) ? state.nodes.length : 0,
+      })}`);
+      const payload = await activeBridge.call("flow.save", saveRequest);
+      console.info(`[save-trace][app] flow.save.response ${toDebugJson({
+        saved: payload?.saved,
+        file_name: payload?.file_name || "",
+        message: payload?.message || "",
+      })}`);
+      console.info("[save] bridge.response", payload || null);
+      if (payload && payload.saved === false) {
+        showDialog("保存はキャンセルされました。", { kind: "info", title: "保存" });
+        return payload;
+      }
+      if (payload && payload.saved) {
+        state.fileName = String(payload.file_name || fileName);
+        resetHistoryStoreForMode(state.appMode, state);
+        syncHistoryBaseline(state);
+        // Ctrl+S 経路では onStateChanged を経由しないため、dirty解除を即時通知する。
+        publishEmbeddedStateIfNeeded(true);
+      }
+      await refreshHomeLists();
+      await logUiEvent("flow.save", {
+        file_name: payload?.file_name || fileName,
+        mode: state.appMode,
+      }, { source: "button", elapsedMs: getPerfNow() - startedAt });
       return payload;
+    } catch (error) {
+      const message = String(error?.message || error || "保存に失敗しました。");
+      console.error(`[save-trace][app] flow.save.error ${toDebugJson({
+        code: String(error?.code || ""),
+        message,
+      })}`);
+      showDialog(`保存に失敗しました。\n${message}`, { kind: "error", title: "保存エラー" });
+      console.error("[save] bridge.error", error);
+      return { saved: false, error: true, message };
     }
-    if (payload && payload.saved) {
-      state.fileName = String(payload.file_name || fileName);
-    }
-    await refreshHomeLists();
-    await logUiEvent("flow.save", {
-      file_name: payload?.file_name || fileName,
-      mode: state.appMode,
-    }, { source: "button", elapsedMs: getPerfNow() - startedAt });
-    return payload;
   }
 
   async function fetchRunSummary(runId) {
-    if (!runId || !bridgeApi?.available?.()) return null;
-    const summary = await bridgeApi.call("result.getSummary", { run_id: runId });
+    if (!runId) return null;
+    const activeBridge = resolveBridgeApi();
+    if (!activeBridge?.call) return null;
+    const summary = await activeBridge.call("result.getSummary", { run_id: runId });
     currentRunId = runId;
     lastRunSummary = summary || null;
     window.__zizLastRunSummary = lastRunSummary;
@@ -1835,8 +2452,9 @@
 
   async function fetchBridgeStatus() {
     const startedAt = getPerfNow();
-    if (!bridgeApi?.available?.()) return null;
-    const status = await bridgeApi.call("app.getStatus", {});
+    const activeBridge = resolveBridgeApi();
+    if (!activeBridge?.call) return null;
+    const status = await activeBridge.call("app.getStatus", {});
     window.__zizBridgeStatus = status || null;
     await logUiEvent("diagnostics.fetch", {}, { source: "button", elapsedMs: getPerfNow() - startedAt });
     return status || null;
@@ -1863,8 +2481,13 @@
 
   async function handleBridgeRun(source = "header", options = {}) {
     const startedAt = getPerfNow();
-    if (!bridgeApi?.available?.()) {
-      showDialog("この実行操作は WebView モードでのみ利用できます。", { kind: "info", title: "実行" });
+    const activeBridge = resolveBridgeApi();
+    if (!activeBridge?.available?.()) {
+      showDialog(getBridgeUnavailableMessage(activeBridge), { kind: "info", title: "実行" });
+      return null;
+    }
+    if (activeFlowRunId) {
+      showDialog("実行中のタブがあります。完了まで新規実行はできません。", { kind: "warning", title: "実行中" });
       return null;
     }
     const activeConfig = buildConfigForMode(state.appMode);
@@ -1902,12 +2525,13 @@
     refreshFlowStatusOnly();
     const request = {
       mode: state.appMode,
-      flow: buildCompiledFlowPayload(state)
+      flow: buildCompiledFlowPayload(state),
+      workspace_tab_id: resolveWorkspaceTabId()
     };
     if (targetNode) {
       request.step_id = String(targetNode.stepName || "");
     }
-    const payload = await bridgeApi.call("flow.run", request);
+    const payload = await activeBridge.call("flow.run", request);
     currentRunId = String(payload?.run_id || "");
     if (currentRunId) {
       runKindById[currentRunId] = targetNode ? "single" : "flow";
@@ -1916,9 +2540,16 @@
         stepId: String(targetNode?.stepName || "")
       };
       if (!targetNode) {
-        const lockChanged = setRunAllEditLock(true);
-        if (lockChanged) onStateChanged({ history: false });
+        ensureFlowRunLogStarted(currentRunId, state?.flowName || "ワークフロー");
       }
+      ownedRunIds.add(currentRunId);
+      handledTerminalRunIds.delete(currentRunId);
+      activeFlowRunId = currentRunId;
+      setRunButtonLocked(true);
+      notifyWorkspaceRunState(true, currentRunId, "run.accepted");
+      postEmbeddedEvent("run-state", { running: true, run_id: currentRunId });
+      const lockChanged = setRunAllEditLock(true);
+      if (lockChanged) onStateChanged({ history: false });
     }
     console.info(`[webview-run] accepted source=${source} run_id=${currentRunId}`);
     await logUiEvent("flow.run", {
@@ -1949,23 +2580,51 @@
     const payload = message.payload || {};
     if (message.type === "run.stepStatus") {
       queueStepStatus(payload.step_id, payload.status);
+      const runId = String(payload.run_id || "");
+      const runMeta = runMetaById[runId] || null;
+      const runKind = runMeta?.kind || runKindById[runId] || "";
+      const stepStatus = String(payload.status || "").trim().toLowerCase();
+      if (runKind === "flow" && (stepStatus === "success" || stepStatus === "error" || stepStatus === "failed")) {
+        const lineStatus = stepStatus === "success" ? "success" : "failed";
+        const lineMessage = resolveStepLogMessage(payload.step_id, payload.message || "");
+        appendRunLogRow(runId, lineStatus, lineMessage);
+      }
       return;
     }
     if (message.type === "run.completed") {
+      const completedRunId = String(payload.run_id || "");
+      if (!completedRunId) return;
+      if (!ownedRunIds.has(completedRunId) && activeFlowRunId !== completedRunId) {
+        return;
+      }
+      if (handledTerminalRunIds.has(completedRunId)) {
+        return;
+      }
+      handledTerminalRunIds.add(completedRunId);
+      ownedRunIds.delete(completedRunId);
       flushStepStatusUpdates();
       const summary = await fetchRunSummary(payload.run_id);
       if (summary) {
         console.info(`[run:${payload.run_id || "-"}] 完了: ${summary.flow_name || ""}`);
       }
-      const completedRunId = String(payload.run_id || "");
       const runMeta = runMetaById[completedRunId] || null;
       const runKind = runMeta?.kind || runKindById[completedRunId] || "flow";
       delete runKindById[completedRunId];
       delete runMetaById[completedRunId];
+      if (activeFlowRunId && activeFlowRunId === completedRunId) {
+        activeFlowRunId = "";
+        setRunButtonLocked(false);
+        notifyWorkspaceRunState(false, completedRunId, "run.completed");
+        postEmbeddedEvent("run-state", { running: false, run_id: completedRunId });
+      }
+      const lockChanged = setRunAllEditLock(false);
+      if (lockChanged) onStateChanged({ history: false });
       if (runKind === "flow") {
-        const lockChanged = setRunAllEditLock(false);
-        if (lockChanged) onStateChanged({ history: false });
-        showRunCompletedDialog(summary, payload.run_id);
+        const dialogKey = `completed:${completedRunId}`;
+        if (lastRunTerminalDialogKey !== dialogKey) {
+          lastRunTerminalDialogKey = dialogKey;
+          showRunCompletedDialog(summary, payload.run_id);
+        }
       }
       if (runKind === "single" && runMeta?.stepId) {
         const changed = setSchemaEditorModeByStep(runMeta.stepId, "output");
@@ -1975,17 +2634,38 @@
       return;
     }
     if (message.type === "run.failed") {
-      flushStepStatusUpdates();
-      await fetchRunSummary(payload.run_id);
       const failedRunId = String(payload.run_id || "");
+      if (!failedRunId) return;
+      if (!ownedRunIds.has(failedRunId) && activeFlowRunId !== failedRunId) {
+        return;
+      }
+      if (handledTerminalRunIds.has(failedRunId)) {
+        return;
+      }
+      handledTerminalRunIds.add(failedRunId);
+      ownedRunIds.delete(failedRunId);
+      flushStepStatusUpdates();
+      const summary = await fetchRunSummary(payload.run_id);
       const runMeta = runMetaById[failedRunId] || null;
       const runKind = runMeta?.kind || runKindById[failedRunId] || "flow";
-      if (runKind === "flow") {
-        const lockChanged = setRunAllEditLock(false);
-        if (lockChanged) onStateChanged({ history: false });
+      if (activeFlowRunId && activeFlowRunId === failedRunId) {
+        activeFlowRunId = "";
+        setRunButtonLocked(false);
+        notifyWorkspaceRunState(false, failedRunId, "run.failed");
+        postEmbeddedEvent("run-state", { running: false, run_id: failedRunId });
       }
+      const lockChanged = setRunAllEditLock(false);
+      if (lockChanged) onStateChanged({ history: false });
       delete runKindById[failedRunId];
       delete runMetaById[failedRunId];
+      if (runKind === "flow") {
+        const status = String(payload?.status || summary?.status || "").trim().toLowerCase() || "failed";
+        const dialogKey = `failed:${failedRunId}:${status}`;
+        if (lastRunTerminalDialogKey !== dialogKey) {
+          lastRunTerminalDialogKey = dialogKey;
+          showRunFailedDialog(summary, payload, failedRunId);
+        }
+      }
       if (runKind === "single" && runMeta?.stepId) {
         const changed = setSchemaEditorModeByStep(runMeta.stepId, "output");
         if (changed) onStateChanged({ history: false });
@@ -2104,13 +2784,26 @@
           });
         }
       },
-      onActionItem: ({ item, navUrl, expanded }) => {
+      onActionItem: ({ item, action, navUrl, expanded }) => {
         if (navUrl) {
           navigateToUrl(navUrl);
           return;
         }
-        item.classList.remove("is-current");
-        item.removeAttribute("aria-current");
+        const selectedAction = String(action || "").trim();
+        if (selectedAction) {
+          document.querySelectorAll(".sidebar [data-sidebar-action]").forEach((button) => {
+            const isCurrent = button === item;
+            button.classList.toggle("is-current", isCurrent);
+            if (isCurrent) button.setAttribute("aria-current", "page");
+            else button.removeAttribute("aria-current");
+          });
+          window.dispatchEvent(new CustomEvent("ziz:sidebar-action", {
+            detail: { action: selectedAction }
+          }));
+        } else {
+          item.classList.remove("is-current");
+          item.removeAttribute("aria-current");
+        }
         item.blur?.();
         if (!expanded) {
           shellApi.setSidebarExpanded?.(true, () => {
@@ -2227,11 +2920,9 @@
     };
     const appShell = document.querySelector(".app-shell");
     const leftSidebar = document.querySelector(".sidebar");
-    const rightRail = rightSidebarRail || document.querySelector(".right-sidebar-rail");
     const shellWidth = Math.floor(appShell?.getBoundingClientRect().width || window.innerWidth);
     const leftWidth = Math.floor(leftSidebar?.getBoundingClientRect().width || 0);
-    const rightRailWidth = Math.floor(rightRail?.getBoundingClientRect().width || 0);
-    const available = Math.max(240, shellWidth - leftWidth - rightRailWidth);
+    const available = Math.max(240, shellWidth - leftWidth);
     const viewportMax = Math.max(1, Math.floor(window.innerWidth * FIXED_RIGHT_SIDEBAR.maxViewportRatio));
     const max = Math.min(viewportMax, available);
     const min = Math.min(FIXED_RIGHT_SIDEBAR.min, max);
@@ -2244,10 +2935,9 @@
   }
 
   function setupRightSidebar() {
-    if (!splitDetailLayout || !rightSidebar || !rightSidebarToggle || !rightSidebarRail) return;
+    if (!splitDetailLayout || !rightSidebar) return;
 
     let currentWidth = getRightSidebarWidthBounds().initial;
-    shellApi.setRightSidebarCollapsed?.(false);
     shellApi.setRightSidebarWidth?.(currentWidth);
 
     function applyRightSidebarWidth(nextWidthPx) {
@@ -2260,42 +2950,25 @@
       return { bounds, width };
     }
 
-    function openRightSidebar(widthPx) {
-      const bounds = getRightSidebarWidthBounds();
-      const requested = Number(widthPx);
-      const target = Number.isFinite(requested) ? requested : (currentWidth || bounds.initial);
-      shellApi.setRightSidebarCollapsed?.(false, () => {
-        applyRightSidebarWidth(target);
-      });
-    }
-
-    function closeRightSidebar() {
-      shellApi.setRightSidebarCollapsed?.(true, () => {
-        applyFlowViewportHeight();
-      });
-    }
-
-    shellApi.bindRightSidebar?.({
-      onToggle: ({ event }) => {
-        event.preventDefault();
-        if (shellApi.isRightSidebarCollapsed?.()) {
-          openRightSidebar();
-        } else {
-          closeRightSidebar();
-        }
-      },
-      onPanelItem: ({ panel }) => {
-        const key = String(panel || "").trim();
-        if (!RIGHT_PANEL_KEYS.includes(key)) return;
-        activeRightPanel = key;
-        shellApi.setActiveRightPanel?.(activeRightPanel);
-        if (shellApi.isRightSidebarCollapsed?.()) {
-          openRightSidebar();
-        }
-        onStateChanged({ history: false });
+    window.addEventListener("ziz:flow-selection-gesture", (event) => {
+      const kind = String(event?.detail?.kind || "").trim();
+      if (kind === "single") {
+        rightSidebarVisibleBySelection = true;
+      } else if (kind === "multi" || kind === "clear") {
+        rightSidebarVisibleBySelection = false;
+      } else {
+        return;
       }
+      onStateChanged({ history: false });
     });
-    shellApi.setActiveRightPanel?.(activeRightPanel);
+
+    window.addEventListener("ziz:node-detail-tab-change", (event) => {
+      const key = String(event?.detail?.tab || "").trim();
+      if (!RIGHT_PANEL_KEYS.includes(key)) return;
+      if (activeRightPanel === key) return;
+      activeRightPanel = key;
+      onStateChanged({ history: false });
+    });
 
     if (rightSidebarResizer) {
       let dragging = false;
@@ -2306,8 +2979,9 @@
       let resizeTimer = 0;
 
       rightSidebarResizer.addEventListener("mousedown", (event) => {
-        if (shellApi.isRightSidebarCollapsed?.()) {
-          openRightSidebar();
+        if (rightSidebarCollapsed) {
+          rightSidebarVisibleBySelection = true;
+          applyRightSidebarVisibility(true);
         }
         dragging = true;
         startX = event.clientX;
@@ -2321,12 +2995,7 @@
         if (!dragging || pendingWidth === null) return;
         const nextWidth = pendingWidth;
         pendingWidth = null;
-        const { bounds } = applyRightSidebarWidth(nextWidth);
-        if (nextWidth < bounds.min) {
-          dragging = false;
-          document.body.style.userSelect = "";
-          closeRightSidebar();
-        }
+        applyRightSidebarWidth(nextWidth);
       };
 
       window.addEventListener("mousemove", (event) => {
@@ -2364,12 +3033,13 @@
         }
         resizeTimer = window.setTimeout(() => {
           resizeTimer = 0;
-          if (shellApi.isRightSidebarCollapsed?.()) return;
+          if (rightSidebarCollapsed) return;
           applyRightSidebarWidth(currentWidth || getRightSidebarWidthBounds().initial);
         }, 120);
       });
     }
 
+    applyRightSidebarVisibility(false);
     applyRightSidebarWidth(currentWidth);
   }
 
@@ -2379,7 +3049,8 @@
   setupDetailPanelResizer();
   setupRightSidebar();
   applyFlowViewportHeight();
-  window.addEventListener("beforeunload", persistModeStates);
+  window.addEventListener("beforeunload", clearAppSessionCaches);
+  window.addEventListener("pagehide", clearAppSessionCaches);
 
   shellApi.bindHeader?.({
     onUndo: () => {
@@ -2432,12 +3103,18 @@
 
         const flowName = getFlowName();
         const variables = buildVariablesPayload(state.startParameters);
+        const builtFlows = buildFlows(state.nodes);
+        const loopPayload = builtFlows && typeof builtFlows === "object" ? builtFlows.loop : null;
+        if (loopPayload && typeof loopPayload === "object") {
+          delete builtFlows.loop;
+        }
 
         const payload = {
           metadata: buildMetadataForMode(state.appMode, flowName),
           variables,
           steps: buildExportSteps(state.nodes, buildConfigForMode(state.appMode)),
-          flows: buildFlows(state.nodes)
+          flows: builtFlows,
+          ...(loopPayload ? { loop: loopPayload } : {})
         };
 
         const fileName = `${toSafeFilename(flowName)}${getModeMeta(state.appMode).fileExtension || ".ziz"}`;
@@ -2499,7 +3176,7 @@
       if (!file) return;
       try {
         const text = await file.text();
-        const yaml = parseYamlText(text);
+        const yaml = await parseYamlText(text);
         const imported = buildStateFromYaml(yaml, CONFIG);
         applyImportedFlowState(imported.state, {
           mode: imported.state?.appMode,
@@ -2521,10 +3198,78 @@
     }
   }
 
-  window.addEventListener("ziz:evt", (event) => {
+  function exposeEmbeddedApi() {
+    window.zizEmbeddedApi = {
+      runFlow: async () => handleBridgeRun("embedded"),
+      saveFlow: async () => handleBridgeSave(),
+      importFlow: async () => handleBridgeLoad(),
+      undo: async () => handleUndoAction(),
+      redo: async () => handleRedoAction(),
+      setFlowName: (name) => {
+        if (!state) return false;
+        state.flowName = String(name || "").trim() || state.flowName || "";
+        onStateChanged({ history: false });
+        return true;
+      },
+      getFlowName: () => String(state?.flowName || ""),
+      isRunning: () => !!activeFlowRunId,
+      isDirty: () => getEmbeddedDirtyState(),
+      getWorkspaceTabId: () => resolveWorkspaceTabId(),
+    };
+    window.__zizWorkspaceTabId = resolveWorkspaceTabId;
+  }
+
+  const bridgeEventTarget = (() => {
+    if (!embeddedMode) return window;
+    if (bridgeApi?.available?.()) return window;
+    const parentWindow = window.parent;
+    if (!parentWindow || parentWindow === window) return window;
+    return parentWindow;
+  })();
+  bridgeEventTarget.addEventListener("ziz:evt", (event) => {
     handleBridgeEvent(event).catch((error) => {
       console.error("bridge event handling failed", error);
     });
+  });
+
+  window.addEventListener("ziz:workspace-flow-open", (event) => {
+    const payload = event?.detail || null;
+    workspaceActiveFlowTabId = String(payload?.__workspace_tab_id || workspaceActiveFlowTabId || "");
+    const requestId = String(payload?.__workspace_request_id || "").trim();
+    const notifyLoadResult = (type, detail = {}) => {
+      postEmbeddedEvent(type, {
+        ...(detail && typeof detail === "object" ? detail : {}),
+        request_id: requestId,
+        __workspace_request_id: requestId
+      });
+    };
+    try {
+      const applied = applyLoadedFlowPayload(payload);
+      if (!applied) {
+        resetEmbeddedFlowStateOnLoadError(payload?.mode || "dataflow");
+        notifyLoadResult("load-error", {
+          code: "E_FLOW_NOT_APPLIED",
+          message: "フロー状態を適用できませんでした。"
+        });
+        return;
+      }
+      notifyLoadResult("loaded", {
+        flow_name: String(state?.flowName || ""),
+        mode: String(state?.appMode || ""),
+      });
+    } catch (error) {
+      resetEmbeddedFlowStateOnLoadError(payload?.mode || "dataflow");
+      notifyLoadResult("load-error", {
+        code: "E_FLOW_IMPORT",
+        message: error?.message || String(error || "読込エラー")
+      });
+      showDialog(`フローの読み込みに失敗しました。\n${error?.message || error}`, { kind: "error", title: "読込エラー" });
+    }
+  });
+
+  window.addEventListener("ziz:workspace-flow-tab-activated", (event) => {
+    const detail = event?.detail || {};
+    workspaceActiveFlowTabId = String(detail?.tab_id || workspaceActiveFlowTabId || "");
   });
 
   window.addEventListener("zizai:node-run-request", (event) => {
@@ -2544,7 +3289,7 @@
     const button = event.target?.closest?.("button");
     if (!button) return;
     logUiEvent("button.click", {
-      id: button.id || "",
+      id: describeButtonId(button),
       label: describeButton(button),
     }, { source: "button" });
   }, true);
@@ -2557,19 +3302,36 @@
     const key = String(event.key || "").toLowerCase();
     if (key === "s") {
       event.preventDefault();
-      btnSave?.click?.();
+      if (embeddedMode) {
+        postEmbeddedEvent("shortcut", { action: "save" });
+      } else {
+        btnSave?.click?.();
+      }
       return;
     }
     if (key === "enter") {
       event.preventDefault();
-      btnRun?.click?.();
+      if (embeddedMode) {
+        postEmbeddedEvent("shortcut", { action: "run" });
+      } else {
+        btnRun?.click?.();
+      }
     }
   });
+
+  exposeEmbeddedApi();
 
   if (bridgeApi?.available?.()) {
     refreshHomeLists().then(() => onStateChanged({ history: false })).catch(() => onStateChanged({ history: false }));
   }
 
+  setRunButtonLocked(false);
   onStateChanged({ history: false });
+  if (embeddedMode) {
+    loadEmbeddedFlowByPath().catch((error) => {
+      console.error("[embedded] initial load failed", error);
+      postEmbeddedEvent("load-error", { message: error?.message || String(error || "") });
+    });
+  }
 })();
 
