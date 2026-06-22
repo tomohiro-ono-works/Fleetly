@@ -21,8 +21,9 @@ web:
     - domain: "app.slack.com"
       path_prefixes:
         - /client
-    - domain: "google.com"
+    - domain: "www.google.com"
       path_prefixes:
         - /
-
-        
+    - domain: "note.com/"
+      path_prefixes:
+        - /

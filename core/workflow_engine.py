@@ -9,6 +9,7 @@ import pkgutil
 import re
 import heapq
 import threading
+import time
 from datetime import datetime
 import getpass
 from collections import defaultdict
@@ -20,9 +21,10 @@ class WorkflowEngine:
     VARIABLE_NAME_CHAR_CLASS = r"a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005"
     TEMPLATE_REF_PATTERN = rf"[{VARIABLE_NAME_CHAR_CLASS}]+(?:\.[{VARIABLE_NAME_CHAR_CLASS}]+)*(?:\(\))?"
 
-    def __init__(self, logger, step_status_callback=None):
+    def __init__(self, logger, step_status_callback=None, performance_callback=None):
         self.logger = logger
         self.step_status_callback = step_status_callback
+        self.performance_callback = performance_callback
         self.context = {}  # データを一時保持するメモリ空間
         self.connector_classes = {}  # 必要になった時点で遅延ロード
         self._connector_lock = threading.Lock()
@@ -495,6 +497,24 @@ class WorkflowEngine:
     def _looks_like_dataframe(self, value):
         return hasattr(value, "columns") and hasattr(value, "head") and hasattr(value, "attrs")
 
+    def _emit_performance(self, event, payload=None):
+        if not callable(self.performance_callback):
+            return
+        if not event:
+            return
+        try:
+            self.performance_callback(str(event), dict(payload or {}))
+        except Exception:
+            return
+
+    def _dataframe_shape_text(self, value):
+        if not self._looks_like_dataframe(value):
+            return ""
+        try:
+            return f"rows={len(value.index)} cols={len(value.columns)}"
+        except Exception:
+            return ""
+
     def _is_missing_preview_value(self, value):
         if value is None:
             return True
@@ -759,10 +779,27 @@ class WorkflowEngine:
         self.logger.info(f"[{step_id}] 実行中: {conn_name} -> {action}")
         connector = self._create_connector(conn_name)
         if hasattr(connector, "set_execution_logger"):
-            connector.set_execution_logger(self.logger, step_id)
+            connector.set_execution_logger(self.logger, step_id, self._emit_performance)
+        started = time.perf_counter()
+        self._emit_performance("run.core.connector.start", {
+            "step_id": step_id,
+            "connector": conn_name,
+            "action": action,
+        })
         try:
             result = connector.execute(action, params, context)
         finally:
+            elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
+            self._emit_performance("run.core.connector.finish", {
+                "step_id": step_id,
+                "connector": conn_name,
+                "action": action,
+                "elapsed_ms": elapsed_ms,
+            })
+            self.logger.info(
+                f"[{step_id}] connector.execute 完了: {conn_name} -> {action} "
+                f"elapsed_ms={elapsed_ms}"
+            )
             if hasattr(connector, "clear_execution_logger"):
                 connector.clear_execution_logger()
         return result
@@ -780,7 +817,19 @@ class WorkflowEngine:
                 self.context[output_var] = result
             if self._looks_like_dataframe(result):
                 report_entry = self._build_step_report(step, "success", result=None)
+                cache_started = time.perf_counter()
                 report_entry["ui_cache"] = self._build_dataframe_ui_cache(result)
+                cache_elapsed_ms = round((time.perf_counter() - cache_started) * 1000, 1)
+                self._emit_performance("run.core.ui_cache.finish", {
+                    "step_id": sid,
+                    "elapsed_ms": cache_elapsed_ms,
+                    "rows": len(result.index),
+                    "cols": len(result.columns),
+                })
+                self.logger.info(
+                    f"[{sid}] ui_cache build 完了: elapsed_ms={cache_elapsed_ms} "
+                    f"{self._dataframe_shape_text(result)}"
+                )
             else:
                 report_entry = self._build_step_report(step, "success", result=result)
             report["steps"].append(report_entry)
@@ -893,7 +942,19 @@ class WorkflowEngine:
                             self.context[output_var] = result
                         if self._looks_like_dataframe(result):
                             report_entry = self._build_step_report(step, "success", result=None)
+                            cache_started = time.perf_counter()
                             report_entry["ui_cache"] = self._build_dataframe_ui_cache(result)
+                            cache_elapsed_ms = round((time.perf_counter() - cache_started) * 1000, 1)
+                            self._emit_performance("run.core.ui_cache.finish", {
+                                "step_id": sid,
+                                "elapsed_ms": cache_elapsed_ms,
+                                "rows": len(result.index),
+                                "cols": len(result.columns),
+                            })
+                            self.logger.info(
+                                f"[{sid}] ui_cache build 完了: elapsed_ms={cache_elapsed_ms} "
+                                f"{self._dataframe_shape_text(result)}"
+                            )
                         else:
                             report_entry = self._build_step_report(step, "success", result=result)
                         report["steps"].append(report_entry)

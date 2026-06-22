@@ -1,7 +1,10 @@
 (function () {
   const NOT_READY_TIMEOUT_MS = 10000;
   const RESPONSE_TIMEOUT_MS = 45000;
+  const PREVIEW_RESPONSE_TIMEOUT_MS = 180000;
   const MAX_QUEUE_SIZE = 256;
+  const USER_INTERACTION_TYPES = new Set(["file.pickFile", "file.pickFolder"]);
+  const PREVIEW_TYPES = new Set(["preview.readExcel", "preview.readCsv"]);
 
   const state = {
     version: "1.0",
@@ -48,6 +51,23 @@
       window.clearTimeout(pending.timeoutId);
     }
     pending.reject(error);
+  }
+
+  function resolveResponseTimeoutMs(type) {
+    if (!state.ready) return NOT_READY_TIMEOUT_MS;
+    if (USER_INTERACTION_TYPES.has(type)) return null;
+    if (PREVIEW_TYPES.has(type)) return PREVIEW_RESPONSE_TIMEOUT_MS;
+    return RESPONSE_TIMEOUT_MS;
+  }
+
+  function buildTimeoutError(type) {
+    if (!state.ready) {
+      return buildError("E_NOT_READY_TIMEOUT", "ネイティブブリッジの初期化待機がタイムアウトしました。");
+    }
+    if (PREVIEW_TYPES.has(type)) {
+      return buildError("E_RESPONSE_TIMEOUT", "ファイルプレビューの応答がタイムアウトしました。");
+    }
+    return buildError("E_RESPONSE_TIMEOUT", "ネイティブ応答がタイムアウトしました。");
   }
 
   function sendEnvelope(item) {
@@ -136,18 +156,13 @@
           payload,
         };
         return new Promise((resolve, reject) => {
-          const timeoutId = window.setTimeout(() => {
-            removeQueuedById(id);
-            rejectPending(
-              id,
-              buildError(
-                state.ready ? "E_RESPONSE_TIMEOUT" : "E_NOT_READY_TIMEOUT",
-                state.ready
-                  ? "ネイティブ応答がタイムアウトしました。"
-                  : "ネイティブブリッジの初期化待機がタイムアウトしました。"
-              )
-            );
-          }, state.ready ? RESPONSE_TIMEOUT_MS : NOT_READY_TIMEOUT_MS);
+          const timeoutMs = resolveResponseTimeoutMs(type);
+          const timeoutId = timeoutMs
+            ? window.setTimeout(() => {
+                removeQueuedById(id);
+                rejectPending(id, buildTimeoutError(type));
+              }, timeoutMs)
+            : null;
 
           state.pending.set(id, { resolve, reject, timeoutId });
           const item = { id, envelope };

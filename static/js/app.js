@@ -443,6 +443,49 @@
     }
   }
 
+  function roundPerfMs(value) {
+    const numberValue = Number(value);
+    if (!Number.isFinite(numberValue)) return null;
+    return Math.round(Math.max(0, numberValue) * 10) / 10;
+  }
+
+  function getBridgeEventLatencyMs(message) {
+    const eventTime = Date.parse(String(message?.ts || ""));
+    if (!Number.isFinite(eventTime)) return null;
+    return roundPerfMs(Date.now() - eventTime);
+  }
+
+  function scheduleRunRenderTimelineLog({
+    runId,
+    status,
+    eventTs,
+    receivedAt,
+    summaryFetchMs,
+    summaryFetchedAt,
+    terminalEventLatencyMs,
+  }) {
+    const logAfterPaint = () => {
+      const paintedAt = getPerfNow();
+      void logUiEvent("run.gui.timeline", {
+        run_id: String(runId || ""),
+        status: String(status || ""),
+        event_ts: String(eventTs || ""),
+        terminal_event_latency_ms: terminalEventLatencyMs,
+        summary_fetch_ms: summaryFetchMs,
+        event_to_paint_ms: roundPerfMs(paintedAt - receivedAt),
+        summary_to_paint_ms: roundPerfMs(paintedAt - summaryFetchedAt),
+        render_last_ms: roundPerfMs(renderPerf.lastMs),
+      }, { source: "bridge-event", elapsedMs: paintedAt - receivedAt });
+    };
+    if (typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(logAfterPaint);
+      });
+      return;
+    }
+    window.setTimeout(logAfterPaint, 0);
+  }
+
   function findNodeByStepId(stepId) {
     const key = String(stepId || "").trim();
     if (!key || !Array.isArray(state?.nodes)) return null;
@@ -1814,7 +1857,7 @@
       shellApi.updateHeader?.(nextHeaderPayload);
     }
     if (importInput) {
-      importInput.accept = ".zizw,.zizd,.zizq";
+      importInput.accept = ".zizd";
     }
   }
 
@@ -2592,6 +2635,8 @@
       return;
     }
     if (message.type === "run.completed") {
+      const terminalReceivedAt = getPerfNow();
+      const terminalEventLatencyMs = getBridgeEventLatencyMs(message);
       const completedRunId = String(payload.run_id || "");
       if (!completedRunId) return;
       if (!ownedRunIds.has(completedRunId) && activeFlowRunId !== completedRunId) {
@@ -2603,7 +2648,10 @@
       handledTerminalRunIds.add(completedRunId);
       ownedRunIds.delete(completedRunId);
       flushStepStatusUpdates();
+      const summaryFetchStartedAt = getPerfNow();
       const summary = await fetchRunSummary(payload.run_id);
+      const summaryFetchedAt = getPerfNow();
+      const summaryFetchMs = roundPerfMs(summaryFetchedAt - summaryFetchStartedAt);
       if (summary) {
         console.info(`[run:${payload.run_id || "-"}] 完了: ${summary.flow_name || ""}`);
       }
@@ -2631,9 +2679,20 @@
         if (changed) onStateChanged({ history: false });
       }
       refreshFlowStatusOnly();
+      scheduleRunRenderTimelineLog({
+        runId: completedRunId,
+        status: "success",
+        eventTs: message.ts,
+        receivedAt: terminalReceivedAt,
+        summaryFetchMs,
+        summaryFetchedAt,
+        terminalEventLatencyMs,
+      });
       return;
     }
     if (message.type === "run.failed") {
+      const terminalReceivedAt = getPerfNow();
+      const terminalEventLatencyMs = getBridgeEventLatencyMs(message);
       const failedRunId = String(payload.run_id || "");
       if (!failedRunId) return;
       if (!ownedRunIds.has(failedRunId) && activeFlowRunId !== failedRunId) {
@@ -2645,7 +2704,10 @@
       handledTerminalRunIds.add(failedRunId);
       ownedRunIds.delete(failedRunId);
       flushStepStatusUpdates();
+      const summaryFetchStartedAt = getPerfNow();
       const summary = await fetchRunSummary(payload.run_id);
+      const summaryFetchedAt = getPerfNow();
+      const summaryFetchMs = roundPerfMs(summaryFetchedAt - summaryFetchStartedAt);
       const runMeta = runMetaById[failedRunId] || null;
       const runKind = runMeta?.kind || runKindById[failedRunId] || "flow";
       if (activeFlowRunId && activeFlowRunId === failedRunId) {
@@ -2671,6 +2733,15 @@
         if (changed) onStateChanged({ history: false });
       }
       refreshFlowStatusOnly();
+      scheduleRunRenderTimelineLog({
+        runId: failedRunId,
+        status: String(payload?.status || summary?.status || "failed"),
+        eventTs: message.ts,
+        receivedAt: terminalReceivedAt,
+        summaryFetchMs,
+        summaryFetchedAt,
+        terminalEventLatencyMs,
+      });
     }
   }
 
@@ -3167,7 +3238,7 @@
   if (btnReset) {
     importInput = document.createElement("input");
     importInput.type = "file";
-    importInput.accept = ".zizw,.zizd,.zizq";
+    importInput.accept = ".zizd";
     importInput.style.display = "none";
     document.body.appendChild(importInput);
 

@@ -1,4 +1,4 @@
-# Python
+﻿# Python
 __pycache__/
 *.py[cod]
 *.pyo
@@ -13,6 +13,8 @@ env/
 .DS_Store
 Thumbs.db
 *.ps1
+!.codex-harness/scripts/*.ps1
+!.agents/skills/**/scripts/*.ps1
 # Python test / cache artifacts
 .pytest_cache/
 .mypy_cache/
@@ -23,6 +25,8 @@ htmlcov/
 # Local app/runtime artifacts
 logs/
 scripts/
+!.codex-harness/scripts/
+!.agents/skills/**/scripts/
 workflows/
 static/old/
 *.log
@@ -39,10 +43,16 @@ memo.md
 slack_client.py
 requirements-dev.txt
 
-# Local docs / Codex assets
-docs/
-.codex/
+# Project docs / Codex assets are part of the repo structure.
+.codex/cache/
 tests/
+
+# Local Codex workspace instructions and artifacts
+/.agents/
+/.codex-harness/
+/.codex/
+/.docs/
+/AGENTS.md
 
 # App-specific generated files
 .ziz

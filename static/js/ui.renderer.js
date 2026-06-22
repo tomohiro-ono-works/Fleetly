@@ -13,11 +13,6 @@
     return (packages.ui && packages.ui.nodeLoader) || {};
   }
 
-  function getSqlbilderApi() {
-    const packages = getPackages();
-    return packages.sqlbilder || {};
-  }
-
   function formatRecentTimestamp(value) {
     const text = String(value || "").trim();
     if (!text) return "";
@@ -187,21 +182,6 @@
 
     if (homeViewModel?.visible) {
       renderHomeScreen({ flowRoot, detailRoot, detailBottomRoot, homeViewModel, onHomeAction });
-      return;
-    }
-
-    if (String(state?.appMode || "") === "query-builder") {
-      const uiNode = getUiNodeApi();
-      if (detailRoot) detailRoot.innerHTML = "";
-      if (detailBottomRoot && detailBottomRoot !== detailRoot) detailBottomRoot.innerHTML = "";
-      if (typeof uiNode.destroyFlowCanvas === "function") {
-        uiNode.destroyFlowCanvas(flowRoot);
-      }
-      flowRoot.innerHTML = "";
-      const sqlbilder = getSqlbilderApi();
-      if (sqlbilder.page && typeof sqlbilder.page.mount === "function") {
-        sqlbilder.page.mount(flowRoot, state);
-      }
       return;
     }
 

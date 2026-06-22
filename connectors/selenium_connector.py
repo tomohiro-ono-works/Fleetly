@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import re
 import time
 from pathlib import Path
@@ -7,6 +8,7 @@ from typing import Any
 import uuid
 
 from connectors.base_connector import BaseConnector
+from core.security_policies import is_web_target_allowed
 
 SESSION_STORE: dict[str, dict] = {}
 LAST_SESSION_KEY: str = ""
@@ -43,7 +45,7 @@ except ImportError:  # pragma: no cover
     WebDriverWait = None
 
 
-class WebConnector(BaseConnector):
+class SeleniumConnector(BaseConnector):
     RUNTIME_KEY = "__web_runtime__"
     SESSION_ID_COLUMN = "web_session_id"
 
@@ -67,6 +69,9 @@ class WebConnector(BaseConnector):
 
     def navigate(self, params: dict, context: dict) -> Any:
         self._require(params, ["url"])
+        url = str(params["url"])
+        self._assert_web_target_allowed(url)
+
         runtime = self._ensure_runtime(params, context)
         driver = runtime["driver"]
 
@@ -75,7 +80,6 @@ class WebConnector(BaseConnector):
         tab_mode = str(params.get("tab_mode") or "reuse_or_new").strip()
         wait_until = str(params.get("wait_until") or "none").strip().lower()
         timeout_ms = int(params.get("timeout_ms") or self.DEFAULT_TIMEOUT_MS)
-        url = str(params["url"])
 
         page_key = f"{window_id}:{tab_id}"
         tabs = runtime["tabs"]
@@ -99,6 +103,10 @@ class WebConnector(BaseConnector):
         driver.get(url)
         if wait_until != "none":
             self._wait_after_navigate(driver, wait_until, timeout_ms)
+        current_url = self._current_url_after_navigate(driver, fallback_url=url)
+        if not self._is_navigation_placeholder(current_url) and not is_web_target_allowed(current_url):
+            self._stop_blocked_page(driver)
+            raise ValueError(f"Web allowlist で許可されていない URL へ遷移しました: {current_url}")
         session_key = self._store_runtime(context, runtime)
 
         rows = [{
@@ -106,7 +114,7 @@ class WebConnector(BaseConnector):
             "action": "navigate",
             "window_id": window_id,
             "tab_id": tab_id,
-            "url": driver.current_url,
+            "url": current_url,
             "title": driver.title,
             self.SESSION_ID_COLUMN: session_key,
         }]
@@ -328,11 +336,12 @@ class WebConnector(BaseConnector):
         self._require(params, ["path"])
         driver = self._get_page(params, context)
         target = str(params.get("target") or "page").strip().lower()
+        full_page = self._as_bool(params.get("full_page"), default=True)
         path = Path(str(params["path"])).expanduser()
         path.parent.mkdir(parents=True, exist_ok=True)
 
         if target == "page":
-            driver.save_screenshot(str(path))
+            self._save_page_screenshot(driver, path, full_page=full_page)
         elif target == "element":
             element = self._resolve_element(driver, params)
             element.screenshot(str(path))
@@ -344,6 +353,7 @@ class WebConnector(BaseConnector):
             "action": "screenshot",
             "target": target,
             "path": str(path),
+            "full_page": full_page if target == "page" else False,
             self.SESSION_ID_COLUMN: self._current_session_id(context),
         }]
         df = self.to_dataframe(rows)
@@ -367,7 +377,7 @@ class WebConnector(BaseConnector):
         if runtime["driver"] is None:
             options = webdriver.ChromeOptions()
             options.page_load_strategy = "none"
-            if bool(params.get("headless", False)):
+            if self._as_bool(params.get("headless"), default=False):
                 options.add_argument("--headless=new")
             options.add_argument("--disable-gpu")
             options.add_argument("--no-sandbox")
@@ -385,7 +395,7 @@ class WebConnector(BaseConnector):
             runtime = SESSION_STORE.get(source_session_key)
             if runtime is None:
                 raise ValueError(
-                    f"source_step_id から参照した Webセッションが見つかりません: {source_session_key}"
+                    f"source_step_id から参照した Selenium セッションが見つかりません: {source_session_key}"
                 )
             context[self.RUNTIME_KEY] = runtime
         else:
@@ -393,7 +403,7 @@ class WebConnector(BaseConnector):
             if runtime is None:
                 runtime = self._restore_runtime(context)
         if runtime is None or runtime.get("driver") is None:
-            raise ValueError("Webランタイムが存在しません。先に navigate を実行してください。")
+            raise ValueError("Selenium ランタイムが存在しません。先に navigate を実行してください。")
 
         window_id = str(params.get("window_id") or self.DEFAULT_WINDOW_ID)
         tab_id = str(params.get("tab_id") or self.DEFAULT_TAB_ID)
@@ -500,6 +510,48 @@ class WebConnector(BaseConnector):
         driver.switch_to.new_window("tab")
         return driver.current_window_handle
 
+    def _save_page_screenshot(self, driver, path: Path, *, full_page: bool) -> None:
+        if not full_page:
+            driver.save_screenshot(str(path))
+            return
+
+        try:
+            metrics = driver.execute_cdp_cmd("Page.getLayoutMetrics", {})
+            content_size = metrics.get("contentSize") or metrics.get("cssContentSize") or {}
+            width = max(1, int(float(content_size.get("width") or 0)))
+            height = max(1, int(float(content_size.get("height") or 0)))
+
+            viewport_size = driver.execute_script(
+                "return {"
+                "width: Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0),"
+                "height: Math.max(document.documentElement.clientHeight || 0, window.innerHeight || 0)"
+                "};"
+            ) or {}
+            width = max(width, int(float(viewport_size.get("width") or 0)), 1)
+            height = max(height, int(float(viewport_size.get("height") or 0)), 1)
+
+            payload = driver.execute_cdp_cmd(
+                "Page.captureScreenshot",
+                {
+                    "format": "png",
+                    "fromSurface": True,
+                    "captureBeyondViewport": True,
+                    "clip": {
+                        "x": 0,
+                        "y": 0,
+                        "width": width,
+                        "height": height,
+                        "scale": 1,
+                    },
+                },
+            )
+            data = str((payload or {}).get("data") or "")
+            if not data:
+                raise ValueError("Chrome DevTools Protocol returned empty screenshot data.")
+            path.write_bytes(base64.b64decode(data))
+        except Exception:
+            driver.save_screenshot(str(path))
+
     def _switch_to_handle(self, runtime: dict, handle: str) -> None:
         driver = runtime["driver"]
         handles = set(driver.window_handles)
@@ -511,6 +563,39 @@ class WebConnector(BaseConnector):
         state = "complete" if wait_until in {"load", "networkidle"} else "interactive"
         wait = WebDriverWait(driver, max(1, timeout_ms / 1000))
         wait.until(self._document_ready_condition(state))
+
+    def _assert_web_target_allowed(self, url: str) -> None:
+        target = str(url or "").strip()
+        if not is_web_target_allowed(target):
+            raise ValueError(f"Web allowlist で許可されていない URL です: {target}")
+
+    def _current_url_after_navigate(self, driver, *, fallback_url: str) -> str:
+        try:
+            current_url = str(driver.current_url or "").strip()
+        except Exception:
+            current_url = ""
+        if not current_url or self._is_navigation_placeholder(current_url):
+            return str(fallback_url or "").strip()
+        return current_url
+
+    @staticmethod
+    def _is_navigation_placeholder(url: str) -> bool:
+        normalized = str(url or "").strip().lower()
+        return (
+            not normalized
+            or normalized == "about:blank"
+            or normalized.startswith("chrome://")
+        )
+
+    def _stop_blocked_page(self, driver) -> None:
+        try:
+            driver.execute_script("window.stop();")
+        except Exception:
+            pass
+        try:
+            driver.get("about:blank")
+        except Exception:
+            pass
 
     def _document_ready_condition(self, state: str):
         expected = str(state or "interactive").strip().lower()
@@ -537,3 +622,18 @@ class WebConnector(BaseConnector):
             return f'"{text}"'
         parts = text.split("'")
         return "concat(" + ", \"'\", ".join(f"'{part}'" for part in parts) + ")"
+
+    @staticmethod
+    def _as_bool(value: Any, *, default: bool = False) -> bool:
+        if value is None or value == "":
+            return default
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, (int, float)):
+            return value != 0
+        normalized = str(value).strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off"}:
+            return False
+        return default

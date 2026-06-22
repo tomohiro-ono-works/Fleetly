@@ -416,6 +416,7 @@
   function hasMissingRequiredField(config, node) {
     const schema = getFormSchema(config, node.connector, node.action);
     for (const field of schema) {
+      if (!isFieldVisibleForNodeSafe(node, field)) continue;
       if (!field.required) continue;
       const hasExplicit = node.form && Object.prototype.hasOwnProperty.call(node.form, field.key);
       const useDefaultWhenUnset = field.key !== "input_data";

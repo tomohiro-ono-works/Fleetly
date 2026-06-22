@@ -21,6 +21,60 @@
   );
   let runtimeContextDefaultsCache = null;
   let runtimeContextDefaultsPromise = null;
+  let activeCoordinateCapture = null;
+  let coordinateCaptureSequence = 0;
+
+  function toCoordinateValue(value) {
+    const parsed = Number(value);
+    return Number.isInteger(parsed) ? parsed : null;
+  }
+
+  function restoreCoordinateCaptureInputs(capture) {
+    if (!capture) return;
+    if (capture.xInput) capture.xInput.value = capture.originalX;
+    if (capture.yInput) capture.yInput.value = capture.originalY;
+    if (capture.button) capture.button.textContent = capture.buttonLabel;
+  }
+
+  function handleCoordinateCaptureEvent(event) {
+    const message = event?.detail || {};
+    const type = String(message.type || "");
+    if (!type.startsWith("mouse.coordinateCapture.")) return;
+    const capture = activeCoordinateCapture;
+    const payload = message.payload || {};
+    if (!capture || String(payload.capture_id || "") !== capture.captureId) return;
+
+    if (type === "mouse.coordinateCapture.preview") {
+      const x = toCoordinateValue(payload.x);
+      const y = toCoordinateValue(payload.y);
+      if (x === null || y === null) return;
+      if (capture.xInput) capture.xInput.value = String(x);
+      if (capture.yInput) capture.yInput.value = String(y);
+      if (capture.button) capture.button.textContent = `座標を取得中: X=${x}, Y=${y}`;
+      return;
+    }
+
+    if (type === "mouse.coordinateCapture.selected") {
+      const x = toCoordinateValue(payload.x);
+      const y = toCoordinateValue(payload.y);
+      if (x === null || y === null) return;
+      capture.node.form[capture.xKey] = String(x);
+      capture.node.form[capture.yKey] = String(y);
+      if (capture.xInput) capture.xInput.value = String(x);
+      if (capture.yInput) capture.yInput.value = String(y);
+      if (capture.button) capture.button.textContent = capture.buttonLabel;
+      activeCoordinateCapture = null;
+      capture.notifyCommitted();
+      return;
+    }
+
+    if (type === "mouse.coordinateCapture.cancelled") {
+      restoreCoordinateCaptureInputs(capture);
+      activeCoordinateCapture = null;
+    }
+  }
+
+  window.addEventListener("ziz:evt", handleCoordinateCaptureEvent);
 
   function resolveActiveBridgeApi() {
     const localBridge = window.zizBridge || (window.zizPackages || {})?.core?.bridge || bridgeApi || null;
@@ -1858,6 +1912,7 @@
     } else if (field.kind === "number") {
       inputEl = el("input", {
         type: "number",
+        "data-coordinate-field-key": field.key,
         min: field.min !== undefined ? String(field.min) : undefined,
         max: field.max !== undefined ? String(field.max) : undefined,
         placeholder: field.placeholder || "",
@@ -1872,6 +1927,66 @@
       });
       inputEl.value = current;
       wrapper = inputEl;
+    } else if (field.kind === "mouse-coordinate-picker") {
+      row.classList.add("row-inline-action");
+      const xKey = String(field.x_key || "x");
+      const yKey = String(field.y_key || "y");
+      const buttonLabel = String(field.buttonLabel || field.label || "マウスで指定する");
+      const pickerButton = el("button", {
+        type: "button",
+        class: "node-inline-preview-btn",
+        title: buttonLabel,
+        "aria-label": buttonLabel,
+        onclick: async () => {
+          const activeBridge = resolveActiveBridgeApi();
+          if (!activeBridge?.available?.()) {
+            const message = getBridgeUnavailableMessage(activeBridge);
+            if (dialogApi?.show) dialogApi.show(message, { kind: "warning", title: "座標指定" });
+            else window.alert(message);
+            return;
+          }
+
+          if (activeCoordinateCapture) {
+            restoreCoordinateCaptureInputs(activeCoordinateCapture);
+            activeCoordinateCapture = null;
+          }
+          const fieldContainer = row.parentElement;
+          const coordinateInputs = Array.from(
+            fieldContainer?.querySelectorAll("input[data-coordinate-field-key]") || []
+          );
+          const xInput = coordinateInputs.find((input) => input.dataset.coordinateFieldKey === xKey) || null;
+          const yInput = coordinateInputs.find((input) => input.dataset.coordinateFieldKey === yKey) || null;
+          const captureId = `coordinate_${Date.now()}_${++coordinateCaptureSequence}`;
+          const capture = {
+            captureId,
+            node,
+            xKey,
+            yKey,
+            xInput,
+            yInput,
+            originalX: xInput?.value || "",
+            originalY: yInput?.value || "",
+            button: pickerButton,
+            buttonLabel,
+            notifyCommitted
+          };
+          activeCoordinateCapture = capture;
+          pickerButton.textContent = "マウスを動かし、左クリックで確定";
+          try {
+            await activeBridge.call("mouse.coordinateCapture.start", { capture_id: captureId });
+          } catch (error) {
+            if (activeCoordinateCapture === capture) {
+              restoreCoordinateCaptureInputs(capture);
+              activeCoordinateCapture = null;
+            }
+            const message = `座標取得を開始できませんでした。\n${error?.message || error}`;
+            if (dialogApi?.show) dialogApi.show(message, { kind: "error", title: "座標指定エラー" });
+            else window.alert(message);
+          }
+        }
+      }, [document.createTextNode(buttonLabel)]);
+      inputEl = null;
+      wrapper = el("div", { class: "row-inline-action-body" }, [pickerButton]);
     } else if (field.kind === "google-auth-login") {
       row.classList.add("row-inline-action");
       const authBtn = el(

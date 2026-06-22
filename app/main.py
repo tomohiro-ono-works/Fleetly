@@ -5,8 +5,6 @@ from core.flow_locator import WORKFLOW_DIR, resolve_flow_path
 from core.logger import setup_logger
 from core.workflow_engine import WorkflowEngine
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-
 logger = setup_logger()
 engine = WorkflowEngine(logger)
 

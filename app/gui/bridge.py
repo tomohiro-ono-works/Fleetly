@@ -21,9 +21,8 @@ from PySide6.QtCore import QObject, Signal, Slot
 from openpyxl import load_workbook
 
 from core.type_registry import build_dataframe_schema
-from core.sqlbilder_commands import apply_measure_command
 from core.workflow_engine import WorkflowEngine
-from core.flow_locator import list_flows_local, list_templates_local, register_recent_flow
+from core.flow_locator import has_flow_extension, list_flows_local, list_templates_local, register_recent_flow
 from core.security_policies import load_security_policies
 
 logger = logging.getLogger("ziz.gui_bridge")
@@ -40,9 +39,7 @@ SECRET_FIELD_KEYS = {
 }
 
 MODE_EXTENSIONS = {
-    "workflow": ".zizw",
     "dataflow": ".zizd",
-    "query-builder": ".zizq",
 }
 
 
@@ -105,6 +102,7 @@ class BridgeRuntime:
         open_flow_callback=None,
         save_flow_callback=None,
         window_control_callback=None,
+        coordinate_capture_callback=None,
     ):
         self.base_dir = Path(base_dir).resolve()
         self.debug = bool(debug)
@@ -115,6 +113,7 @@ class BridgeRuntime:
         self.open_flow_callback = open_flow_callback
         self.save_flow_callback = save_flow_callback
         self.window_control_callback = window_control_callback
+        self.coordinate_capture_callback = coordinate_capture_callback
         self._flow_tokens = {}
         self._event_sink = None
         self._lock = threading.RLock()
@@ -192,6 +191,8 @@ class BridgeRuntime:
                 return self._success_response(message_id, message_type, self._handle_app_log_ui_event(payload))
             if message_type == "app.windowControl":
                 return self._success_response(message_id, message_type, self._handle_app_window_control(payload))
+            if message_type == "mouse.coordinateCapture.start":
+                return self._success_response(message_id, message_type, self._handle_mouse_coordinate_capture_start(payload))
             if message_type == "app.openExternal":
                 return self._success_response(message_id, message_type, self._handle_app_open_external(payload))
             if message_type == "app.googleAuthLogin":
@@ -246,8 +247,6 @@ class BridgeRuntime:
                 return self._success_response(message_id, message_type, self._handle_preview_read_excel(payload))
             if message_type == "preview.readCsv":
                 return self._success_response(message_id, message_type, self._handle_preview_read_csv(payload))
-            if message_type == "sqlbilder.applyMeasure":
-                return self._success_response(message_id, message_type, self._handle_sqlbilder_apply_measure(payload))
         except ValueError as error:
             _log_workspace_api_error("E_VALIDATION", str(error))
             return self._error_response(message_id, message_type, "E_VALIDATION", str(error))
@@ -284,6 +283,7 @@ class BridgeRuntime:
                 "app.getStatus",
                 "app.logUiEvent",
                 "app.windowControl",
+                "mouse.coordinateCapture.start",
                 "app.openExternal",
                 "app.googleAuthLogin",
                 "app.googleAuthStatus",
@@ -311,7 +311,6 @@ class BridgeRuntime:
                 "workspace.delete",
                 "preview.readExcel",
                 "preview.readCsv",
-                "sqlbilder.applyMeasure",
             ],
             "security_policies": {
                 "loaded": bool(policies.get("loaded")),
@@ -413,6 +412,27 @@ class BridgeRuntime:
                 detail_suffix = " " + " ".join(parts)
         elapsed_suffix = f" elapsed_ms={elapsed_ms}" if elapsed_ms is not None else ""
         logger.info("[ui-event] source=%s action=%s%s%s", source, action, elapsed_suffix, detail_suffix)
+        if action.startswith("run."):
+            event_payload = {
+                "action": action,
+                "source": source,
+            }
+            if elapsed_ms is not None:
+                event_payload["elapsed_ms"] = elapsed_ms
+            if isinstance(detail, dict):
+                for key in (
+                    "run_id",
+                    "status",
+                    "event_ts",
+                    "terminal_event_latency_ms",
+                    "summary_fetch_ms",
+                    "event_to_paint_ms",
+                    "summary_to_paint_ms",
+                    "render_last_ms",
+                ):
+                    if key in detail:
+                        event_payload[key] = detail.get(key)
+            self._append_execution_log("run.ui", event_payload)
         return {"logged": True}
 
     def _handle_app_window_control(self, payload):
@@ -426,6 +446,20 @@ class BridgeRuntime:
             "accepted": True,
             "action": action,
             "state": str(state or ""),
+        }
+
+    def _handle_mouse_coordinate_capture_start(self, payload):
+        capture_id = _safe_text((payload or {}).get("capture_id"))
+        if not capture_id:
+            raise ValueError("capture_id は必須です。")
+        if not callable(self.coordinate_capture_callback):
+            raise ValueError("座標取得はこの実行環境で利用できません。")
+        started = self.coordinate_capture_callback(capture_id)
+        if started is False:
+            raise ValueError("座標取得を開始できませんでした。")
+        return {
+            "started": True,
+            "capture_id": capture_id,
         }
 
     def _resolve_chrome_executable(self):
@@ -615,6 +649,8 @@ class BridgeRuntime:
         resolved_path = Path(flow_path).resolve()
         if not resolved_path.exists():
             raise FileNotFoundError(f"フローが見つかりません: {resolved_path}")
+        if not has_flow_extension(str(resolved_path)):
+            raise ValueError("対応していないフロー形式です。")
 
         with resolved_path.open("r", encoding="utf-8") as handle:
             config = yaml.safe_load(handle) or {}
@@ -644,7 +680,7 @@ class BridgeRuntime:
     def _handle_flow_save(self, payload):
         started = time.perf_counter()
         workspace_tab_id = self._resolve_workspace_tab_id(payload, required=True)
-        mode = _safe_text((payload or {}).get("mode")) or self.current_mode or "workflow"
+        mode = _safe_text((payload or {}).get("mode")) or self.current_mode or "dataflow"
         flow = copy.deepcopy((payload or {}).get("flow") or {})
         if not isinstance(flow, dict):
             raise ValueError("flow はオブジェクトで指定してください。")
@@ -689,6 +725,8 @@ class BridgeRuntime:
             return response
 
         resolved_path = Path(target_path).resolve()
+        if not has_flow_extension(str(resolved_path)):
+            raise ValueError("対応していないフロー形式です。")
         resolved_path.parent.mkdir(parents=True, exist_ok=True)
         with resolved_path.open("w", encoding="utf-8") as handle:
             yaml.safe_dump(restored_flow, handle, allow_unicode=True, sort_keys=False)
@@ -717,7 +755,7 @@ class BridgeRuntime:
     def _handle_flow_run(self, payload):
         started = time.perf_counter()
         workspace_tab_id = self._resolve_workspace_tab_id(payload, required=True)
-        mode = _safe_text((payload or {}).get("mode")) or self.current_mode or "workflow"
+        mode = _safe_text((payload or {}).get("mode")) or self.current_mode or "dataflow"
         flow = copy.deepcopy((payload or {}).get("flow") or {})
         if not isinstance(flow, dict):
             raise ValueError("flow はオブジェクトで指定してください。")
@@ -1177,7 +1215,7 @@ class BridgeRuntime:
             require_exists=True,
             expect_file=True,
         )
-        if target.suffix.lower() not in {".md", ".sql", ".py", ".json", ".zizd", ".zizw", ".zizq"}:
+        if target.suffix.lower() not in {".md", ".sql", ".py", ".json", ".zizd"}:
             raise ValueError("対応していないファイル形式です。")
         content, encoding = self._read_text_with_fallback(target)
         stat = target.stat()
@@ -1233,7 +1271,7 @@ class BridgeRuntime:
         )
         if target.exists() and target.is_dir():
             raise ValueError("保存先がフォルダです。")
-        if target.exists() and target.suffix.lower() not in {".md", ".sql", ".py", ".yml", ".yaml", ".json", ".txt", ".ini", ".cfg", ".env", ".js", ".zizd", ".zizw", ".zizq"}:
+        if target.exists() and target.suffix.lower() not in {".md", ".sql", ".py", ".yml", ".yaml", ".json", ".txt", ".ini", ".cfg", ".env", ".js", ".zizd"}:
             raise ValueError("この拡張子への保存は許可されていません。")
         if target.exists() and expected_mtime_ns is not None and not force:
             current_mtime_ns = int(target.stat().st_mtime_ns)
@@ -1473,20 +1511,6 @@ class BridgeRuntime:
             "col_count": col_count,
         }
 
-    def _handle_sqlbilder_apply_measure(self, payload):
-        measure_type = _safe_text((payload or {}).get("measure_type"))
-        sql_text = str((payload or {}).get("sql_text") or "")
-        selection_start_line = int((payload or {}).get("selection_start_line") or 0)
-        selection_end_line = int((payload or {}).get("selection_end_line") or selection_start_line)
-        return {
-            "replacement": apply_measure_command(
-                sql_text,
-                measure_type=measure_type,
-                selection_start_line=selection_start_line,
-                selection_end_line=selection_end_line,
-            )
-        }
-
     def _resolve_picker_initial_value(self, payload, current_ref, *, workspace_tab_id):
         hidden_values = self._get_hidden_values(workspace_tab_id)
         if current_ref and current_ref in hidden_values:
@@ -1575,7 +1599,11 @@ class BridgeRuntime:
         logger = self._create_run_logger(run_id)
         log_handler = _RunLogHandler(self, run_id)
         logger.addHandler(log_handler)
-        engine = WorkflowEngine(logger, step_status_callback=lambda detail: self._emit_step_status(run_id, detail))
+        engine = WorkflowEngine(
+            logger,
+            step_status_callback=lambda detail: self._emit_step_status(run_id, detail),
+            performance_callback=lambda event, detail: self._handle_run_performance_event(run_id, event, detail),
+        )
         self.emit_event("run.progress", {
             "run_id": run_id,
             "stage": "running",
@@ -1583,6 +1611,7 @@ class BridgeRuntime:
             "message": "実行を開始しました。",
         })
 
+        core_started = time.perf_counter()
         try:
             report = engine.run_flow_from_config(
                 resolved_flow,
@@ -1590,6 +1619,19 @@ class BridgeRuntime:
                 cancel_event=session.get("cancel_event"),
                 initial_context=session.get("seed_context") or {},
                 only_step_id=session.get("requested_step_id") or None,
+            )
+            core_elapsed_ms = round((time.perf_counter() - core_started) * 1000, 1)
+            self._append_execution_log("run.core.finish", {
+                "run_id": run_id,
+                "flow_key": session.get("flow_key") or "",
+                "status": str(report.get("status") or ""),
+                "elapsed_ms": core_elapsed_ms,
+            })
+            logger.info(
+                "[bridge-perf] run.core.finish run_id=%s status=%s elapsed_ms=%s",
+                run_id,
+                str(report.get("status") or ""),
+                core_elapsed_ms,
             )
             session["report"] = {
                 "status": str(report.get("status") or ""),
@@ -1604,12 +1646,19 @@ class BridgeRuntime:
                 "flow_name": _safe_text(report.get("flow_name") or session.get("flow_name") or "Untitled"),
             }
             session["finished_at"] = _iso_now()
+            store_started = time.perf_counter()
             self._update_latest_by_flow(
                 session.get("flow_key"),
                 session.get("seed_context"),
                 report,
                 final_context=getattr(engine, "context", None),
             )
+            store_elapsed_ms = round((time.perf_counter() - store_started) * 1000, 1)
+            self._append_execution_log("run.result.store", {
+                "run_id": run_id,
+                "flow_key": session.get("flow_key") or "",
+                "elapsed_ms": store_elapsed_ms,
+            })
             self._append_execution_log("run.finish", {
                 "run_id": run_id,
                 "flow_key": session.get("flow_key") or "",
@@ -1628,6 +1677,12 @@ class BridgeRuntime:
 
             if report.get("status") == "success":
                 session["status"] = "success"
+                self._append_execution_log("run.terminal_event.emit", {
+                    "run_id": run_id,
+                    "flow_key": session.get("flow_key") or "",
+                    "status": "success",
+                    "event_type": "run.completed",
+                })
                 self.emit_event("run.completed", {
                     "run_id": run_id,
                     "status": "success",
@@ -1642,6 +1697,12 @@ class BridgeRuntime:
                     "retryable": False,
                     "trace_id": session.get("trace_id"),
                 }
+                self._append_execution_log("run.terminal_event.emit", {
+                    "run_id": run_id,
+                    "flow_key": session.get("flow_key") or "",
+                    "status": "cancelled",
+                    "event_type": "run.failed",
+                })
                 self.emit_event("run.failed", {
                     "run_id": run_id,
                     "status": "cancelled",
@@ -1656,6 +1717,12 @@ class BridgeRuntime:
                     "retryable": False,
                     "trace_id": session.get("trace_id"),
                 }
+                self._append_execution_log("run.terminal_event.emit", {
+                    "run_id": run_id,
+                    "flow_key": session.get("flow_key") or "",
+                    "status": "error",
+                    "event_type": "run.failed",
+                })
                 self.emit_event("run.failed", {
                     "run_id": run_id,
                     "status": "error",
@@ -1684,13 +1751,19 @@ class BridgeRuntime:
                 "step_count": 0,
                 "error": "内部エラーが発生しました。",
             })
+            self._append_execution_log("run.terminal_event.emit", {
+                "run_id": run_id,
+                "flow_key": session.get("flow_key") or "",
+                "status": "error",
+                "event_type": "run.failed",
+            })
             self.emit_event("run.failed", {
                 "run_id": run_id,
                 "status": "error",
                 "trace_id": session.get("trace_id"),
             })
         finally:
-            self._cleanup_web_session_runtime(session)
+            self._cleanup_selenium_session_runtime(session)
             flow_key = _safe_text(session.get("flow_key"))
             with self._lock:
                 if self.active_run_by_flow.get(flow_key) == run_id:
@@ -1698,7 +1771,21 @@ class BridgeRuntime:
             logger.removeHandler(log_handler)
             log_handler.close()
 
-    def _cleanup_web_session_runtime(self, session):
+    def _handle_run_performance_event(self, run_id, event, detail):
+        event_name = _safe_text(event)
+        if not event_name:
+            return
+        with self._lock:
+            session = self.runs.get(run_id) or {}
+        payload = {
+            "run_id": run_id,
+            "flow_key": session.get("flow_key") or "",
+        }
+        if isinstance(detail, dict):
+            payload.update(detail)
+        self._append_execution_log(event_name, payload)
+
+    def _cleanup_selenium_session_runtime(self, session):
         try:
             if not isinstance(session, dict):
                 return
@@ -1711,10 +1798,10 @@ class BridgeRuntime:
             if not run_id or not workspace_tab_id:
                 return
             session_key = f"{workspace_tab_id}:{run_id}"
-            from connectors import web_connector as _web_connector  # local import to avoid hard dependency at startup
-            _web_connector.clear_session_runtime(session_key)
+            from connectors import selenium_connector as _selenium_connector  # local import to avoid hard dependency at startup
+            _selenium_connector.clear_session_runtime(session_key)
         except Exception:
-            logger.exception("Webセッションのクリーンアップに失敗しました。")
+            logger.exception("Selenium セッションのクリーンアップに失敗しました。")
 
     def _emit_step_status(self, run_id, detail):
         payload = {
@@ -1753,7 +1840,7 @@ class BridgeRuntime:
         return session
 
     def _build_flow_key(self, mode, flow_path=None):
-        mode_text = _safe_text(mode) or "workflow"
+        mode_text = _safe_text(mode) or "dataflow"
         path_text = _safe_text(flow_path)
         if path_text:
             try:
@@ -1824,7 +1911,7 @@ class BridgeRuntime:
         step_id = _safe_text((payload or {}).get("step_id"))
         if not step_id:
             raise ValueError("step_id は必須です。")
-        mode = _safe_text((payload or {}).get("mode")) or self.current_mode or "workflow"
+        mode = _safe_text((payload or {}).get("mode")) or self.current_mode or "dataflow"
         flow_key = _safe_text((payload or {}).get("flow_key")) or self._build_flow_key(mode, self.current_flow_path)
         with self._lock:
             latest = self.latest_by_flow.get(flow_key)
@@ -1906,7 +1993,7 @@ class BridgeRuntime:
         for mode, extension in MODE_EXTENSIONS.items():
             if extension == suffix:
                 return mode
-        return "workflow"
+        return "dataflow"
 
     def _is_secret_key(self, key):
         return _safe_text(key) in SECRET_FIELD_KEYS

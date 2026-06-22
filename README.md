@@ -1,9 +1,18 @@
-# zizai
+﻿# zizai
 
 ローカル環境で動作する、PySide6 + WebView ベースのデータ加工 / ワークフロー作成アプリです。  
 主な用途は、非エンジニア向けの ETL、業務自動化、SQL 作成補助です。
 
 ![zizai icon](static/img/icon2.png)
+
+## 作業ルールと正本
+
+- 常時ルール: [AGENTS.md](AGENTS.md)
+- 設計思想・規約: [.docs/architecture.md](.docs/architecture.md), [.docs/coding-rules.md](.docs/coding-rules.md), [.docs/refactor-policy.md](.docs/refactor-policy.md)
+- 作業指示: `.codex-harness/tasks/`
+- 検証項目: `.codex-harness/checks/`
+- 調査出力・過去ログ: `.codex-harness/reports/`
+- 再利用手順: `.agents/skills/`
 
 ## 概要
 
@@ -14,7 +23,6 @@
 
 - ワークフロー作成
 - データフロー作成
-- クエリビルダー
 - 入力フォーム作成
 
 ## 主な機能
@@ -39,18 +47,6 @@
 - Slack 操作
 - Windows 操作
 - API 実行
-
-### クエリビルダー
-
-- `--@cte:` 単位の縦フロー表示
-- 左右 2 ペインの SQL エディタ
-- カタログ / フロー / SQL 編集 / 結果表示の分割 UI
-- コマンドサジェスト
-  - `Ctrl+@`
-- エリア選択
-  - `Ctrl+P`
-- SQL 集計補助
-  - Python 側の `sqlglot` を使った集計コマンド
 
 ## セキュリティ方針
 
@@ -85,7 +81,6 @@ static/
   icons/
   js/
   modal/
-  sqlbilder/
 template/
 workflows/
 zizai.py
@@ -108,27 +103,31 @@ requirements.txt
   - 共通ロジック
 - `static/`
   - フロントエンド UI
-- `static/sqlbilder/`
-  - クエリビルダー専用 UI
 
 ## 起動方法
 
-仮想環境を有効化したうえで実行します。
+通常は `bin\ziz.bat` から起動します。`.env` を有効化して `zizai.py` に引数を渡す Windows 用 launcher です。
 
 ```powershell
-.\.env\Scripts\python.exe zizai.py
+.\bin\ziz.bat
 ```
 
 DevTools を有効にする場合:
 
 ```powershell
-.\.env\Scripts\python.exe zizai.py --debug
+.\bin\ziz.bat --debug
 ```
 
 ヘッドレス実行（タスクスケジューラ向け）:
 
 ```powershell
-.\.env\Scripts\python.exe zizai.py "C:\path\to\flow.zizd"
+.\bin\ziz.bat "C:\path\to\flow.zizd"
+```
+
+直接起動する場合:
+
+```powershell
+.\.env\Scripts\python.exe zizai.py
 ```
 
 ## 設定ファイル
@@ -167,10 +166,6 @@ RENAME リストから列名を一括変更するためのサンプル CSV で�
 ## 保存形式
 
 - データフロー: `.zizd`
-- ワークフロー: `.zizw`
-- クエリビルダー: `.zizq`
-
-クエリビルダーの SQL 本文自体は `.sql` ベースの扱いを前提にしています。
 
 ## 主なショートカット
 
@@ -178,10 +173,6 @@ RENAME リストから列名を一括変更するためのサンプル CSV で�
   - 保存
 - `Ctrl+Enter`
   - 実行
-- `Ctrl+@`
-  - SQL ビルダーのコマンドサジェスト
-- `Ctrl+P`
-  - SQL ビルダーのエリア選択
 
 ## 依存ライブラリ
 

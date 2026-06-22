@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 import pandas as pd
+import pyautogui
+import pyperclip
 
 from connectors.base_connector import BaseConnector
 
@@ -17,8 +19,14 @@ from connectors.base_connector import BaseConnector
 class WindowsConnector(BaseConnector):
     VARIABLE_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005]+$")
     SYSTEM_FIXED_VARIABLES = {"current_date", "user_name"}
+    MODIFIER_KEYS = {"ctrl", "shift", "alt"}
+    SPECIAL_KEYS = {
+        "backspace", "tab", "enter", "esc", "space", "pageup", "pagedown",
+        "end", "home", "left", "up", "right", "down", "insert", "delete",
+    }
 
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]):
+        params = params or {}
         if action == "define_values":
             return self.define_values(params.get("define_values"), context)
         if action == "rename_and_move_file":
@@ -29,6 +37,14 @@ class WindowsConnector(BaseConnector):
             return self.search_files_by_name(params)
         if action == "search_text_in_files":
             return self.search_text_in_files(params)
+        if action == "mouse_click":
+            return self.mouse_click(params)
+        if action == "input_text":
+            return self.input_text(params)
+        if action == "send_keys":
+            return self.send_keys(params)
+        if action == "wait":
+            return self.wait(params)
         raise ValueError(f"Unknown action: {action}")
 
     def _normalize_define_values(self, raw_define_values):
@@ -109,12 +125,11 @@ class WindowsConnector(BaseConnector):
         if not source_path.exists():
             if allow_missing_source:
                 message = f"対象ファイルが存在しないためスキップしました: {source_file_path}"
-                self.log_execution(message, level="warning")
-                return self._build_result_dataframe(
+                return self._complete_action(
                     action="rename_and_move_file",
                     target=str(source_file_path),
-                    status="success",
                     message=message,
+                    log_level="warning",
                 )
             raise ValueError(f"対象ファイルが見つかりません: {source_file_path}")
         if not source_path.is_file():
@@ -130,11 +145,9 @@ class WindowsConnector(BaseConnector):
 
         shutil.move(str(source_path), str(target_path))
         message = f"ファイルを移動しました: {target_path}"
-        self.log_execution(message)
-        return self._build_result_dataframe(
+        return self._complete_action(
             action="rename_and_move_file",
             target=str(target_path),
-            status="success",
             message=message,
         )
 
@@ -156,11 +169,9 @@ class WindowsConnector(BaseConnector):
             handle.write(content)
 
         message = f"Markdown を保存しました: {target_path}"
-        self.log_execution(message)
-        return self._build_result_dataframe(
+        return self._complete_action(
             action="create_markdown_file",
             target=str(target_path),
-            status="success",
             message=message,
         )
 
@@ -229,9 +240,163 @@ class WindowsConnector(BaseConnector):
             "context_excerpt",
         ])
 
-    def _build_result_dataframe(self, *, action: str, target: str, status: str, message: str) -> pd.DataFrame:
+    def mouse_click(self, params: dict[str, Any]) -> pd.DataFrame:
+        self._ensure_windows()
+        coordinate_mode = str(params.get("coordinate_mode") or "specified").strip().lower()
+        if coordinate_mode == "current":
+            position = pyautogui.position()
+            x, y = int(position.x), int(position.y)
+        elif coordinate_mode == "specified":
+            x = self._parse_screen_coordinate(params.get("x"), "x")
+            y = self._parse_screen_coordinate(params.get("y"), "y")
+        else:
+            raise ValueError("coordinate_mode は current または specified を指定してください。")
+        button = str(params.get("button") or "left").strip().lower()
+        if button not in {"left", "right"}:
+            raise ValueError("button は left または right を指定してください。")
+        click_count = self._parse_click_count(params.get("click_count", 1))
+
+        pyautogui.click(x=x, y=y, clicks=click_count, button=button)
+
+        message = f"アクティブウィンドウへ {button} クリックを実行しました。"
+        return self._complete_action(
+            action="mouse_click",
+            target=f"screen:({x}, {y})",
+            message=message,
+        )
+
+    def input_text(self, params: dict[str, Any]) -> pd.DataFrame:
+        if "text" not in params or params.get("text") is None:
+            raise ValueError("text は必須です。")
+        input_mode = str(params.get("input_mode") or "replace").strip().lower()
+        if input_mode not in {"replace", "append"}:
+            raise ValueError("input_mode は replace または append を指定してください。")
+
+        text = str(params.get("text"))
+        self._ensure_windows()
+        if input_mode == "replace":
+            pyautogui.hotkey("ctrl", "a")
+        self._write_text(text)
+
+        message = f"アクティブウィンドウへ {len(text)} 文字を入力しました。"
+        return self._complete_action(
+            action="input_text",
+            target="active_window",
+            message=message,
+        )
+
+    def send_keys(self, params: dict[str, Any]) -> pd.DataFrame:
+        key = self._normalize_key(params.get("key"))
+        modifier_keys = self._normalize_modifier_keys(params.get("modifier_keys"))
+        wait_seconds = self._parse_non_negative_int(params.get("wait_seconds", 0), "送信後待機時間")
+        self._ensure_windows()
+        pyautogui.hotkey(*modifier_keys, key)
+        if wait_seconds:
+            time.sleep(wait_seconds)
+
+        message = "アクティブウィンドウへキー入力を送信しました。"
+        return self._complete_action(
+            action="send_keys",
+            target="active_window",
+            message=message,
+        )
+
+    def wait(self, params: dict[str, Any]) -> pd.DataFrame:
+        duration_seconds = self._parse_non_negative_int(params.get("duration_seconds", 1), "待機時間")
+        if duration_seconds > 600:
+            raise ValueError("待機時間 は 0 から 600 秒（10 分）の範囲で指定してください。")
+
+        time.sleep(duration_seconds)
+        message = f"{duration_seconds} 秒待機しました。"
+        return self._complete_action(
+            action="wait",
+            target="active_window",
+            message=message,
+        )
+
+    @staticmethod
+    def _parse_screen_coordinate(value: Any, label: str) -> int:
+        try:
+            return int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"{label} は整数で指定してください。") from error
+
+    @staticmethod
+    def _parse_click_count(value: Any) -> int:
+        try:
+            click_count = int(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("click_count は 1 または 2 を指定してください。") from error
+        if click_count not in {1, 2}:
+            raise ValueError("click_count は 1 または 2 を指定してください。")
+        return click_count
+
+    def _normalize_modifier_keys(self, value: Any) -> list[str]:
+        if value is None or value == "":
+            raw_keys = []
+        elif isinstance(value, str):
+            raw_keys = re.split(r"[,+]", value)
+        elif isinstance(value, (list, tuple, set)):
+            raw_keys = value
+        else:
+            raise ValueError("modifier_keys は Ctrl / Shift / Alt の配列で指定してください。")
+
+        modifier_keys = []
+        for raw_key in raw_keys:
+            key = str(raw_key or "").strip().lower()
+            if not key:
+                continue
+            if key not in self.MODIFIER_KEYS:
+                raise ValueError("modifier_keys は Ctrl / Shift / Alt のみ指定できます。")
+            if key not in modifier_keys:
+                modifier_keys.append(key)
+        return modifier_keys
+
+    def _normalize_key(self, value: Any) -> str:
+        key = str(value or "").strip().lower()
+        if not key:
+            raise ValueError("key は必須です。")
+        if key in self.SPECIAL_KEYS:
+            return key
+        if len(key) == 1 and ("a" <= key <= "z" or "0" <= key <= "9"):
+            return key
+        function_key_match = re.fullmatch(r"f([1-9]|1[0-9]|2[0-4])", key)
+        if function_key_match:
+            return key
+        raise ValueError(
+            "key は英数字、F1〜F24、または BACKSPACE / TAB / ENTER / ESC / SPACE / "
+            "PAGEUP / PAGEDOWN / HOME / END / LEFT / UP / RIGHT / DOWN / INSERT / DELETE を指定してください。"
+        )
+
+    @staticmethod
+    def _ensure_windows() -> None:
+        if os.name != "nt":
+            raise OSError("Windows 画面操作は Windows 環境でのみ実行できます。")
+
+    @staticmethod
+    def _write_text(text: str) -> None:
+        if text.isascii() and not any(character in text for character in "\r\n\t"):
+            pyautogui.write(text)
+            return
+
+        original_clipboard_text = pyperclip.paste()
+        try:
+            pyperclip.copy(text)
+            pyautogui.hotkey("ctrl", "v")
+        finally:
+            pyperclip.copy(original_clipboard_text)
+
+    def _complete_action(
+        self,
+        *,
+        action: str,
+        target: str,
+        message: str,
+        log_level: str = "info",
+    ) -> pd.DataFrame:
+        self.log_execution(message, level=log_level)
         return pd.DataFrame([{
-            "status": str(status),
+            "status": "success",
             "executed_at": datetime.now(timezone.utc).isoformat(),
             "connector": "WindowsConnector",
             "action": str(action),

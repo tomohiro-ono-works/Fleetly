@@ -7,6 +7,8 @@ from pathlib import Path
 
 logger = logging.getLogger("ziz.gui_host")
 
+WINDOW_FRAME_COLOR = "#292941"
+
 
 def _is_within_path(path, base_dir):
     try:
@@ -47,8 +49,8 @@ def run_webview_app(form_html_path, debug=False):
     _set_windows_app_user_model_id()
     logger.info("[gui-startup] phase=environment_configured elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     try:
-        from PySide6.QtCore import QObject, QEvent, QRect, Qt, QTimer, QUrl, Signal, Slot
-        from PySide6.QtGui import QAction, QIcon, QKeySequence
+        from PySide6.QtCore import QElapsedTimer, QEvent, QRect, Qt, QTimer, QUrl, Signal
+        from PySide6.QtGui import QAction, QCursor, QIcon, QKeySequence
         from PySide6.QtWebChannel import QWebChannel
         from PySide6.QtWidgets import (
             QApplication,
@@ -303,6 +305,86 @@ def run_webview_app(form_html_path, debug=False):
             if callable(self._retry_callback):
                 self._retry_callback()
 
+    class CoordinateCaptureOverlay(QWidget):
+        coordinate_preview = Signal(str, int, int)
+        coordinate_selected = Signal(str, int, int)
+        coordinate_cancelled = Signal(str)
+        _PREVIEW_INTERVAL_MS = 50
+
+        def __init__(self):
+            super().__init__()
+            self._capture_id = ""
+            self._preview_timer = QElapsedTimer()
+            self.setObjectName("coordinateCaptureOverlay")
+            self.setWindowFlags(
+                Qt.WindowType.FramelessWindowHint
+                | Qt.WindowType.WindowStaysOnTopHint
+                | Qt.WindowType.Tool
+            )
+            self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+            self.setWindowOpacity(0.01)
+            self.setMouseTracking(True)
+
+        def begin(self, capture_id):
+            next_capture_id = str(capture_id or "").strip()
+            if not next_capture_id:
+                return False
+            if self._capture_id and self._capture_id != next_capture_id:
+                self.coordinate_cancelled.emit(self._capture_id)
+            primary_screen = QApplication.primaryScreen()
+            if primary_screen is None:
+                return False
+            self._capture_id = next_capture_id
+            self.setGeometry(primary_screen.virtualGeometry())
+            self._preview_timer.invalidate()
+            self.show()
+            self.raise_()
+            self.activateWindow()
+            self.setFocus(Qt.FocusReason.ActiveWindowFocusReason)
+            self._emit_preview(QCursor.pos(), force=True)
+            return True
+
+        def mouseMoveEvent(self, event):
+            self._emit_preview(event.globalPosition().toPoint())
+            event.accept()
+
+        def mousePressEvent(self, event):
+            if event.button() != Qt.MouseButton.LeftButton:
+                event.accept()
+                return
+            capture_id = self._capture_id
+            if not capture_id:
+                event.accept()
+                return
+            position = event.globalPosition().toPoint()
+            self._emit_preview(position, force=True)
+            self._capture_id = ""
+            self.hide()
+            self.coordinate_selected.emit(capture_id, position.x(), position.y())
+            event.accept()
+
+        def keyPressEvent(self, event):
+            if event.key() == Qt.Key.Key_Escape and self._capture_id:
+                capture_id = self._capture_id
+                self._capture_id = ""
+                self.hide()
+                self.coordinate_cancelled.emit(capture_id)
+                event.accept()
+                return
+            super().keyPressEvent(event)
+
+        def _emit_preview(self, position, *, force=False):
+            if not self._capture_id:
+                return
+            if (
+                not force
+                and self._preview_timer.isValid()
+                and self._preview_timer.elapsed() < self._PREVIEW_INTERVAL_MS
+            ):
+                return
+            self._preview_timer.restart()
+            self.coordinate_preview.emit(self._capture_id, position.x(), position.y())
+
     app = QApplication.instance() or QApplication([])
     logger.info("[gui-startup] phase=app_ready elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     icon_dir = html_path.parent / "icons"
@@ -313,6 +395,7 @@ def run_webview_app(form_html_path, debug=False):
         app.setWindowIcon(QIcon(str(icon_path)))
 
     window = FramelessMainWindow()
+    window.setStyleSheet(f"QMainWindow {{ background: {WINDOW_FRAME_COLOR}; }}")
     window.setWindowFlag(Qt.WindowType.FramelessWindowHint, True)
     window.setWindowTitle("zizai")
     window.setMinimumSize(700, 700)
@@ -524,16 +607,12 @@ def run_webview_app(form_html_path, debug=False):
             window,
             "フローを開く",
             "",
-            "ziz flow (*.zizw *.zizd *.zizq)",
+            "ziz flow (*.zizd)",
         )
         return selected or None
 
     def pick_save_flow_dialog(mode, suggested_name, current_path=None):
-        suffix = {
-            "workflow": ".zizw",
-            "dataflow": ".zizd",
-            "query-builder": ".zizq",
-        }.get(str(mode or "").strip(), ".zizd")
+        suffix = ".zizd"
         default_name = suggested_name or f"フロー{suffix}"
         initial_target = ""
         if current_path:
@@ -549,7 +628,7 @@ def run_webview_app(form_html_path, debug=False):
             window,
             "フローを保存",
             initial_target,
-            "ziz flow (*.zizw *.zizd *.zizq)",
+            "ziz flow (*.zizd)",
         )
         if not selected:
             return None
@@ -575,9 +654,14 @@ def run_webview_app(form_html_path, debug=False):
             handle = window.windowHandle()
             if handle is not None and hasattr(handle, "startSystemMove"):
                 handle.startSystemMove()
-                return "dragging"
+            return "dragging"
             return "unsupported"
         return "unknown"
+
+    coordinate_capture_overlay = CoordinateCaptureOverlay()
+
+    def start_coordinate_capture(capture_id):
+        return coordinate_capture_overlay.begin(capture_id)
 
     runtime = BridgeRuntime(
         base_dir=html_path.parent.parent,
@@ -589,130 +673,39 @@ def run_webview_app(form_html_path, debug=False):
         open_flow_callback=pick_flow_dialog,
         save_flow_callback=pick_save_flow_dialog,
         window_control_callback=handle_window_control,
+        coordinate_capture_callback=start_coordinate_capture,
     )
     bridge = WebViewBridge(runtime)
 
-    class NativeEventRelay(QObject):
-        messageReady = Signal(str)
-
-    relay = NativeEventRelay()
-
-    def build_run_popup_text(message):
-        payload = message.get("payload") or {}
-        run_id = str(payload.get("run_id") or "")
-        try:
-            summary = runtime._handle_result_get_summary({"run_id": run_id}) if run_id else None
-        except Exception:
-            summary = None
-        flow_name = str((summary or {}).get("flow_name") or "フロー")
-        duration_ms = (summary or {}).get("duration_ms")
-        if message.get("type") == "run.completed":
-            duration_suffix = f"\n実行時間: {duration_ms} ms" if duration_ms is not None else ""
-            return "success", "実行完了", f"{flow_name} の実行が完了しました。{duration_suffix}"
-        error_message = str(((summary or {}).get("error") or {}).get("message") or "実行に失敗しました。")
-        return "error", "実行エラー", f"{flow_name} の実行に失敗しました。\n{error_message}"
-
-    def show_native_status_popup(kind, title, message_text):
-        dialog = QDialog(window)
-        dialog.setWindowTitle(title)
-        dialog.setModal(True)
-        dialog.resize(520, 220)
-        if icon_path.exists():
-            dialog.setWindowIcon(QIcon(str(icon_path)))
-
-        is_success = kind == "success"
-        accent = "#5865f2" if kind == "info" else ("#1f8f5f" if is_success else "#c9475c")
-        surface = "#f4f2ff" if kind == "info" else ("#eefaf4" if is_success else "#fff1f3")
-        icon_bg = "#efe9ff" if kind == "info" else ("#dff4e8" if is_success else "#ffe1e6")
-        button_bg = "#e5e0ff" if kind == "info" else ("#d8f2e4" if is_success else "#ffd9df")
-        icon_text = "✓" if is_success else "!"
-
-        root_layout = QVBoxLayout(dialog)
-        root_layout.setContentsMargins(18, 18, 18, 16)
-        root_layout.setSpacing(14)
-
-        content_layout = QHBoxLayout()
-        content_layout.setSpacing(14)
-
-        icon_label = QLabel(icon_text, dialog)
-        icon_label.setObjectName("nativeStatusIcon")
-        icon_label.setFixedSize(56, 56)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        content_layout.addWidget(icon_label, 0, Qt.AlignmentFlag.AlignTop)
-
-        body_layout = QVBoxLayout()
-        body_layout.setSpacing(6)
-
-        message_label = QLabel(message_text, dialog)
-        message_label.setObjectName("nativeStatusMessage")
-        message_label.setWordWrap(True)
-        body_layout.addWidget(message_label)
-
-        content_layout.addLayout(body_layout, 1)
-        root_layout.addLayout(content_layout)
-
-        actions_layout = QHBoxLayout()
-        actions_layout.addStretch(1)
-        ok_button = QPushButton("OK", dialog)
-        ok_button.setObjectName("nativeStatusOkButton")
-        ok_button.clicked.connect(dialog.accept)
-        actions_layout.addWidget(ok_button, 0, Qt.AlignmentFlag.AlignRight)
-        root_layout.addLayout(actions_layout)
-
-        dialog.setStyleSheet(
-            f"""
-            QDialog {{
-                background: {surface};
-                border: 1px solid #d8d3ee;
-                border-radius: 22px;
-            }}
-            QLabel#nativeStatusIcon {{
-                border-radius: 18px;
-                background: {icon_bg};
-                color: {accent};
-                font-size: 28px;
-                font-weight: 800;
-            }}
-            QLabel#nativeStatusMessage {{
-                color: #1f2937;
-                font-size: 14px;
-                line-height: 1.5;
-            }}
-            QPushButton#nativeStatusOkButton {{
-                min-width: 84px;
-                padding: 8px 16px;
-                border-radius: 999px;
-                border: 1px solid {accent};
-                background: {button_bg};
-                color: {accent};
-                font-weight: 700;
-            }}
-            """
-        )
-        dialog.exec()
-
-    @Slot(str)
-    def handle_native_event(raw_text):
-        try:
-            message = json.loads(str(raw_text or ""))
-        except Exception:
-            return
-        message_type = str(message.get("type") or "")
-        if message_type not in {"run.completed", "run.failed"}:
-            return
-        kind, title, text = build_run_popup_text(message)
-        show_native_status_popup(kind, title, text)
-
-    # 実行完了/失敗の通知はフロントエンド側(app.js)で統一表示する。
-    # ここでネイティブダイアログを出すと二重表示になるため無効化する。
-    # relay.messageReady.connect(handle_native_event)
-
-    def emit_event_to_frontend_and_native(message):
+    def emit_event_to_frontend(message):
         serialized = json.dumps(message, ensure_ascii=False)
         bridge.messageToFrontend.emit(serialized)
-        # relay.messageReady.emit(serialized)
 
-    runtime.set_event_sink(emit_event_to_frontend_and_native)
+    runtime.set_event_sink(emit_event_to_frontend)
+
+    def emit_coordinate_preview(capture_id, x, y):
+        runtime.emit_event("mouse.coordinateCapture.preview", {
+            "capture_id": capture_id,
+            "x": int(x),
+            "y": int(y),
+        })
+
+    def emit_coordinate_selected(capture_id, x, y):
+        runtime.emit_event("mouse.coordinateCapture.selected", {
+            "capture_id": capture_id,
+            "x": int(x),
+            "y": int(y),
+        })
+
+    def emit_coordinate_cancelled(capture_id):
+        runtime.emit_event("mouse.coordinateCapture.cancelled", {
+            "capture_id": capture_id,
+        })
+
+    coordinate_capture_overlay.coordinate_preview.connect(emit_coordinate_preview)
+    coordinate_capture_overlay.coordinate_selected.connect(emit_coordinate_selected)
+    coordinate_capture_overlay.coordinate_cancelled.connect(emit_coordinate_cancelled)
+    app.aboutToQuit.connect(coordinate_capture_overlay.close)
 
     channel = QWebChannel(page)
     channel.registerObject("backendBridge", bridge)

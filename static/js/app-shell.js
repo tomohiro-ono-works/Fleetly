@@ -5,8 +5,8 @@
 
   const page = body.dataset.shellPage || "home";
   const title = body.dataset.shellTitle || "トップ画面";
-  const isDataflow = page === "dataflow" && new URLSearchParams(window.location.search).get("mode") === "dataflow";
-  const isFlowLayoutPage = page === "workflow" || page === "dataflow";
+  const isDataflow = page === "dataflow";
+  const isFlowLayoutPage = page === "dataflow";
   const disablePrimaryActions = page === "settings";
   const embeddedMode = new URLSearchParams(window.location.search).get("embedded") === "1";
   const urls = {
@@ -24,6 +24,11 @@
   function renderSidebar() {
     return `
       <aside class="sidebar" aria-label="主要ナビゲーション">
+        <div class="sidebar-top">
+          <button id="sidebarToggle" class="sidebar-toggle sidebar-home-btn" type="button" aria-label="トップ画面へ戻る" aria-expanded="false" aria-controls="sidebarNav" title="トップ画面へ戻る">
+            <span class="sidebar-toggle-icon"><img src="./icons/ziz_one.svg" alt="" /></span>
+          </button>
+        </div>
         <nav id="sidebarNav" class="sidebar-nav">
           <button class="sidebar-item" data-sidebar-action="project-select" title="プロジェクト選択"><span class="sidebar-item-icon"><img src="./icons/launch_project.svg" alt="" /></span><span class="sidebar-item-label">プロジェクト選択</span></button>
           <button class="sidebar-item" data-sidebar-action="explorer" title="エクスプローラー"><span class="sidebar-item-icon"><img src="./icons/folder_open.svg" alt="" /></span><span class="sidebar-item-label">エクスプローラー</span></button>
@@ -35,23 +40,14 @@
     `;
   }
 
-  function renderHeader() {
+  function renderWindowActions() {
     return `
-      <header>
-        <div class="header-inner">
-          <div class="header-left">
-            <button id="sidebarToggle" class="header-action-btn header-icon-btn header-home-btn" type="button" aria-label="トップ画面へ戻る" aria-expanded="false" aria-controls="sidebarNav" title="トップ画面へ戻る">
-              <img src="./icons/ziz_one.svg" alt="" />
-            </button>
-          </div>
-          <div class="actions">
-            <button id="btnDiagnostics" class="header-action-btn header-icon-btn" type="button" aria-label="診断" title="診断"><img src="./icons/healthcheck.svg" alt="" /></button>
-            <button id="btnWindowMinimize" class="header-action-btn header-icon-btn" type="button" aria-label="最小化" title="最小化"><img src="./icons/small.svg" alt="" /></button>
-            <button id="btnWindowMaximize" class="header-action-btn header-icon-btn window-control-btn" type="button" aria-label="拡大" title="拡大"><img src="./icons/middle.svg" alt="" /></button>
-            <button id="btnWindowClose" class="header-action-btn header-icon-btn window-control-btn is-close" type="button" aria-label="閉じる" title="閉じる"><img src="./icons/closel.svg" alt="" /></button>
-          </div>
-        </div>
-      </header>
+      <div class="shell-window-actions" id="shellWindowActions" aria-label="ウィンドウ操作">
+        <button id="btnDiagnostics" class="header-action-btn header-icon-btn" type="button" aria-label="診断" title="診断"><img src="./icons/healthcheck.svg" alt="" /></button>
+        <button id="btnWindowMinimize" class="header-action-btn header-icon-btn" type="button" aria-label="最小化" title="最小化"><img src="./icons/small.svg" alt="" /></button>
+        <button id="btnWindowMaximize" class="header-action-btn header-icon-btn window-control-btn" type="button" aria-label="拡大" title="拡大"><img src="./icons/middle.svg" alt="" /></button>
+        <button id="btnWindowClose" class="header-action-btn header-icon-btn window-control-btn is-close" type="button" aria-label="閉じる" title="閉じる"><img src="./icons/closel.svg" alt="" /></button>
+      </div>
     `;
   }
 
@@ -74,7 +70,7 @@
       body.classList.add("embedded-mode");
       shell.innerHTML = `<div class="app-main"></div>${renderRightSidebar()}`;
     } else {
-      shell.innerHTML = `${renderHeader()}${renderSidebar()}<div class="app-main"></div>${renderRightSidebar()}`;
+      shell.innerHTML = `${renderSidebar()}${renderWindowActions()}<div class="app-main"></div>${renderRightSidebar()}`;
     }
     const appMain = shell.querySelector(".app-main");
     if (appMain) {
@@ -91,7 +87,6 @@
     body,
     appShell: document.querySelector(".app-shell"),
     appMain: document.querySelector(".app-shell > .app-main"),
-    header: document.querySelector(".app-shell > header"),
     sidebarToggle: document.getElementById("sidebarToggle"),
     sidebarModeItems: Array.from(document.querySelectorAll("[data-app-mode]")),
     sidebarActionItems: Array.from(document.querySelectorAll("[data-sidebar-action]")),
@@ -105,7 +100,6 @@
     btnWindowMinimize: document.getElementById("btnWindowMinimize"),
     btnWindowMaximize: document.getElementById("btnWindowMaximize"),
     btnWindowClose: document.getElementById("btnWindowClose"),
-    headerInner: document.querySelector(".header-inner"),
     rightSidebar: document.getElementById("rightSidebar"),
     rightSidebarToggle: document.getElementById("rightSidebarToggle"),
     rightSidebarNav: document.getElementById("rightSidebarNav"),
@@ -115,7 +109,7 @@
   };
 
   function syncShellMetrics() {
-    const headerHeight = Math.max(0, Math.round(refs.header?.offsetHeight || 0));
+    const headerHeight = 0;
     body.style.setProperty("--shell-header-height", `${headerHeight}px`);
     body.style.setProperty("--shell-content-height", `${Math.max(0, window.innerHeight - headerHeight)}px`);
   }
@@ -312,11 +306,12 @@
     if (refs.btnWindowMinimize) refs.btnWindowMinimize.onclick = (event) => callbacks.onWindowControl?.({ event, item: refs.btnWindowMinimize, action: "minimize" });
     if (refs.btnWindowMaximize) refs.btnWindowMaximize.onclick = (event) => callbacks.onWindowControl?.({ event, item: refs.btnWindowMaximize, action: "maximize" });
     if (refs.btnWindowClose) refs.btnWindowClose.onclick = (event) => callbacks.onWindowControl?.({ event, item: refs.btnWindowClose, action: "close" });
-    if (refs.headerInner) {
-      refs.headerInner.onmousedown = (event) => {
+    const dragRegion = document.getElementById("workspaceTabHeader");
+    if (dragRegion) {
+      dragRegion.onmousedown = (event) => {
         callbacks.onHeaderDrag?.({
           event,
-          item: refs.headerInner,
+          item: dragRegion,
           isInteractiveTarget: !!event.target.closest("button, input, select, textarea, a, label"),
         });
       };

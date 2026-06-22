@@ -59,7 +59,7 @@
   const STICKY_NOTE_DEFAULT_W = 224;
   const STICKY_NOTE_DEFAULT_H = 128;
   const STICKY_NOTE_GRID_SIZE = 32;
-  const STICKY_NOTE_COLORS = ["#ebebf2", "#fce672", "#ff1665", "#a220b6", "#5e1ef6", "#1a807d"];
+  const STICKY_NOTE_COLORS = ["#fbfbff", "#fff8c7", "#ffe8f0", "#f7e8fb", "#f1ecff", "#e7fbf8"];
   const STICKY_NOTE_HANDLE_SIZE = 14;
   const STICKY_TOOLBAR_MARGIN = 10;
 

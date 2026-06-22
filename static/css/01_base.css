@@ -6,8 +6,9 @@
 body {
   --sidebar-width: 52px;
   --app-gutter: 12px;
-  --shell-header-height: 44px;
+  --shell-header-height: 0px;
   --shell-content-height: calc(100vh - var(--shell-header-height));
+  --shell-window-actions-width: 168px;
   --right-sidebar-width: 400px;
   margin: 0;
   min-height: 100vh;
@@ -24,21 +25,30 @@ body {
   width: 100%;
 }
 
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  border: 1px solid var(--surface-sidebar);
+  pointer-events: none;
+}
+
+body.embedded-mode::after {
+  display: none;
+}
+
 .app-shell {
   min-height: 100vh;
   display: grid;
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, 1fr);
-  grid-template-areas:
-    "header header"
-    "sidebar main";
+  grid-template-rows: minmax(0, 1fr);
+  grid-template-areas: "sidebar main";
 }
 
 .app-shell--with-right-sidebar {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) var(--right-sidebar-width);
-  grid-template-areas:
-    "header header header"
-    "sidebar main right";
+  grid-template-areas: "sidebar main right";
 }
 
 body.embedded-mode .app-shell {
@@ -53,10 +63,6 @@ body.embedded-mode.right-sidebar-collapsed .app-shell {
 
 body.right-sidebar-collapsed .app-shell--with-right-sidebar {
   grid-template-columns: var(--sidebar-width) minmax(0, 1fr) 0px;
-}
-
-.app-shell > header {
-  grid-area: header;
 }
 
 .app-shell > .sidebar {

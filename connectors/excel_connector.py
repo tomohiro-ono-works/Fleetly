@@ -1,4 +1,5 @@
 import os
+import time
 from datetime import datetime, date
 from typing import Any
 
@@ -177,6 +178,7 @@ class ExcelConnector(BaseConnector):
         usecols = self._resolve_usecols_from_schema_origin(schema)
 
         try:
+            read_started = time.perf_counter()
             df = pd.read_excel(
                 normalized_path,
                 sheet_name=target_sheet,
@@ -185,6 +187,19 @@ class ExcelConnector(BaseConnector):
                 dtype=object,
                 engine="openpyxl",
                 usecols=usecols,
+            )
+            read_elapsed_ms = round((time.perf_counter() - read_started) * 1000, 1)
+            self.log_performance("run.connector.library.finish", {
+                "connector": "excel_connector",
+                "action": "read_excel",
+                "phase": "read_excel",
+                "library": "pandas/openpyxl",
+                "elapsed_ms": read_elapsed_ms,
+                "rows": len(df.index),
+                "cols": len(df.columns),
+            })
+            self.log_execution(
+                f"Excel pandas read elapsed_ms={read_elapsed_ms} rows={len(df.index)} cols={len(df.columns)}"
             )
         except ValueError as exc:
             message = str(exc)
@@ -202,14 +217,62 @@ class ExcelConnector(BaseConnector):
             str(column) if column is not None and not pd.isna(column) else f"col_{index}"
             for index, column in enumerate(df.columns)
         ]
+        normalize_started = time.perf_counter()
         normalized_df = df.apply(lambda col: col.map(self._normalize_excel_value))
-        date_serial_system = self._resolve_excel_serial_system(normalized_path)
+        normalize_elapsed_ms = round((time.perf_counter() - normalize_started) * 1000, 1)
+        self.log_performance("run.connector.phase.finish", {
+            "connector": "excel_connector",
+            "action": "read_excel",
+            "phase": "normalize",
+            "elapsed_ms": normalize_elapsed_ms,
+            "rows": len(normalized_df.index),
+            "cols": len(normalized_df.columns),
+        })
+        self.log_execution(f"Excel normalize elapsed_ms={normalize_elapsed_ms}")
+
+        epoch_started = time.perf_counter()
+        date_serial_system = (
+            self._resolve_excel_serial_system(normalized_path)
+            if date_cleansing
+            else "excel_1900"
+        )
+        epoch_elapsed_ms = round((time.perf_counter() - epoch_started) * 1000, 1)
+        if date_cleansing:
+            self.log_performance("run.connector.phase.finish", {
+                "connector": "excel_connector",
+                "action": "read_excel",
+                "phase": "epoch_lookup",
+                "elapsed_ms": epoch_elapsed_ms,
+                "date_serial_system": date_serial_system,
+            })
+            self.log_execution(f"Excel epoch lookup elapsed_ms={epoch_elapsed_ms} system={date_serial_system}")
+        else:
+            self.log_performance("run.connector.phase.skipped", {
+                "connector": "excel_connector",
+                "action": "read_excel",
+                "phase": "epoch_lookup",
+                "elapsed_ms": epoch_elapsed_ms,
+                "reason": "date_cleansing=False",
+            })
+            self.log_execution("Excel epoch lookup skipped date_cleansing=False")
+
+        schema_started = time.perf_counter()
         result = self.attach_dataframe_schema(
             normalized_df,
             schema_override=schema,
             date_serial_system=date_serial_system,
             date_cleansing=date_cleansing,
         )
+        schema_elapsed_ms = round((time.perf_counter() - schema_started) * 1000, 1)
+        self.log_performance("run.connector.phase.finish", {
+            "connector": "excel_connector",
+            "action": "read_excel",
+            "phase": "schema_apply",
+            "elapsed_ms": schema_elapsed_ms,
+            "rows": len(result.index),
+            "cols": len(result.columns),
+        })
+        self.log_execution(f"Excel schema apply elapsed_ms={schema_elapsed_ms}")
         self.log_date_parse_metrics(result)
         return result
 

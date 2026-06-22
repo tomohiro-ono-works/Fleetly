@@ -11,7 +11,7 @@ WORKFLOW_DIR = BASE_DIR / "workflows"
 TEMPLATE_DIR = BASE_DIR / "template"
 CONFIG_DIR = BASE_DIR / "config"
 RECENT_FLOWS_FILE = CONFIG_DIR / "recent_flows.json"
-FLOW_EXTENSIONS = (".zizw", ".zizd", ".zizq")
+FLOW_EXTENSIONS = (".zizd",)
 
 
 def has_flow_extension(path: str) -> bool:
@@ -23,6 +23,8 @@ def list_flows_local():
     for entry in load_recent_flows():
         path = str(entry.get("path") or "").strip()
         if not path:
+            continue
+        if not has_flow_extension(path):
             continue
         normalized = os.path.abspath(path)
         items.append({
@@ -165,7 +167,7 @@ $targetFolders = $targetFolders | Where-Object { $_ } | Select-Object -Unique
 $results = foreach ($folder in $targetFolders) {
     if (Test-Path $folder) {
         Get-ChildItem -Path $folder -File -ErrorAction SilentlyContinue |
-            Where-Object { $_.Extension -in @('.zizw', '.zizd', '.zizq') } |
+            Where-Object { $_.Extension -in @('.zizd') } |
             ForEach-Object {
                 [PSCustomObject]@{
                     path = $_.FullName

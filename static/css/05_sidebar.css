@@ -10,10 +10,12 @@
   display: flex;
   flex-direction: column;
   gap: 10px;
-  background: #292941;
+  background: var(--surface-sidebar);
   border-right: 1px solid var(--border-default);
-  box-shadow: var(--shadow-soft-weak);
-  backdrop-filter: blur(18px);
+  box-shadow: none;
+  backdrop-filter: none;
+  contain: paint;
+  isolation: isolate;
   z-index: 80;
 }
 
@@ -202,8 +204,9 @@
   align-items: stretch;
   background: #e3e3f3;
   border-left: 1px solid var(--border-default);
-  box-shadow: var(--shadow-soft-weak);
-  backdrop-filter: blur(18px);
+  box-shadow: none;
+  backdrop-filter: none;
+  isolation: isolate;
   z-index: 80;
   overflow: hidden;
 }

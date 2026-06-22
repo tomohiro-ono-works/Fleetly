@@ -6,15 +6,14 @@
   const shell = window.zizWorkspaceShell || null;
   if (!bridge || !shell) return;
 
-  const STORAGE_KEY = 'ziz.workspace.state.v1';
   const STORAGE_KEY_PENDING_SIDEBAR_ACTION = 'ziz.workspace.pendingSidebarAction.v1';
   const RECENT_ROOTS_CONFIG_SCOPE = 'config';
   const RECENT_ROOTS_CONFIG_PATH = 'recent_roots.json';
   const FILE_ICON_MAP_CONFIG_PATH = 'file_icon_map.json';
   const MAX_OPEN_TABS = 4;
   const MAX_RECENT_ROOTS = 10;
-  const TEXT_EXTENSIONS = new Set(['.md', '.sql', '.py', '.zizd', '.zizw', '.zizq']);
-  const FLOW_EXTENSIONS = new Set(['.zizd', '.zizw', '.zizq']);
+  const TEXT_EXTENSIONS = new Set(['.md', '.sql', '.py', '.zizd']);
+  const FLOW_EXTENSIONS = new Set(['.zizd']);
   const DEFAULT_FILE_ICON_MAP = {
     default: './icons/block.svg',
     csv: './img/CSVConnector.jpg',
@@ -36,24 +35,18 @@
       workspaceLocked: false,
       recentRoots: [],
     },
-    paneStore: {
-      activePane: 'left',
-      splitRatio: 0.62,
-      panes: {
-        left: { tabs: [], activeTabId: '' },
-        right: { tabs: [], activeTabId: '' },
-      },
-    },
+    tabOrder: [],
+    activeTabId: '',
     tabStore: {},
   };
 
-  let persistTimer = 0;
   let contextMenuEl = null;
   let explorerContextMenuEl = null;
   let lockOverlayEl = null;
   let lockWatchdogTimer = 0;
   let fileIconMap = { ...DEFAULT_FILE_ICON_MAP };
   let runningFlowTabId = '';
+  let draggedTabId = '';
 
   function getShellApi() {
     return window.zizShell || {};
@@ -101,30 +94,20 @@
   }
 
   function allTabs() {
-    return Object.values(state.tabStore);
-  }
-
-  function managedTabs() {
-    return allTabs().filter((tab) => tab.kind === 'text');
-  }
-
-  function managedTabsForRootChange() {
-    return allClosableTabs().filter((tab) => tab && (tab.kind === 'text' || tab.kind === 'dataflow'));
-  }
-
-  function activePaneState() {
-    return state.paneStore.panes[state.paneStore.activePane];
+    return state.tabOrder.map((tabId) => getTab(tabId)).filter(Boolean);
   }
 
   function activeTab() {
-    const pane = activePaneState();
-    return getTab(pane?.activeTabId || '');
+    return getTab(state.activeTabId || '');
   }
 
-  function getPaneActiveTab(paneKey) {
-    const pane = state.paneStore.panes[paneKey === 'right' ? 'right' : 'left'];
-    if (!pane) return null;
-    return getTab(pane.activeTabId || '');
+  function addTab(tab, orderIndex) {
+    state.tabStore[tab.id] = tab;
+    const index = Number.isInteger(orderIndex)
+      ? Math.max(0, Math.min(orderIndex, state.tabOrder.length))
+      : state.tabOrder.length;
+    state.tabOrder.splice(index, 0, tab.id);
+    activateTab(tab.id);
   }
 
   function allClosableTabs() {
@@ -282,51 +265,6 @@
       ]);
     } finally {
       if (timerId) window.clearTimeout(timerId);
-    }
-  }
-
-  function schedulePersist() {
-    if (persistTimer) window.clearTimeout(persistTimer);
-    persistTimer = window.setTimeout(() => {
-      persistTimer = 0;
-      persistWorkspaceState();
-    }, 120);
-  }
-
-  function persistWorkspaceState() {
-    const tabs = managedTabs()
-      .filter((tab) => !tab.dirty)
-      .map((tab) => ({
-        scope: tab.scope,
-        relPath: tab.relPath,
-        pane: tab.pane,
-        lastFocusedAt: Number(tab.lastFocusedAt) || 0,
-      }))
-      .sort((a, b) => a.lastFocusedAt - b.lastFocusedAt);
-    const payload = {
-      rootPath: state.globalStore.workspaceRoot,
-      recentRoots: Array.isArray(state.globalStore.recentRoots)
-        ? state.globalStore.recentRoots.slice(0, MAX_RECENT_ROOTS)
-        : [],
-      splitRatio: state.paneStore.splitRatio,
-      activePane: state.paneStore.activePane,
-      tabs,
-    };
-    try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
-    } catch (_) {
-      // ignore
-    }
-  }
-
-  function readPersistedState() {
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      return parsed && typeof parsed === 'object' ? parsed : null;
-    } catch (_) {
-      return null;
     }
   }
 
@@ -581,166 +519,59 @@
     }
   }
 
-  function clearWorkspaceSessionCache() {
-    try {
-      window.localStorage.removeItem(STORAGE_KEY);
-    } catch (_) {
-      // ignore
-    }
-    try {
-      window.sessionStorage.removeItem(STORAGE_KEY_PENDING_SIDEBAR_ACTION);
-    } catch (_) {
-      // ignore
-    }
-  }
-
-  function setPaneRatio(ratio) {
-    const value = Math.max(0.2, Math.min(0.8, Number(ratio) || 0.62));
-    state.paneStore.splitRatio = value;
-    shell.panes.style.setProperty('--workspace-left-ratio', `${Math.round(value * 1000) / 10}%`);
-  }
-
-  function hasRightPaneTabs() {
-    const rightPane = state.paneStore.panes.right;
-    return !!(rightPane && Array.isArray(rightPane.tabs) && rightPane.tabs.length);
-  }
-
-  function syncPaneVisibility() {
-    const split = hasRightPaneTabs();
-    shell.panes.classList.toggle('is-split', split);
-    shell.panes.classList.toggle('is-single-pane', !split);
-    if (shell.rightPane) shell.rightPane.hidden = !split;
-    if (shell.splitter) shell.splitter.hidden = !split;
-    if (!split) {
-      state.paneStore.activePane = 'left';
-      shell.leftPane?.classList.add('is-active');
-      shell.rightPane?.classList.remove('is-active');
-    }
-  }
-
-  function sanitizePaneTabs() {
-    const validIds = new Set(Object.keys(state.tabStore));
-    const seen = new Set();
-    ['left', 'right'].forEach((paneKey) => {
-      const pane = state.paneStore.panes[paneKey];
-      if (!pane) return;
-      const nextTabs = [];
-      (pane.tabs || []).forEach((tabId) => {
-        const key = String(tabId || '');
-        if (!key || !validIds.has(key) || seen.has(key)) return;
-        seen.add(key);
-        nextTabs.push(key);
-        const tab = getTab(key);
-        if (tab) tab.pane = paneKey;
-      });
-      pane.tabs = nextTabs;
-      if (!pane.tabs.includes(pane.activeTabId)) {
-        pane.activeTabId = pane.tabs.length ? pane.tabs[pane.tabs.length - 1] : '';
-      }
-    });
-  }
-
-  function setActivePane(paneKey) {
-    let key = paneKey === 'right' ? 'right' : 'left';
-    if (key === 'right' && !hasRightPaneTabs()) {
-      key = 'left';
-    }
-    state.paneStore.activePane = key;
-    shell.leftPane.classList.toggle('is-active', key === 'left');
-    shell.rightPane.classList.toggle('is-active', key === 'right');
-    renderTabs();
-    syncPaneHeaders();
-    schedulePersist();
-  }
-
-  function ensurePaneActiveTab(paneKey) {
-    const pane = state.paneStore.panes[paneKey];
-    if (!pane) return;
-    if (!pane.tabs.length) {
-      pane.activeTabId = '';
-      return;
-    }
-    if (!pane.activeTabId || !pane.tabs.includes(pane.activeTabId)) {
-      pane.activeTabId = pane.tabs[pane.tabs.length - 1];
-    }
-  }
-
   function mountTabViews() {
-    sanitizePaneTabs();
-    syncPaneVisibility();
-    const split = hasRightPaneTabs();
-    ['left', 'right'].forEach((paneKey) => {
-      const pane = state.paneStore.panes[paneKey];
-      const body = paneKey === 'left' ? shell.leftPaneBody : shell.rightPaneBody;
-      if (!pane || !body) return;
-      body.querySelectorAll('.workspace-pane-empty').forEach((row) => row.remove());
+    const body = shell.paneBody;
+    if (!body) return;
+    body.querySelectorAll('.workspace-pane-empty').forEach((row) => row.remove());
 
-      pane.tabs.forEach((tabId) => {
-        const tab = getTab(tabId);
-        if (!tab || !tab.viewEl) return;
-        if (tab.viewEl.parentElement !== body) {
-          body.appendChild(tab.viewEl);
-        }
-        const active = tab.id === pane.activeTabId;
-        tab.viewEl.hidden = !active;
-        tab.viewEl.classList.toggle('is-active', active);
+    state.tabOrder.forEach((tabId) => {
+      const tab = getTab(tabId);
+      if (!tab || !tab.viewEl) return;
+      if (tab.viewEl.parentElement !== body) {
+        body.appendChild(tab.viewEl);
+      }
+      const active = tab.id === state.activeTabId;
+      tab.viewEl.hidden = !active;
+      tab.viewEl.classList.toggle('is-active', active);
+    });
+
+    if (!state.tabOrder.length) {
+      const empty = document.createElement('div');
+      empty.className = 'workspace-pane-empty';
+      empty.setAttribute('aria-label', 'ファイル未選択時の案内');
+
+      const logo = document.createElement('img');
+      logo.className = 'workspace-pane-empty__logo';
+      logo.src = './icons/ziz_one.svg';
+      logo.alt = '';
+      logo.setAttribute('aria-hidden', 'true');
+
+      const message = document.createElement('div');
+      message.className = 'workspace-pane-empty__message';
+      [
+        '・左のサイドバーからファイルを選択できます',
+        '・左のサイドバーで右クリックすると、メニューがでます。'
+      ].forEach((text) => {
+        const line = document.createElement('div');
+        line.textContent = text;
+        message.appendChild(line);
       });
 
-      if (!pane.tabs.length && (paneKey === 'left' || split)) {
-        const empty = document.createElement('div');
-        empty.className = 'workspace-pane-empty';
-        empty.textContent = 'ファイルがありません';
-        body.appendChild(empty);
-      }
-    });
+      empty.appendChild(logo);
+      empty.appendChild(message);
+      body.appendChild(empty);
+    }
   }
 
-  function setTabLastActive(tabId) {
+  function activateTab(tabId) {
     const tab = getTab(tabId);
     if (!tab) return;
-    tab.lastFocusedAt = Date.now();
-    schedulePersist();
-  }
-
-  function activateTab(tabId, paneOverride) {
-    const tab = getTab(tabId);
-    if (!tab) return;
-    const previousActive = activeTab();
-    if (previousActive && previousActive.id !== tab.id) {
-      setTabLastActive(previousActive.id);
-    }
-    const paneKey = paneOverride || tab.pane || 'left';
-    const pane = state.paneStore.panes[paneKey];
-    if (!pane) return;
-    const otherPaneKey = paneKey === 'left' ? 'right' : 'left';
-    const otherPane = state.paneStore.panes[otherPaneKey];
-    if (otherPane) {
-      otherPane.tabs = otherPane.tabs.filter((id) => id !== tabId);
-      if (otherPane.activeTabId === tabId) {
-        otherPane.activeTabId = otherPane.tabs.length ? otherPane.tabs[otherPane.tabs.length - 1] : '';
-      }
-    }
-    if (!pane.tabs.includes(tabId)) pane.tabs.push(tabId);
-    pane.activeTabId = tabId;
-    tab.pane = paneKey;
-    sanitizePaneTabs();
-    setActivePane(paneKey);
-    ensurePaneActiveTab('left');
-    ensurePaneActiveTab('right');
+    state.activeTabId = tabId;
     mountTabViews();
     renderTabs();
     if (isFlowTab(tab)) {
       syncGlobalFlowNameInput(tab);
       void ensureFlowTabLoaded(tab);
-    }
-  }
-
-  function removeTabFromPane(tabId, paneKey) {
-    const pane = state.paneStore.panes[paneKey];
-    if (!pane) return;
-    pane.tabs = pane.tabs.filter((id) => id !== tabId);
-    if (pane.activeTabId === tabId) {
-      pane.activeTabId = pane.tabs.length ? pane.tabs[pane.tabs.length - 1] : '';
     }
   }
 
@@ -757,7 +588,6 @@
       };
       logSaveTrace('saveTab.request', {
         tab_id: tab.id,
-        pane: tab.pane,
         scope: payload.scope,
         rel_path: payload.rel_path,
         expected_mtime_ns: payload.expected_mtime_ns,
@@ -775,7 +605,6 @@
       tab.mtimeNs = normalizeMtimeNs(result?.mtime_ns) || tab.mtimeNs || '';
       tab.dirty = false;
       renderTabs();
-      schedulePersist();
       return true;
     } catch (error) {
       const normalized = normalizeError(error);
@@ -840,7 +669,6 @@
         tab.__suppressEditorInputSync = false;
       }
       renderTabs();
-      schedulePersist();
       return true;
     } catch (error) {
       const normalized = normalizeError(error);
@@ -865,8 +693,11 @@
       }
     }
 
-    removeTabFromPane(tab.id, 'left');
-    removeTabFromPane(tab.id, 'right');
+    const tabIndex = state.tabOrder.indexOf(tab.id);
+    if (tabIndex >= 0) state.tabOrder.splice(tabIndex, 1);
+    if (state.activeTabId === tab.id) {
+      state.activeTabId = state.tabOrder[tabIndex] || state.tabOrder[tabIndex - 1] || '';
+    }
     if (isFlowTab(tab) && tab.iframeEl) {
       if (bridge?.available?.()) {
         try {
@@ -888,19 +719,12 @@
     }
     if (runningFlowTabId === tab.id) runningFlowTabId = '';
     delete state.tabStore[tab.id];
-    ensurePaneActiveTab('left');
-    ensurePaneActiveTab('right');
-    if (!state.paneStore.panes[state.paneStore.activePane].tabs.length) {
-      const fallback = state.paneStore.panes.left.tabs.length ? 'left' : 'right';
-      setActivePane(fallback);
-    }
     mountTabViews();
     renderTabs();
     const nextActive = activeTab();
     if (isFlowTab(nextActive)) {
       void ensureFlowTabLoaded(nextActive);
     }
-    schedulePersist();
     return true;
   }
 
@@ -941,8 +765,7 @@
     });
 
     textarea.addEventListener('focus', () => {
-      setTabLastActive(tab.id);
-      if (tab.pane) setActivePane(tab.pane);
+      if (state.activeTabId !== tab.id) activateTab(tab.id);
     });
 
     toolbar.addEventListener('click', async (event) => {
@@ -987,32 +810,21 @@
   }
 
   async function ensureTabCapacity() {
-    const openTabs = allClosableTabs();
-    if (openTabs.length < MAX_OPEN_TABS) return true;
-
-    const sorted = openTabs
-      .slice()
-      .filter((tab) => !isTabRunning(tab.id))
-      .sort((a, b) => (a.lastFocusedAt || 0) - (b.lastFocusedAt || 0));
-    if (!sorted.length) {
+    if (allClosableTabs().length < MAX_OPEN_TABS) return true;
+    const tab = allClosableTabs().slice().reverse().find((item) => !isTabRunning(item.id));
+    if (!tab) {
       showMessage('実行中タブ以外を閉じられないため、新しいタブを開けません。', { kind: 'warning', title: '上限到達' });
       return false;
     }
-
-    for (let i = 0; i < sorted.length; i += 1) {
-      const candidate = sorted[i];
-      if (candidate.kind === 'text' && candidate.dirty) {
-        const decision = await askSaveDecision(candidate);
-        if (decision === 'cancel') return false;
-        if (decision === 'save') {
-          const saved = await saveTab(candidate.id);
-          if (!saved) return false;
-        }
+    if (tab.kind === 'text' && tab.dirty) {
+      const decision = await askSaveDecision(tab);
+      if (decision === 'cancel') return false;
+      if (decision === 'save') {
+        const saved = await saveTab(tab.id);
+        if (!saved) return false;
       }
-      const closed = await requestTabClose(candidate.id, { skipPrompt: true });
-      if (closed) return true;
     }
-    return false;
+    return requestTabClose(tab.id, { skipPrompt: true });
   }
 
   function normalizeTabId(scope, relPath) {
@@ -1192,7 +1004,7 @@
     const tabId = normalizeTabId(normalizedScope, normalizedRelPath);
     const existing = getTab(tabId);
     if (existing) {
-      activateTab(tabId, options.pane || existing.pane || state.paneStore.activePane);
+      activateTab(tabId);
       return true;
     }
 
@@ -1206,7 +1018,6 @@
         scope: normalizedScope,
         rel_path: normalizedRelPath,
       });
-      const paneKey = options.pane === 'right' ? 'right' : (options.pane === 'left' ? 'left' : state.paneStore.activePane);
       const tab = {
         id: tabId,
         kind: 'text',
@@ -1214,19 +1025,12 @@
         scope: normalizedScope,
         relPath: normalizedRelPath,
         dirty: false,
-        pane: paneKey,
-        lastFocusedAt: Number(options.lastFocusedAt || Date.now()),
         closable: true,
         content: String(result?.content || ''),
         mtimeNs: normalizeMtimeNs(result?.mtime_ns),
       };
       tab.viewEl = createTextView(tab);
-      state.tabStore[tab.id] = tab;
-      const pane = state.paneStore.panes[paneKey];
-      pane.tabs.push(tab.id);
-      pane.activeTabId = tab.id;
-      activateTab(tab.id, paneKey);
-      schedulePersist();
+      addTab(tab, options.orderIndex);
       return true;
     } catch (error) {
       const normalized = normalizeError(error);
@@ -1307,7 +1111,7 @@
     const tabId = normalizeFlowTabId(normalizedScope, normalizedRelPath);
     const existing = getTab(tabId);
     if (existing) {
-      activateTab(existing.id, options.pane || existing.pane || state.paneStore.activePane);
+      activateTab(existing.id);
       return true;
     }
     let preloadedFlowPayload = null;
@@ -1325,7 +1129,6 @@
       const ok = await ensureTabCapacity();
       if (!ok) return false;
     }
-    const paneKey = options.pane === 'right' ? 'right' : (options.pane === 'left' ? 'left' : state.paneStore.activePane);
     const fallbackTab = activeTab();
     const name = stripExtension(normalizedRelPath.split('/').pop() || normalizedRelPath || 'Dataflow');
     const tab = {
@@ -1335,8 +1138,6 @@
       scope: normalizedScope,
       relPath: normalizedRelPath,
       dirty: false,
-      pane: paneKey,
-      lastFocusedAt: Number(options.lastFocusedAt || Date.now()),
       closable: true,
       viewEl: null,
       iframeEl: null,
@@ -1354,13 +1155,27 @@
       flowFallbackTabId: String(fallbackTab?.id || ''),
     };
     createFlowView(tab);
-    state.tabStore[tab.id] = tab;
-    const pane = state.paneStore.panes[paneKey];
-    pane.tabs.push(tab.id);
-    pane.activeTabId = tab.id;
-    activateTab(tab.id, paneKey);
-    schedulePersist();
+    addTab(tab, options.orderIndex);
     return true;
+  }
+
+  function openWorkspaceFile(scope, relPath, options = {}) {
+    const extension = `.${fileExtensionFromPath(relPath)}`;
+    return FLOW_EXTENSIONS.has(extension)
+      ? openFlowFile(scope, relPath, options)
+      : openTextFile(scope, relPath, options);
+  }
+
+  function moveTab(tabId, targetTabId, afterTarget) {
+    if (!tabId || tabId === targetTabId) return;
+    const sourceIndex = state.tabOrder.indexOf(tabId);
+    if (sourceIndex < 0) return;
+    state.tabOrder.splice(sourceIndex, 1);
+    const targetIndex = state.tabOrder.indexOf(targetTabId);
+    if (targetIndex < 0) return;
+    state.tabOrder.splice(targetIndex + (afterTarget ? 1 : 0), 0, tabId);
+    mountTabViews();
+    renderTabs();
   }
 
   function renderTabs() {
@@ -1368,34 +1183,20 @@
     if (!host) return;
     host.innerHTML = '';
 
-    sanitizePaneTabs();
-    const orderedTabIds = [
-      ...(state.paneStore.panes.left?.tabs || []),
-      ...(state.paneStore.panes.right?.tabs || []),
-    ];
-    const seen = new Set();
-    const tabs = orderedTabIds
-      .map((tabId) => getTab(tabId))
-      .filter((tab) => {
-        if (!tab || seen.has(tab.id)) return false;
-        seen.add(tab.id);
-        return true;
-      });
-    tabs.forEach((tab) => {
+    allTabs().forEach((tab) => {
       const button = document.createElement('button');
       button.type = 'button';
       button.className = 'workspace-tab';
-      if (tab.id === state.paneStore.panes[tab.pane]?.activeTabId && tab.pane === state.paneStore.activePane) {
+      button.draggable = true;
+      if (tab.id === state.activeTabId) {
         button.classList.add('is-active');
       }
       button.dataset.tabId = tab.id;
-      button.dataset.pane = tab.pane;
       const title = tabDisplayName(tab);
       const iconPath = resolveTabIconPath(tab);
       button.innerHTML = [
         `<img class="workspace-tab__file-icon" src="${iconPath}" alt="" aria-hidden="true" />`,
         `<span class="workspace-tab__title">${title}${tab.dirty ? ' ●' : ''}${isTabRunning(tab.id) ? ' (実行中)' : ''}</span>`,
-        `<span class="workspace-tab__pane">${tab.pane === 'right' ? 'R' : 'L'}</span>`,
         tab.closable ? '<span class="workspace-tab__close" role="button" aria-label="閉じる">×</span>' : ''
       ].join('');
       const icon = button.querySelector('.workspace-tab__file-icon');
@@ -1411,7 +1212,32 @@
       button.addEventListener('click', (event) => {
         const targetEl = event.target instanceof Element ? event.target : event.target?.parentElement;
         if (targetEl?.closest?.('.workspace-tab__close')) return;
-        activateTab(tab.id, tab.pane);
+        activateTab(tab.id);
+      });
+
+      button.addEventListener('dragstart', (event) => {
+        draggedTabId = tab.id;
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', tab.id);
+        }
+      });
+
+      button.addEventListener('dragover', (event) => {
+        if (!draggedTabId || draggedTabId === tab.id) return;
+        event.preventDefault();
+        if (event.dataTransfer) event.dataTransfer.dropEffect = 'move';
+      });
+
+      button.addEventListener('drop', (event) => {
+        event.preventDefault();
+        const sourceTabId = draggedTabId || event.dataTransfer?.getData('text/plain');
+        const bounds = button.getBoundingClientRect();
+        moveTab(sourceTabId, tab.id, event.clientX >= bounds.left + (bounds.width / 2));
+      });
+
+      button.addEventListener('dragend', () => {
+        draggedTabId = '';
       });
 
       button.addEventListener('contextmenu', (event) => {
@@ -1430,7 +1256,6 @@
 
       host.appendChild(button);
     });
-    syncPaneHeaders();
   }
 
   function getGlobalHeaderButton(action) {
@@ -1457,66 +1282,21 @@
     }
   }
 
-  function updatePaneHeaderFor(paneKey) {
-    const isRight = paneKey === 'right';
-    const input = isRight ? shell.rightPaneTitleInput : shell.leftPaneTitleInput;
-    const dirtyMark = isRight ? shell.rightPaneDirtyMark : shell.leftPaneDirtyMark;
-    const head = isRight ? shell.rightPaneHead : shell.leftPaneHead;
-    if (!input || !head) return;
-    const tab = getPaneActiveTab(paneKey);
-    const isActivePane = state.paneStore.activePane === paneKey;
-    input.value = tab ? tabDisplayName(tab) : '';
-    input.placeholder = tab ? '' : 'ファイルがありません';
-    input.disabled = !tab;
-    input.readOnly = !!tab;
-    input.setAttribute('data-pane-current-tab', tab?.id || '');
-    if (dirtyMark) {
-      dirtyMark.classList.toggle('is-visible', !!(tab && tab.dirty));
-    }
-    head.querySelectorAll('button[data-pane-action]').forEach((button) => {
-      const action = String(button.getAttribute('data-pane-action') || '');
-      let disabled = !tab;
-      if (action === 'run' || action === 'undo' || action === 'redo' || action === 'import') {
-        disabled = disabled || !isFlowTab(tab) || !isActivePane || !!runningFlowTabId;
-      }
-      if (action === 'save') {
-        disabled = disabled || !!(tab && isTabRunning(tab.id));
-      }
-      button.disabled = !!disabled;
-      button.setAttribute('aria-disabled', disabled ? 'true' : 'false');
-    });
-  }
-
-  function syncPaneHeaders() {
-    updatePaneHeaderFor('left');
-    updatePaneHeaderFor('right');
-  }
-
-  function renameTabDisplay(tabId, nextName) {
-    const tab = getTab(tabId);
-    if (!tab) return false;
-    // 名前はファイル名基準で単一管理するため、UIからの任意変更は受け付けない。
-    syncPaneHeaders();
-    return false;
-  }
-
-  async function invokePaneAction(paneKey, action) {
+  async function invokeTabAction(tabId, action) {
     try {
-      const tab = getPaneActiveTab(paneKey);
-      logSaveTrace('invokePaneAction.enter', {
-        pane: paneKey,
+      const tab = getTab(tabId);
+      logSaveTrace('invokeTabAction.enter', {
         action: String(action || ''),
-        active_tab_id: tab?.id || '',
-        active_tab_kind: tab?.kind || '',
+        tab_id: tab?.id || '',
+        tab_kind: tab?.kind || '',
       });
       if (!tab) return false;
-      activateTab(tab.id, paneKey);
+      activateTab(tab.id);
       if (action === 'save') {
         if (tab.kind === 'text') return saveTab(tab.id);
         const api = getFlowTabApi(tab);
-        logSaveTrace('invokePaneAction.flow.save.call', {
+        logSaveTrace('invokeTabAction.flow.save.call', {
           tab_id: tab.id,
-          pane: paneKey,
           has_api: !!api,
           has_save_flow: !!api?.saveFlow,
           scope: tab.scope,
@@ -1524,9 +1304,8 @@
         });
         if (!api?.saveFlow) return false;
         const result = await api.saveFlow();
-        logSaveTrace('invokePaneAction.flow.save.response', {
+        logSaveTrace('invokeTabAction.flow.save.response', {
           tab_id: tab.id,
-          pane: paneKey,
           saved: !(result && result.saved === false),
           raw_saved: result?.saved,
           raw_message: result?.message || '',
@@ -1552,19 +1331,16 @@
         if (runningFlowTabId && runningFlowTabId !== tab.id) return false;
         if (runningFlowTabId === tab.id) return false;
         runningFlowTabId = tab.id;
-        syncPaneHeaders();
         renderTabs();
         try {
           const result = await api.runFlow?.();
           if (!result || !result.run_id) {
             runningFlowTabId = '';
-            syncPaneHeaders();
             renderTabs();
           }
           return true;
         } catch (_) {
           runningFlowTabId = '';
-          syncPaneHeaders();
           renderTabs();
           throw _;
         }
@@ -1572,16 +1348,21 @@
       return false;
     } catch (error) {
       const normalized = normalizeError(error);
-      logSaveTrace('invokePaneAction.error', {
-        pane: paneKey,
+      logSaveTrace('invokeTabAction.error', {
+        tab_id: String(tabId || ''),
         action: String(action || ''),
         code: normalized.code,
         message: normalized.message,
       });
       showMessage(`操作に失敗しました。\n${normalized.message}`, { kind: 'error', title: 'エラー' });
-      logInfo('invokePaneAction failed', normalized);
+      logInfo('invokeTabAction failed', normalized);
       return false;
     }
+  }
+
+  function invokeActiveTabAction(action) {
+    const tab = activeTab();
+    return invokeTabAction(tab?.id || '', action);
   }
 
   function ensureContextMenu() {
@@ -1591,8 +1372,6 @@
     contextMenuEl.hidden = true;
     contextMenuEl.style.pointerEvents = 'none';
     contextMenuEl.innerHTML = [
-      '<button type="button" data-action="move-left">左ペインへ移動</button>',
-      '<button type="button" data-action="move-right">右ペインへ移動</button>',
       '<button type="button" data-action="close">閉じる</button>'
     ].join('');
     document.body.appendChild(contextMenuEl);
@@ -1612,36 +1391,9 @@
     contextMenuEl.style.pointerEvents = 'none';
   }
 
-  function moveTabToPane(tabId, targetPane) {
-    const tab = getTab(tabId);
-    if (!tab) return;
-    const nextPane = targetPane === 'right' ? 'right' : 'left';
-    if (tab.pane === nextPane) {
-      activateTab(tab.id, nextPane);
-      return;
-    }
-    const wasSplit = hasRightPaneTabs();
-    if (!wasSplit && nextPane === 'right') {
-      setPaneRatio(0.5);
-    }
-    activateTab(tab.id, nextPane);
-  }
-
   function showTabContextMenu(tab, x, y) {
     if (!tab || !tab.closable) return;
-    const totalTabCount = allTabs().length;
     const menu = ensureContextMenu();
-    const moveLeftButton = menu.querySelector('button[data-action="move-left"]');
-    const moveRightButton = menu.querySelector('button[data-action="move-right"]');
-    const allowMove = totalTabCount >= 2;
-    if (moveLeftButton) {
-      moveLeftButton.hidden = !allowMove;
-      moveLeftButton.disabled = !allowMove || tab.pane === 'left';
-    }
-    if (moveRightButton) {
-      moveRightButton.hidden = !allowMove;
-      moveRightButton.disabled = !allowMove || tab.pane === 'right';
-    }
     menu.hidden = false;
     menu.style.pointerEvents = 'auto';
     menu.style.left = `${Math.max(8, x)}px`;
@@ -1657,8 +1409,6 @@
       if (!button) return;
       const tabId = menu.dataset.tabId;
       const action = button.dataset.action;
-      if (action === 'move-left') moveTabToPane(tabId, 'left');
-      if (action === 'move-right') moveTabToPane(tabId, 'right');
       if (action === 'close') await requestTabClose(tabId);
       hideContextMenu();
     });
@@ -1818,11 +1568,7 @@
       content,
       force: false,
     });
-    if (meta.extension === '.zizd') {
-      await openFlowFile(targetScope, newRelPath);
-    } else {
-      await openTextFile(targetScope, newRelPath);
-    }
+    await openWorkspaceFile(targetScope, newRelPath);
   }
 
   async function createExplorerFolder(scope, relPath, kind) {
@@ -1887,11 +1633,7 @@
     if (dirtyTab) {
       throw new Error('対象ファイルに未保存の変更があります。先に保存してからリネームしてください。');
     }
-    const reopenPlans = openedTabs.map((tab) => ({
-      pane: tab.pane === 'right' ? 'right' : 'left',
-      lastFocusedAt: Number(tab.lastFocusedAt || Date.now()),
-      kind: String(tab.kind || 'text'),
-    }));
+    const reopenPlans = openedTabs.map((tab) => state.tabOrder.indexOf(tab.id));
     for (let i = 0; i < openedTabs.length; i += 1) {
       await requestTabClose(openedTabs[i].id, { skipPrompt: true });
     }
@@ -1911,23 +1653,11 @@
       rel_path: oldRelPath,
     });
 
-    const nextExt = `.${fileExtensionFromPath(nextRelPath)}`;
-    const isFlow = FLOW_EXTENSIONS.has(nextExt);
     for (let i = 0; i < reopenPlans.length; i += 1) {
-      const plan = reopenPlans[i];
-      if (isFlow) {
-        await openFlowFile(targetScope, nextRelPath, {
-          pane: plan.pane,
-          lastFocusedAt: plan.lastFocusedAt,
-          bypassLimit: true,
-        });
-      } else {
-        await openTextFile(targetScope, nextRelPath, {
-          pane: plan.pane,
-          lastFocusedAt: plan.lastFocusedAt,
-          bypassLimit: true,
-        });
-      }
+      await openWorkspaceFile(targetScope, nextRelPath, {
+        orderIndex: reopenPlans[i],
+        bypassLimit: true,
+      });
     }
   }
 
@@ -1993,29 +1723,23 @@
   }
 
   async function closeAllTabsOnRootChange() {
-    const tabs = allClosableTabs().slice().sort((a, b) => (a.lastFocusedAt || 0) - (b.lastFocusedAt || 0));
+    const tabs = allClosableTabs();
     for (let i = 0; i < tabs.length; i += 1) {
       const closed = await requestTabClose(tabs[i].id, { skipPrompt: true });
       if (!closed) return false;
     }
-    hardResetWorkspacePaneState();
+    hardResetWorkspaceTabState();
     return true;
   }
 
-  function hardResetWorkspacePaneState() {
+  function hardResetWorkspaceTabState() {
     state.tabStore = {};
+    state.tabOrder = [];
+    state.activeTabId = '';
     runningFlowTabId = '';
-    state.paneStore.panes.left.tabs = [];
-    state.paneStore.panes.left.activeTabId = '';
-    state.paneStore.panes.right.tabs = [];
-    state.paneStore.panes.right.activeTabId = '';
-    state.paneStore.activePane = 'left';
-    if (shell.leftPaneBody) shell.leftPaneBody.innerHTML = '';
-    if (shell.rightPaneBody) shell.rightPaneBody.innerHTML = '';
-    syncPaneVisibility();
+    if (shell.paneBody) shell.paneBody.innerHTML = '';
     mountTabViews();
     renderTabs();
-    syncPaneHeaders();
   }
 
   async function changeWorkspaceRootByPicker() {
@@ -2027,7 +1751,7 @@
       showMessage('実行中はルート変更できません。実行完了後に再実行してください。', { kind: 'warning', title: '実行中' });
       return;
     }
-    const dirtyTabs = managedTabsForRootChange().filter((tab) => tab.dirty).sort((a, b) => (a.lastFocusedAt || 0) - (b.lastFocusedAt || 0));
+    const dirtyTabs = allClosableTabs().filter((tab) => tab.dirty);
     const okToProceed = await confirmAndCloseDirtyTabs(dirtyTabs);
     if (!okToProceed) return;
     let payload = null;
@@ -2053,7 +1777,6 @@
       pushRecentRoot(state.globalStore.workspaceRoot, { skipScheduleSave: true });
       await flushRecentRootsSaveToConfig();
       await renderLeftArea({ skipRecentRootsReload: true });
-      schedulePersist();
     } catch (error) {
       const normalized = normalizeError(error);
       showMessage(`ルート変更に失敗しました。\n${normalized.message}`, { kind: 'error', title: 'ルート変更エラー' });
@@ -2071,7 +1794,7 @@
       showMessage('実行中はルート変更できません。実行完了後に再実行してください。', { kind: 'warning', title: '実行中' });
       return;
     }
-    const dirtyTabs = managedTabsForRootChange().filter((tab) => tab.dirty).sort((a, b) => (a.lastFocusedAt || 0) - (b.lastFocusedAt || 0));
+    const dirtyTabs = allClosableTabs().filter((tab) => tab.dirty);
     const okToProceed = await confirmAndCloseDirtyTabs(dirtyTabs);
     if (!okToProceed) return;
     try {
@@ -2083,7 +1806,6 @@
       pushRecentRoot(state.globalStore.workspaceRoot, { skipScheduleSave: true });
       await flushRecentRootsSaveToConfig();
       await renderLeftArea({ skipRecentRootsReload: true });
-      schedulePersist();
     } catch (error) {
       const normalized = normalizeError(error);
       showMessage(`ルート変更に失敗しました。\n${normalized.message}`, { kind: 'error', title: 'ルート変更エラー' });
@@ -2177,14 +1899,10 @@
     row.addEventListener('click', () => {
       const textExt = fileName.includes('.') ? `.${fileName.split('.').pop().toLowerCase()}` : '';
       if (!TEXT_EXTENSIONS.has(textExt)) {
-        showMessage('このファイル形式はエディタ対応外です。(.md/.sql/.py/.zizd/.zizw/.zizq のみ)', { kind: 'info', title: '未対応' });
+        showMessage('このファイル形式はエディタ対応外です。(.md/.sql/.py/.zizd のみ)', { kind: 'info', title: '未対応' });
         return;
       }
-      if (FLOW_EXTENSIONS.has(textExt)) {
-        void openFlowFile(scope, relPath);
-        return;
-      }
-      void openTextFile(scope, relPath);
+      void openWorkspaceFile(scope, relPath);
     });
     return row;
   }
@@ -2355,76 +2073,12 @@
     });
   }
 
-  function bindPaneInteractions() {
-    shell.leftPane?.addEventListener('mousedown', () => setActivePane('left'));
-    shell.rightPane?.addEventListener('mousedown', () => setActivePane('right'));
-
-    const splitter = shell.splitter;
-    if (!splitter) return;
-    let dragging = false;
-
-    splitter.addEventListener('mousedown', (event) => {
-      dragging = true;
-      document.body.style.userSelect = 'none';
-      event.preventDefault();
-    });
-
-    window.addEventListener('mousemove', (event) => {
-      if (!dragging) return;
-      const rect = shell.panes.getBoundingClientRect();
-      const ratio = (event.clientX - rect.left) / Math.max(1, rect.width);
-      setPaneRatio(ratio);
-      mountTabViews();
-    });
-
-    window.addEventListener('mouseup', () => {
-      if (!dragging) return;
-      dragging = false;
-      document.body.style.userSelect = '';
-      schedulePersist();
-    });
-  }
-
-  function bindPaneHeaderInteractions() {
-    const bindTitle = (paneKey, inputEl) => {
-      if (!inputEl) return;
-      inputEl.addEventListener('focus', () => {
-        setActivePane(paneKey);
-      });
-      inputEl.addEventListener('change', () => {
-        const tabId = String(inputEl.getAttribute('data-pane-current-tab') || '').trim();
-        if (!tabId) return;
-        const ok = renameTabDisplay(tabId, inputEl.value);
-        if (!ok) {
-          const tab = getTab(tabId);
-          inputEl.value = tab ? String(tab.name || '') : '';
-        }
-      });
-    };
-    bindTitle('left', shell.leftPaneTitleInput);
-    bindTitle('right', shell.rightPaneTitleInput);
-
-    const bindActions = (paneKey, headEl) => {
-      if (!headEl) return;
-      headEl.addEventListener('click', (event) => {
-        const button = event.target?.closest?.('button[data-pane-action]');
-        if (!button) return;
-        const action = String(button.getAttribute('data-pane-action') || '').trim();
-        if (!action) return;
-        void invokePaneAction(paneKey, action);
-      });
-    };
-    bindActions('left', shell.leftPaneHead);
-    bindActions('right', shell.rightPaneHead);
-  }
-
   function bindGlobalSaveShortcut() {
     const saveButton = document.getElementById('btnSave');
     if (saveButton) {
       saveButton.addEventListener('click', (event) => {
         const tab = activeTab();
         logSaveTrace('saveButton.click', {
-          active_pane: state.paneStore.activePane,
           active_tab_id: tab?.id || '',
           active_tab_kind: tab?.kind || '',
           running_tab_id: runningFlowTabId || '',
@@ -2436,7 +2090,7 @@
         }
         event.preventDefault();
         event.stopImmediatePropagation();
-        void invokePaneAction(state.paneStore.activePane, 'save');
+        void invokeActiveTabAction('save');
       }, true);
     }
 
@@ -2445,12 +2099,12 @@
       const key = String(event.key || '').toLowerCase();
       if (key === 's') {
         event.preventDefault();
-        void invokePaneAction(state.paneStore.activePane, 'save');
+        void invokeActiveTabAction('save');
         return;
       }
       if (key === 'enter') {
         event.preventDefault();
-        void invokePaneAction(state.paneStore.activePane, 'run');
+        void invokeActiveTabAction('run');
       }
     }, true);
   }
@@ -2475,7 +2129,6 @@
           runningFlowTabId = '';
         }
         renderTabs();
-        syncPaneHeaders();
         return;
       }
 
@@ -2497,7 +2150,7 @@
           if (fallbackTabId) {
             const fallback = getTab(fallbackTabId);
             if (fallback) {
-              activateTab(fallback.id, fallback.pane || 'left');
+              activateTab(fallback.id);
             }
           }
           void requestTabClose(tab.id, { skipPrompt: true });
@@ -2510,15 +2163,13 @@
         // （ファイル選択時の認知とタブ表示を一致させるため）
         tab.dirty = !!detail.dirty;
         renderTabs();
-        syncPaneHeaders();
         return;
       }
 
       if (type === 'shortcut') {
         const action = String(detail.action || '').trim();
         if (!action) return;
-        const paneKey = tab.pane === 'right' ? 'right' : 'left';
-        void invokePaneAction(paneKey, action);
+        void invokeTabAction(tab.id, action);
       }
     });
   }
@@ -2536,62 +2187,6 @@
     }
   }
 
-  async function restoreWorkspaceState() {
-    const persisted = readPersistedState();
-    if (!persisted) return;
-
-    const savedRootPath = String(persisted.rootPath || '').trim();
-    const savedRecentRoots = Array.isArray(persisted.recentRoots) ? persisted.recentRoots : [];
-    if (!Array.isArray(state.globalStore.recentRoots) || !state.globalStore.recentRoots.length) {
-      state.globalStore.recentRoots = normalizeRecentRootsList(savedRecentRoots);
-    }
-
-    if (!state.globalStore.workspaceRoot && savedRootPath) {
-      try {
-        const payload = await bridge.call('workspace.setRoot', { root_path: savedRootPath });
-        state.globalStore.workspaceRoot = String(payload?.root_path || '');
-        state.globalStore.configRoot = String(payload?.config_path || state.globalStore.configRoot || '');
-        if (state.globalStore.workspaceRoot) {
-          pushRecentRoot(state.globalStore.workspaceRoot);
-        }
-      } catch (error) {
-        logInfo('restore root skipped', normalizeError(error));
-      }
-    }
-
-    setPaneRatio(Number(persisted.splitRatio) || 0.62);
-    setActivePane(String(persisted.activePane || 'left') === 'right' ? 'right' : 'left');
-
-    const tabs = Array.isArray(persisted.tabs) ? persisted.tabs : [];
-    const limited = tabs.slice(-MAX_OPEN_TABS);
-    for (let i = 0; i < limited.length; i += 1) {
-      const item = limited[i] || {};
-      const scope = String(item.scope || 'root');
-      const relPath = String(item.relPath || '').replace(/\\/g, '/');
-      if (!relPath) continue;
-      const pane = String(item.pane || 'left') === 'right' ? 'right' : 'left';
-      const opened = await openTextFile(scope, relPath, {
-        pane,
-        bypassLimit: true,
-        lastFocusedAt: Number(item.lastFocusedAt || Date.now()),
-      });
-      if (!opened) {
-        logInfo('restore tab skipped', { scope, relPath });
-      }
-    }
-
-    mountTabViews();
-    renderTabs();
-  }
-
-  function bindBeforeUnload() {
-    const clearOnClose = () => {
-      clearWorkspaceSessionCache();
-    };
-    window.addEventListener('beforeunload', clearOnClose);
-    window.addEventListener('pagehide', clearOnClose);
-  }
-
   function exposeApi() {
     window.zizWorkspace = {
       openTextFile,
@@ -2606,16 +2201,11 @@
   async function init() {
     setWorkspaceLock(false);
     bindSidebarActions();
-    bindPaneInteractions();
-    bindPaneHeaderInteractions();
     bindContextMenuActions();
     bindExplorerContextMenuActions();
     bindWorkspaceRunEvents();
     bindGlobalSaveShortcut();
-    bindBeforeUnload();
 
-    setPaneRatio(state.paneStore.splitRatio);
-    setActivePane('left');
     mountTabViews();
     renderTabs();
     setLeftMode('');
@@ -2624,7 +2214,6 @@
     await loadRecentRootsFromConfig();
     await loadFileIconMapFromConfig();
     await initRoots();
-    await restoreWorkspaceState();
     const pendingAction = readAndClearPendingSidebarAction();
     if (pendingAction === 'project-select' || pendingAction === 'explorer') {
       setLeftMode(pendingAction);

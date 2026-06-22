@@ -10,6 +10,7 @@ class BaseConnector(ABC):
     def __init__(self) -> None:
         self._execution_logger = None
         self._execution_step_id = None
+        self._execution_perf_callback = None
 
     @staticmethod
     def normalize_file_path(file_path):
@@ -42,13 +43,27 @@ class BaseConnector(ABC):
             return [value]
         raise TypeError(f"レコード配列へ変換できない型です: {type(value).__name__}")
 
-    def set_execution_logger(self, logger, step_id: str | None = None) -> None:
+    def set_execution_logger(self, logger, step_id: str | None = None, perf_callback=None) -> None:
         self._execution_logger = logger
         self._execution_step_id = step_id
+        self._execution_perf_callback = perf_callback
 
     def clear_execution_logger(self) -> None:
         self._execution_logger = None
         self._execution_step_id = None
+        self._execution_perf_callback = None
+
+    def log_performance(self, event: str, payload: dict | None = None) -> None:
+        callback = self._execution_perf_callback
+        if not callable(callback):
+            return
+        detail = dict(payload or {})
+        if self._execution_step_id and "step_id" not in detail:
+            detail["step_id"] = self._execution_step_id
+        try:
+            callback(str(event or ""), detail)
+        except Exception:
+            return
 
     @staticmethod
     def attach_dataframe_schema(

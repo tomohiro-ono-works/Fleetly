@@ -14,18 +14,6 @@ const CONFIG = {
   version: 3,
 
   modes: {
-    // dataflow: {
-    //   id: "dataflow",
-    //   label: "ワークフロー",
-    //   defaultFlowName: "ワークフロー１",
-    //   fileExtension: ".zizw",
-    //     connectorIds: [
-
-    //       "ExcelConnector",
-    //       "WindowsConnector",
-    //       "WebConnector",
-    //     ]
-    // },
     dataflow: {
       id: "dataflow",
       label: "データフロー",
@@ -47,25 +35,12 @@ const CONFIG = {
           "PythonConnector",
           "DataintegrationConnector",
           "VectorConnector",
+          "ShellConnector",
           "WindowsConnector",
-          "WebConnector",
+          "SeleniumConnector",
+          "ChromeConnector",
           "PlotlyConnector"
         ]
-    },
-    "query-builder": {
-      id: "query-builder",
-      label: "クエリビルダー",
-      defaultFlowName: "クエリビルダー１",
-      fileExtension: ".zizq",
-      nodeDefaults: {
-        initialConnectorId: "BQConnector",
-        initialActionId: "execute_sql",
-        preferredConnectorId: "BQConnector",
-        preferredActionId: "execute_sql"
-      },
-      connectorIds: [
-        "BQConnector"
-      ]
     }
   },
 
@@ -75,7 +50,9 @@ const CONFIG = {
     { id: "ExcelConnector",           label: "Excel", exportId: "excel_connector"},
     { id: "CSVConnector",             label: "CSV", exportId: "csv_connector"},
     { id: "PythonConnector",          label: "Python実行", exportId: "python_connector"},
-    { id: "WebConnector",             label: "Web操作", exportId: "web_connector", icon: "./icons/web.svg"},
+    { id: "ShellConnector",           label: "Shell", exportId: "shell_connector", icon: "./icons/code.svg"},
+    { id: "SeleniumConnector",        label: "Selenium", exportId: "selenium_connector", icon: "./img/SeleniumConnector.jpg"},
+    { id: "ChromeConnector",          label: "Chrome", exportId: "chrome_connector", icon: "./icons/web.svg"},
     { id: "WindowsConnector",             label: "Windows操作", exportId: "windows_connector"},
 
     { id: "PlotlyConnector",          label: "Plotly", exportId: "plotly_connector" },
@@ -149,7 +126,11 @@ const CONFIG = {
       { id: "rename_and_move_file", label: "ファイル名変更＆移動", rpaType: "Transform" },
       { id: "search_files_by_name", label: "ファイル名検索", rpaType: "Extract" },
       { id: "search_text_in_files", label: "ファイル内の文字列検索", rpaType: "Extract" },
-      { id: "create_markdown_file", label: "マークダウンを作成", rpaType: "Load" }
+      { id: "create_markdown_file", label: "マークダウンを作成", rpaType: "Load" },
+      { id: "mouse_click", label: "マウスクリック", rpaType: "Transform" },
+      { id: "input_text", label: "文字列入力", rpaType: "Transform" },
+      { id: "send_keys", label: "キー入力", rpaType: "Transform" },
+      { id: "wait", label: "待機", rpaType: "Transform" }
     ],
     DataintegrationConnector: [
       { id: "replace_fields_forrenamelist", label: "フィールド名をRENAMEリストから変更" , rpaType: "Transform"},
@@ -162,12 +143,15 @@ const CONFIG = {
       { id: "embedding_vector_db", label: "ベクトルDB構築" , rpaType: "Load"},
       { id: "search_vector_db", label: "ベクトル検索" , rpaType: "Extract"}
     ],
-    WebConnector: [
+    SeleniumConnector: [
       { id: "navigate", label: "ページを開く/遷移", rpaType: "Transform" },
       { id: "dom_action", label: "DOM操作", rpaType: "Transform" },
       { id: "dom_get", label: "DOM取得", rpaType: "Extract" },
       { id: "wait", label: "待機", rpaType: "Transform" },
       { id: "screenshot", label: "スクリーンショット", rpaType: "Load" }
+    ],
+    ChromeConnector: [
+      { id: "open_in_chrome", label: "Chrome でページを開く", rpaType: "Transform" }
     ],
     PythonConnector: [
       { id: "execute_python", label: "Python実行" , rpaType: "Transform"}
@@ -222,6 +206,24 @@ const CONFIG = {
       { key:"db_file", label:"DBファイル", kind:"file", required:true, accept:".duckdb,.db,.ddb" },
       { key:"input_data", label:"step", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
       { key:"table_name", label:"テーブル名", kind:"text", required:true, allowVars:true, default:"table1" }
+    ],
+
+    "VectorConnector.embedding_vector_db": [
+      { key:"db_folder", label:"ベクトルDB保存先", kind:"dir", required:true },
+      { key:"collection_name", label:"コレクション名", kind:"text", required:true, default:"default", allowVars:true },
+      { key:"input_data", label:"入力データ", kind:"text", required:true, allowVars:true, placeholder:"例: {{step1}}" },
+      { key:"id_column", label:"ID列名", kind:"text", required:true, default:"id", allowVars:true },
+      { key:"text_column", label:"テキスト列名", kind:"text", required:true, default:"text", allowVars:true },
+      { key:"model_name", label:"埋め込みモデル", kind:"text", required:false, default:"cl-nagoya/ruri-v3-30m", allowVars:true }
+    ],
+
+    "VectorConnector.search_vector_db": [
+      { key:"db_folder", label:"ベクトルDB保存先", kind:"dir", required:true },
+      { key:"collection_name", label:"コレクション名", kind:"text", required:true, default:"default", allowVars:true },
+      { key:"query_text", label:"検索テキスト", kind:"textarea", required:true, allowVars:true },
+      { key:"top_k", label:"取得件数", kind:"number", required:true, default:5, allowVars:true },
+      { key:"include_vector", label:"ベクトルを含める", kind:"combo", required:true, default:"false", options:["false","true"] },
+      { key:"model_name", label:"埋め込みモデル", kind:"text", required:false, default:"cl-nagoya/ruri-v3-30m", allowVars:true }
     ],
 
     "CSVConnector.read_csv": [
@@ -423,14 +425,54 @@ const CONFIG = {
       { key:"content", label:"入力内容", kind:"textarea", required:true, allowVars:true, placeholder:"{{step1.field_name}} で step の1行目を参照できます。" }
     ],
 
-      "WebConnector.navigate": [
+    "WindowsConnector.mouse_click": [
+      { key:"coordinate_mode", label:"座標指定", kind:"combo", required:true, default:"specified", allowCustom:false, options:[
+        { value:"current", label:"現在座標" },
+        { value:"specified", label:"座標を指定する" }
+      ]},
+      { key:"x", label:"X 座標", kind:"number", required:true, allowVars:true, placeholder:"例: 640", visible_if:{ key:"coordinate_mode", in:["specified", ""] } },
+      { key:"y", label:"Y 座標", kind:"number", required:true, allowVars:true, placeholder:"例: 480", visible_if:{ key:"coordinate_mode", in:["specified", ""] } },
+      { key:"coordinate_picker", label:"マウスで指定する", kind:"mouse-coordinate-picker", x_key:"x", y_key:"y", visible_if:{ key:"coordinate_mode", in:["specified", ""] } },
+      { key:"button", label:"ボタン", kind:"combo", required:true, default:"left", allowCustom:false, options:[
+        { value:"left", label:"左クリック" },
+        { value:"right", label:"右クリック" }
+      ]},
+      { key:"click_count", label:"クリック回数", kind:"combo", required:true, default:"1", allowCustom:false, options:[
+        { value:"1", label:"1 回" },
+        { value:"2", label:"2 回（ダブルクリック）" }
+      ]}
+    ],
+
+    "WindowsConnector.input_text": [
+      { key:"input_mode", label:"入力モード", kind:"combo", required:true, default:"replace", allowCustom:false, options:[
+        { value:"replace", label:"置換（全選択して入力）" },
+        { value:"append", label:"追記" }
+      ]},
+      { key:"text", label:"入力文字列", kind:"textarea", required:true, allowVars:true }
+    ],
+
+    "WindowsConnector.send_keys": [
+      { key:"modifier_keys", label:"修飾キー", kind:"checklist", required:false, options:[
+        { value:"ctrl", label:"Ctrl" },
+        { value:"shift", label:"Shift" },
+        { value:"alt", label:"Alt" }
+      ]},
+      { key:"key", label:"キー", kind:"text", required:true, allowVars:true, placeholder:"例: A, 1, ENTER, F5" },
+      { key:"wait_seconds", label:"送信後待機 (秒)", kind:"number", required:false, default:0, min:0, allowVars:true }
+    ],
+
+    "WindowsConnector.wait": [
+      { key:"duration_seconds", label:"待機時間 (秒)", kind:"number", required:true, default:1, min:0, max:600, allowVars:true }
+    ],
+
+      "SeleniumConnector.navigate": [
         { key:"url", label:"URL", kind:"text", required:true, allowVars:true, placeholder:"例: https://example.com" },
         { key:"tab_mode", label:"タブモード", kind:"combo", required:true, default:"reuse_or_new", options:["current","new","reuse","reuse_or_new"] },
         { key:"headless", label:"ヘッドレス実行", kind:"checkbox", required:false, default:false },
         { key:"wait_until", label:"遷移待機", kind:"combo", required:true, default:"none", options:["none","load","domcontentloaded","networkidle"] },
         { key:"timeout_ms", label:"タイムアウト(ms)", kind:"number", required:false, default:10000, min:1000 }
       ],
-      "WebConnector.dom_action": [
+      "SeleniumConnector.dom_action": [
         { key:"source_step_id", label:"参照ステップ", kind:"text", required:false, allowVars:true, placeholder:"例: step6" },
         { key:"operation", label:"操作種別", kind:"combo", required:true, default:"click", options:["click","input","select","check","uncheck","key","scroll"] },
         { key:"selector_type", label:"セレクタ種別", kind:"combo", required:false, default:"css", options:["css","xpath","text"], visible_if:{ key:"operation", in:["click","input","select","check","uncheck","scroll"] } },
@@ -446,7 +488,7 @@ const CONFIG = {
         { key:"amount", label:"スクロール量", kind:"number", required:false, default:800, min:1, visible_if:{ key:"operation", equals:"scroll" } },
         { key:"timeout_ms", label:"タイムアウト(ms)", kind:"number", required:false, default:10000, min:1000 }
       ],
-      "WebConnector.dom_get": [
+      "SeleniumConnector.dom_get": [
         { key:"source_step_id", label:"参照ステップ", kind:"text", required:false, allowVars:true, placeholder:"例: step6" },
         { key:"get_type", label:"取得種別", kind:"combo", required:true, default:"text", options:["html","text","value","attribute","count"] },
         { key:"selector_type", label:"セレクタ種別", kind:"combo", required:false, default:"css", options:["css","xpath","text"] },
@@ -455,7 +497,7 @@ const CONFIG = {
         { key:"all", label:"複数要素を取得", kind:"checkbox", required:false, default:false },
         { key:"outer", label:"outerHTML取得", kind:"checkbox", required:false, default:false, visible_if:{ key:"get_type", equals:"html" } }
       ],
-      "WebConnector.wait": [
+      "SeleniumConnector.wait": [
         { key:"source_step_id", label:"参照ステップ", kind:"text", required:false, allowVars:true, placeholder:"例: step6" },
         { key:"until", label:"待機条件", kind:"combo", required:true, default:"selector_visible", options:["selector_visible","selector_hidden","selector_attached","selector_detached","url_contains","url_equals","url_regex","load","sleep"] },
         { key:"selector_type", label:"セレクタ種別", kind:"combo", required:false, default:"css", options:["css","xpath","text"], visible_if:{ key:"until", in:["selector_visible","selector_hidden","selector_attached","selector_detached"] } },
@@ -465,13 +507,16 @@ const CONFIG = {
         { key:"ms", label:"待機時間(ms)", kind:"number", required:true, default:1000, min:1, visible_if:{ key:"until", equals:"sleep" } },
         { key:"timeout_ms", label:"タイムアウト(ms)", kind:"number", required:false, default:10000, min:1000 }
       ],
-      "WebConnector.screenshot": [
+      "SeleniumConnector.screenshot": [
         { key:"source_step_id", label:"参照ステップ", kind:"text", required:false, allowVars:true, placeholder:"例: step6" },
         { key:"path", label:"保存先パス", kind:"text", required:true, allowVars:true, default:"./workflows/web_screenshot.png", placeholder:"例: ./workflows/web_screenshot.png" },
         { key:"target", label:"対象", kind:"combo", required:true, default:"page", options:["page","element"] },
         { key:"selector_type", label:"セレクタ種別", kind:"combo", required:false, default:"css", options:["css","xpath","text"], visible_if:{ key:"target", equals:"element" } },
         { key:"selector", label:"セレクタ", kind:"text", required:true, allowVars:true, visible_if:{ key:"target", equals:"element" } },
         { key:"full_page", label:"ページ全体を撮影", kind:"checkbox", required:false, default:true, visible_if:{ key:"target", equals:"page" } }
+      ],
+      "ChromeConnector.open_in_chrome": [
+        { key:"url", label:"URL", kind:"text", required:true, allowVars:true, placeholder:"例: https://example.com" }
       ],
   }
 };

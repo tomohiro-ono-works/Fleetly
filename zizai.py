@@ -10,14 +10,31 @@ BASE_DIR = Path(__file__).resolve().parent
 HOME_HTML_PATH = BASE_DIR / "static" / "home.html"
 
 
+HELP_TEXT = """COMMAND NAME
+  ziz - zizai launcher
+
+SYNOPSIS
+  ziz [--debug]
+  ziz [flow_path]
+
+DESCRIPTION
+  GUI を起動します。
+  flow_path に .zizd ファイルを指定した場合は、ヘッドレス実行します。
+
+OPTION
+  -h, --help  このヘルプを表示します。
+  --debug     Qt WebEngine の DevTools を有効化します。
+"""
+
+
 def parse_args():
-    parser = argparse.ArgumentParser(description="zizai launcher")
+    parser = argparse.ArgumentParser(prog="ziz", add_help=False)
+    parser.add_argument("-h", "--help", action="store_true", dest="show_help")
     parser.add_argument(
         "flow_path",
         nargs="?",
-        help="実行対象の .zizw/.zizd/.zizq ファイル。指定時はヘッドレス実行します。",
     )
-    parser.add_argument("--debug", action="store_true", help="Qt WebEngine の DevTools を有効化します。")
+    parser.add_argument("--debug", action="store_true")
     return parser.parse_args()
 
 
@@ -35,6 +52,9 @@ def run_headless(flow_path: str) -> int:
 def main():
     setup_logger()
     args = parse_args()
+    if args.show_help:
+        print(HELP_TEXT)
+        return 0
     if args.flow_path:
         return run_headless(args.flow_path)
 

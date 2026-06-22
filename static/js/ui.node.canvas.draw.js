@@ -85,102 +85,6 @@
     ctx.fill();
   }
 
-  function getRoundedRectPerimeter(width, height, radius) {
-    return ((width - radius * 2) * 2) + ((height - radius * 2) * 2) + (Math.PI * 2 * radius);
-  }
-
-  function getRoundedRectPoint(x, y, width, height, radius, distance) {
-    const straightW = width - radius * 2;
-    const straightH = height - radius * 2;
-    const arcLen = (Math.PI * radius) / 2;
-    const perimeter = getRoundedRectPerimeter(width, height, radius) || 1;
-    let d = distance % perimeter;
-    if (d < 0) d += perimeter;
-
-    const segments = [
-      { len: straightW, point: (t) => ({ x: x + radius + t, y, angle: 0 }) },
-      {
-        len: arcLen,
-        point: (t) => {
-          const a = (-Math.PI / 2) + (t / arcLen) * (Math.PI / 2);
-          return {
-            x: x + width - radius + Math.cos(a) * radius,
-            y: y + radius + Math.sin(a) * radius,
-            angle: a + Math.PI / 2
-          };
-        }
-      },
-      { len: straightH, point: (t) => ({ x: x + width, y: y + radius + t, angle: Math.PI / 2 }) },
-      {
-        len: arcLen,
-        point: (t) => {
-          const a = (t / arcLen) * (Math.PI / 2);
-          return {
-            x: x + width - radius + Math.cos(a) * radius,
-            y: y + height - radius + Math.sin(a) * radius,
-            angle: a + Math.PI / 2
-          };
-        }
-      },
-      { len: straightW, point: (t) => ({ x: x + width - radius - t, y: y + height, angle: Math.PI }) },
-      {
-        len: arcLen,
-        point: (t) => {
-          const a = (Math.PI / 2) + (t / arcLen) * (Math.PI / 2);
-          return {
-            x: x + radius + Math.cos(a) * radius,
-            y: y + height - radius + Math.sin(a) * radius,
-            angle: a + Math.PI / 2
-          };
-        }
-      },
-      { len: straightH, point: (t) => ({ x, y: y + height - radius - t, angle: -Math.PI / 2 }) },
-      {
-        len: arcLen,
-        point: (t) => {
-          const a = Math.PI + (t / arcLen) * (Math.PI / 2);
-          return {
-            x: x + radius + Math.cos(a) * radius,
-            y: y + radius + Math.sin(a) * radius,
-            angle: a + Math.PI / 2
-          };
-        }
-      }
-    ];
-
-    for (const segment of segments) {
-      if (d <= segment.len) return segment.point(d);
-      d -= segment.len;
-    }
-    return segments[0].point(0);
-  }
-
-  function drawRunningOrbit(ctx, node, color, animationNow) {
-    const orbitPadding = 6;
-    const orbitX = node.x - orbitPadding;
-    const orbitY = node.y - orbitPadding;
-    const orbitW = NODE_W + orbitPadding * 2;
-    const orbitH = NODE_H + orbitPadding * 2;
-    const orbitR = 12;
-    const perimeter = getRoundedRectPerimeter(orbitW, orbitH, orbitR);
-    const segmentLength = Math.max(48, Math.min(96, perimeter * 0.32));
-    const progress = ((animationNow % 1400) / 1400) * perimeter;
-    const headPoint = getRoundedRectPoint(orbitX, orbitY, orbitW, orbitH, orbitR, progress + segmentLength);
-
-    ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.setLineDash([segmentLength, perimeter]);
-    ctx.lineDashOffset = -progress;
-    drawRoundedRect(ctx, orbitX, orbitY, orbitW, orbitH, orbitR);
-    ctx.stroke();
-    ctx.setLineDash([]);
-    drawArrowHead(ctx, headPoint.x, headPoint.y, headPoint.angle, 6, color);
-    ctx.restore();
-  }
-
   function wrapNoteText(ctx, text, maxWidth) {
     const source = String(text || "");
     if (!source) return [];
@@ -594,10 +498,14 @@
     const { canvas, ctx } = view;
     const rawDpr = window.devicePixelRatio || 1;
     const dpr = Math.max(1, Math.ceil(rawDpr));
-    canvas.width = Math.floor(model.width * dpr);
-    canvas.height = Math.floor(model.height * dpr);
-    canvas.style.width = `${model.width}px`;
-    canvas.style.height = `${model.height}px`;
+    const canvasWidth = Math.floor(model.width * dpr);
+    const canvasHeight = Math.floor(model.height * dpr);
+    if (canvas.width !== canvasWidth) canvas.width = canvasWidth;
+    if (canvas.height !== canvasHeight) canvas.height = canvasHeight;
+    const styleWidth = `${model.width}px`;
+    const styleHeight = `${model.height}px`;
+    if (canvas.style.width !== styleWidth) canvas.style.width = styleWidth;
+    if (canvas.style.height !== styleHeight) canvas.style.height = styleHeight;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = "high";
@@ -613,7 +521,8 @@
     const flowSelectedNodeAccent = "#5e1ef6";
     const flowSelectedEdgeAccent = "#4c4f64";
     const flowNodeBorder = rootStyles.getPropertyValue("--flow-node-border").trim() || "#9aa5b6";
-    const flowNodeStatusRunning = "#5e1ef6";
+    const flowNodeStatusRunning = "#2563eb";
+    const flowNodeStatusSuccess = rootStyles.getPropertyValue("--brand-650").trim() || "#18c79a";
     const flowNodeStatusError = "#ef475a";
     const flowNodeShadow = rootStyles.getPropertyValue("--flow-node-shadow").trim()
       || rootStyles.getPropertyValue("--alpha-shadow-10").trim()
@@ -704,7 +613,6 @@
     );
 
     const nodesToDraw = [model.start, ...model.taskViews, ...(model.loopEndViews || [])];
-    let hasRunningAnimation = false;
     const draggingNodeIdSet = new Set((view.dragState && Array.isArray(view.dragState.nodeIds))
       ? view.dragState.nodeIds
       : (view.dragState?.nodeId ? [view.dragState.nodeId] : []));
@@ -716,24 +624,24 @@
       const isSelected = (isTask || isStart) && selectedNodeIdSet.has(node.id);
       const isDraggingNode = !!(view.dragState && view.dragState.started && draggingNodeIdSet.has(node.id));
       const hasAlert = isTask && alertNodeIds.has(node.id);
-      const stepStatus = isTask ? String((state.stepStatuses && state.stepStatuses[node.nodeRef.stepName]) || "") : "";
-      if (stepStatus === "running") hasRunningAnimation = true;
+      const stepStatus = isTask ? String((state.stepStatuses && state.stepStatuses[node.nodeRef.stepName]) || "").trim().toLowerCase() : "";
+      const isSuccessStatus = stepStatus === "success" || stepStatus === "ok" || stepStatus === "completed";
+      const isErrorStatus = stepStatus === "error" || stepStatus === "failed";
+      const statusLabel =
+        stepStatus === "running" ? "Running" :
+        isSuccessStatus ? "Success" :
+        isErrorStatus ? "ERROR" : "";
       const statusStrokeColor =
         stepStatus === "running" ? flowNodeStatusRunning :
-        stepStatus === "error" ? flowNodeStatusError : "";
+        isSuccessStatus ? flowNodeStatusSuccess :
+        isErrorStatus ? flowNodeStatusError : "";
       const statusStrokeWidth =
-        stepStatus === "running" || stepStatus === "error" ? 3.4 : 0;
+        statusLabel ? 3.4 : 0;
       const pseudoNodeInset = isStart || isEnd ? 9 : 0;
       const drawX = node.x + pseudoNodeInset;
       const drawY = node.y + pseudoNodeInset;
       const drawW = NODE_W - pseudoNodeInset * 2;
       const drawH = NODE_H - pseudoNodeInset * 2;
-      const animationNow = typeof view.animationNow === "number" ? view.animationNow : performance.now();
-
-      if (isTask && stepStatus === "running") {
-        drawRunningOrbit(ctx, node, flowNodeStatusRunning, animationNow);
-      }
-
       ctx.setLineDash([]);
       ctx.fillStyle = isStart || isEnd ? surfacePseudo : surfacePage;
       ctx.globalAlpha = isDraggingNode ? 0.28 : 1;
@@ -779,6 +687,22 @@
         ctx.textAlign = "center";
         ctx.textBaseline = "middle";
         ctx.fillText(badgeText, bx + bw / 2, by + bh / 2);
+        ctx.textBaseline = "alphabetic";
+      }
+
+      if (statusLabel) {
+        ctx.font = "700 10px 'Segoe UI', 'Yu Gothic UI', sans-serif";
+        const statusWidth = Math.ceil(ctx.measureText(statusLabel).width) + 12;
+        const statusHeight = 17;
+        const statusX = Math.round(node.x + NODE_W - 4);
+        const statusY = Math.round(node.y - statusHeight - 2);
+        ctx.fillStyle = statusStrokeColor;
+        drawRoundedRect(ctx, statusX, statusY, statusWidth, statusHeight, 8);
+        ctx.fill();
+        ctx.fillStyle = surfacePage;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(statusLabel, statusX + statusWidth / 2, statusY + statusHeight / 2);
         ctx.textBaseline = "alphabetic";
       }
 
@@ -879,7 +803,7 @@
       }
     }
 
-    view.hasRunningAnimation = hasRunningAnimation;
+    view.hasRunningAnimation = false;
   }
 
   nodeCanvasParts.drawFlowCanvas = drawFlowCanvas;

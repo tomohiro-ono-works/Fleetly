@@ -1,66 +1,40 @@
-﻿/* =========================================================
-   Header
+/* =========================================================
+   Shell Controls
 ========================================================= */
-header {
-  position: sticky;
-  top: 0;
-  z-index: 120;
-  background: #5e1ef6;
-  color: var(--text-primary);
-  /* border-bottom: 1px solid var(--border-default); */
-  overflow: hidden;
-}
-
-.header-inner {
-  display: flex;
-  justify-content: space-between;
+.shell-window-actions {
+  position: fixed;
+  top: 4px;
+  right: 8px;
+  z-index: 260;
+  height: 32px;
+  display: inline-flex;
   align-items: center;
-  padding: 2px 8px;
-  gap: 12px;
-  flex-wrap: wrap;
-  position: relative;
-}
-
-.header-left {
-  display: flex;
-  align-items: center;
+  justify-content: flex-end;
   gap: 6px;
-  flex: 1 1 auto;
+  pointer-events: auto;
 }
 
-header .actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
+.shell-window-actions .header-icon-btn {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  border-radius: 8px;
 }
 
-.header-left,
-header .actions {
-  position: relative;
-  z-index: 1;
+.shell-window-actions .header-icon-btn:hover {
+  background: var(--surface-hover);
 }
 
-.header-home-btn {
-  min-width: 34px;
-  min-height: 30px;
-  padding: 0 4px;
+.shell-window-actions .header-icon-btn img[src$=".svg"] {
+  filter: brightness(0) saturate(100%);
+  opacity: 0.88;
 }
 
-.header-home-btn img {
-  display: block;
-  width: auto;
-  height: 20px;
-  object-fit: contain;
+.shell-window-actions .header-icon-btn:disabled img[src$=".svg"] {
+  opacity: 0.45;
 }
 
-header .header-icon-btn img[src$=".svg"] {
+.sidebar-home-btn .sidebar-toggle-icon img[src$=".svg"] {
   filter: brightness(0) saturate(100%) invert(100%);
-}
-
-header .header-home-btn img[src$=".svg"] {
-  filter: brightness(0) saturate(100%) invert(100%);
-}
-
-header .header-icon-btn:disabled img[src$=".svg"] {
-  opacity: 0.55;
 }

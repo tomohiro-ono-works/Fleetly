@@ -8,7 +8,7 @@
   if (!body || !shell || !appMain || !sidebar) return;
 
   const page = String(body.dataset.shellPage || '');
-  const isFlowPage = page === 'workflow' || page === 'dataflow';
+  const isFlowPage = page === 'dataflow';
   if (!isFlowPage) return;
   if (appMain.querySelector('.workspace-layout')) return;
 
@@ -44,24 +44,8 @@
   panes.className = 'workspace-panes';
   panes.id = 'workspacePanes';
   panes.innerHTML = [
-    '<section class="workspace-pane is-active" data-pane="left">',
-    '  <div class="workspace-pane-head" data-pane-head="left">',
-    '    <input type="text" class="workspace-pane-title-input" data-pane-title="left" aria-label="左ペイン ファイル名" />',
-    '    <span class="workspace-pane-dirty" data-pane-dirty="left" aria-hidden="true">●</span>',
-    '    <div class="workspace-pane-actions">',
-    '    </div>',
-    '  </div>',
-    '  <div class="workspace-pane-body" data-pane-body="left"></div>',
-    '</section>',
-    '<div class="workspace-splitter" id="workspaceSplitter" role="separator" aria-orientation="vertical" aria-label="左右ペイン幅"></div>',
-    '<section class="workspace-pane" data-pane="right">',
-    '  <div class="workspace-pane-head" data-pane-head="right">',
-    '    <input type="text" class="workspace-pane-title-input" data-pane-title="right" aria-label="右ペイン ファイル名" />',
-    '    <span class="workspace-pane-dirty" data-pane-dirty="right" aria-hidden="true">●</span>',
-    '    <div class="workspace-pane-actions">',
-    '    </div>',
-    '  </div>',
-    '  <div class="workspace-pane-body" data-pane-body="right"></div>',
+    '<section class="workspace-pane is-active" data-pane="active">',
+    '  <div class="workspace-pane-body" data-pane-body="active"></div>',
     '</section>'
   ].join('');
 
@@ -96,17 +80,8 @@
     tabHeader,
     tabsHost: tabHeader.querySelector('#workspaceTabs'),
     panes,
-    splitter: panes.querySelector('#workspaceSplitter'),
-    leftPane: panes.querySelector('[data-pane="left"]'),
-    rightPane: panes.querySelector('[data-pane="right"]'),
-    leftPaneHead: panes.querySelector('[data-pane-head="left"]'),
-    rightPaneHead: panes.querySelector('[data-pane-head="right"]'),
-    leftPaneTitleInput: panes.querySelector('[data-pane-title="left"]'),
-    rightPaneTitleInput: panes.querySelector('[data-pane-title="right"]'),
-    leftPaneDirtyMark: panes.querySelector('[data-pane-dirty="left"]'),
-    rightPaneDirtyMark: panes.querySelector('[data-pane-dirty="right"]'),
-    leftPaneBody: panes.querySelector('[data-pane-body="left"]'),
-    rightPaneBody: panes.querySelector('[data-pane-body="right"]'),
+    pane: panes.querySelector('[data-pane="active"]'),
+    paneBody: panes.querySelector('[data-pane-body="active"]'),
     dataflowView,
   };
 })();
