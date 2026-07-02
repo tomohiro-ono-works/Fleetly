@@ -18,8 +18,8 @@ from pathlib import Path
 import yaml
 import pandas as pd
 from PySide6.QtCore import QObject, Signal, Slot
-from openpyxl import load_workbook
 
+from connectors.excel_connector import ExcelConnector
 from core.type_registry import build_dataframe_schema
 from core.workflow_engine import WorkflowEngine
 from core.flow_locator import has_flow_extension, list_flows_local, list_templates_local, register_recent_flow
@@ -1046,10 +1046,12 @@ class BridgeRuntime:
         title = _safe_text((payload or {}).get("title")) or "フォルダを選択"
         current_ref = _safe_text((payload or {}).get("current_ref")) or None
         current_value = self._resolve_picker_initial_value(payload, current_ref, workspace_tab_id=workspace_tab_id)
-        if self.edit_folder_callback:
+        if current_ref and current_value and self.edit_folder_callback:
             selected_path = self.edit_folder_callback(title, current_value)
-        else:
+        elif self.pick_folder_callback:
             selected_path = self.pick_folder_callback(title)
+        else:
+            selected_path = self.edit_folder_callback(title, current_value)
         if not selected_path:
             return {"selected": False}
         ref, meta = self._store_hidden_value(
@@ -1368,7 +1370,8 @@ class BridgeRuntime:
     ):
         base = self._resolve_workspace_base(scope)
         text = str(rel_path or "").replace("\\", "/").strip()
-        candidate = (base / text).resolve(strict=False) if text else base
+        raw_candidate = base / text if text else base
+        candidate = raw_candidate.resolve(strict=False)
         if not self._is_relative_to(candidate, base):
             self._deny_workspace_access(
                 reason="path escapes allowed base",
@@ -1376,7 +1379,7 @@ class BridgeRuntime:
                 rel_path=rel_path,
                 resolved_path=candidate,
             )
-        if self._path_has_symlink(base, candidate):
+        if self._path_has_symlink(base, raw_candidate):
             self._deny_workspace_access(
                 reason="symlink path is not allowed",
                 scope=scope,
@@ -1456,29 +1459,17 @@ class BridgeRuntime:
         if not actual_path:
             raise ValueError("Excel ファイルが選択されていません。")
 
-        selected_sheet = _safe_text((payload or {}).get("sheet_name"))
-        workbook = load_workbook(actual_path, read_only=True, data_only=True)
-        sheet_names = list(workbook.sheetnames or [])
-        if not sheet_names:
-            raise ValueError("シートがありません。")
-        target_sheet = selected_sheet if selected_sheet in sheet_names else sheet_names[0]
-        worksheet = workbook[target_sheet]
-        rows2d = self._load_excel_top_rows(worksheet, max_rows=30)
-        col_count = max((len(row) for row in rows2d), default=0)
-        columns = [self._col_index_to_letters(index) for index in range(col_count)]
-        fixed_rows = [self._pad_row(row, col_count) for row in rows2d]
-        workbook.close()
+        preview = ExcelConnector().preview_excel(
+            actual_path,
+            sheet_name=_safe_text((payload or {}).get("sheet_name")),
+            max_rows=30,
+        )
         return {
             "ref": ref,
             "display_name": meta.get("display_name") or Path(actual_path).name,
             "display_hint": meta.get("display_hint") or "",
             "file_name": Path(actual_path).name,
-            "sheet_names": sheet_names,
-            "sheet_name": target_sheet,
-            "columns": columns,
-            "rows2d": fixed_rows,
-            "base_row": 0,
-            "col_count": col_count,
+            **preview,
         }
 
     def _handle_preview_read_csv(self, payload):
@@ -1529,28 +1520,6 @@ class BridgeRuntime:
         hidden_meta = self._get_hidden_meta(workspace_tab_id)
         meta = hidden_meta.get(current_ref) if current_ref and current_ref in hidden_meta else self._build_hidden_meta(field_key, actual_path)
         return str(path_obj), current_ref or "", meta
-
-    def _load_excel_top_rows(self, worksheet, *, max_rows):
-        rows = []
-        for row_index, row in enumerate(worksheet.iter_rows(values_only=True)):
-            if row_index >= max_rows:
-                break
-            normalized = [self._normalize_excel_preview_value(cell) for cell in list(row)]
-            rows.append(normalized)
-        return rows
-
-    def _normalize_excel_preview_value(self, value):
-        if value is None:
-            return None
-        if pd.isna(value):
-            return None
-        if hasattr(value, "isoformat"):
-            try:
-                text = value.isoformat()
-                return text[:10] if text.endswith("T00:00:00") else text
-            except Exception:
-                return str(value)
-        return value
 
     def _load_csv_rows(self, actual_path, encoding, delimiter, *, max_rows):
         normalized_encoding = self._normalize_preview_encoding(encoding)

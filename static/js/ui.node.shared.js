@@ -63,8 +63,8 @@
 
   const NODE_W = 60;
   const NODE_H = 60;
-  const LEVEL_MARGIN = 128;
-  const MIN_SIBLING_GAP = 56;
+  const LEVEL_MARGIN = 64;
+  const MIN_SIBLING_GAP = 28;
   const START_X = 44;
   const START_Y = 40;
   const BTN_X_OFFSET = 12;

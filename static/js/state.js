@@ -447,13 +447,13 @@ function sanitizeNodeIdsForOperation(state, nodeIds) {
 const CANVAS_COORD_RULES = {
   START_X: 44,
   START_Y: 40,
-  GRID_SIZE: 64,
+  GRID_SIZE: 32,
   MIN_COORD: 8,
-  INSERT_DX: 128,
+  INSERT_DX: 96,
   INSERT_DY: 0,
-  PARALLEL_DX: 128,
-  PARALLEL_DY: 120,
-  PARALLEL_COLLISION_DY: 128
+  PARALLEL_DX: 64,
+  PARALLEL_DY: 60,
+  PARALLEL_COLLISION_DY: 64
 };
 
 function normalizeCanvasPositionValue(value) {
@@ -480,7 +480,7 @@ function roundGridUnit(value) {
 }
 
 function snapToCanvasGrid(value, origin) {
-  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 64);
+  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 32);
   const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
   const raw = Number(value);
   if (!Number.isFinite(raw)) return base;
@@ -488,7 +488,7 @@ function snapToCanvasGrid(value, origin) {
 }
 
 function toCanvasFromGrid(gridValue, origin) {
-  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 64);
+  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 32);
   const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
   const raw = Number(gridValue);
   if (!Number.isFinite(raw)) return base;
@@ -496,7 +496,7 @@ function toCanvasFromGrid(gridValue, origin) {
 }
 
 function toGridFromCanvas(canvasValue, origin) {
-  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 64);
+  const size = Math.max(1, Number(CANVAS_COORD_RULES.GRID_SIZE) || 32);
   const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
   const raw = Number(canvasValue);
   if (!Number.isFinite(raw)) return 0;
@@ -552,7 +552,7 @@ function hasNodeAtCanvasPosition(state, position) {
 
 function resolveParallelInsertPosition(state, anchorId) {
   const basePos = getAnchorBasePosition(state, anchorId);
-  const stepY = Math.max(1, Number(CANVAS_COORD_RULES.PARALLEL_COLLISION_DY) || 128);
+  const stepY = Math.max(1, Number(CANVAS_COORD_RULES.PARALLEL_COLLISION_DY) || 64);
   let candidate = {
     x: snapToCanvasGrid(basePos.x + CANVAS_COORD_RULES.PARALLEL_DX, CANVAS_COORD_RULES.START_X),
     y: snapToCanvasGrid(basePos.y + CANVAS_COORD_RULES.PARALLEL_DY, CANVAS_COORD_RULES.START_Y)

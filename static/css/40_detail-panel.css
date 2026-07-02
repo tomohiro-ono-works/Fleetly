@@ -470,7 +470,7 @@ body[data-home-visible="true"] .detail-panel {
 }
 
 .flow-layout-page .right-sidebar-content .row {
-  grid-template-columns: minmax(108px, 34%) minmax(0, 1fr);
+  grid-template-columns: minmax(80px, 25.5%) minmax(0, 1fr);
   gap: 10px;
   align-items: stretch;
 }
@@ -1009,5 +1009,5 @@ body[data-home-visible="true"] .detail-panel {
   border: 0;
   border-radius: 0;
   background: #ffffff;
-  padding: 10px;
+  padding: 4px;
 }

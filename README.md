@@ -106,7 +106,7 @@ requirements.txt
 
 ## 起動方法
 
-通常は `bin\ziz.bat` から起動します。`.env` を有効化して `zizai.py` に引数を渡す Windows 用 launcher です。
+Windows では通常 `bin\ziz.bat` から起動します。`.env` を有効化して `zizai.py` に引数を渡す launcher です。
 
 ```powershell
 .\bin\ziz.bat
@@ -128,6 +128,14 @@ DevTools を有効にする場合:
 
 ```powershell
 .\.env\Scripts\python.exe zizai.py
+```
+
+Linux では `bin/ziz.sh` から起動します。Windows 版と同じく `.env` の Python に引数を渡します。
+
+```sh
+sh bin/ziz.sh
+sh bin/ziz.sh --debug
+sh bin/ziz.sh /path/to/flow.zizd
 ```
 
 ## 設定ファイル

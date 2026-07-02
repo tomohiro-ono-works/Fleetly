@@ -445,7 +445,7 @@
 
   function getCodeLanguageClass(field) {
     const raw = String(field.codeLanguage || "").trim().toLowerCase();
-    if (raw === "sql" || raw === "python") return raw;
+    if (raw === "sql" || raw === "python" || raw === "markdown") return raw;
     return "";
   }
 
@@ -1291,7 +1291,7 @@
         if (requestSeq !== outputRequestSeq) return;
         const code = String(error?.code || "").trim();
         if (code === "E_NOT_FOUND") {
-          setOutputStatus("データ取得エラー: 実行結果が見つかりません。");
+          setOutputStatus("未実行の為、データなし");
           return;
         }
         setOutputStatus(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`);

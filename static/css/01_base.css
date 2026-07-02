@@ -9,7 +9,7 @@ body {
   --shell-header-height: 0px;
   --shell-content-height: calc(100vh - var(--shell-header-height));
   --shell-window-actions-width: 168px;
-  --right-sidebar-width: 400px;
+  --right-sidebar-width: 600px;
   margin: 0;
   min-height: 100vh;
   font-family: var(--sans);

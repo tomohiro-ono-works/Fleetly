@@ -49,7 +49,7 @@
     NODE_H = 60,
     START_X = 44,
     START_Y = 40,
-    GRID_SIZE = 64
+    GRID_SIZE = 32
   } = parts.constants || {};
 
   let copiedNodeSnapshot = null;

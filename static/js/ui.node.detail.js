@@ -917,7 +917,7 @@
         if (requestSeq !== dataRequestSeq) return;
         const code = String(error?.code || "").trim();
         if (code === "E_NOT_FOUND") {
-          setDataStatus(buildDataStatusMessage("データ取得エラー: 実行結果が見つかりません。"));
+          setDataStatus(hasSchemaField ? "" : buildDataStatusMessage("未実行の為、データなし"));
           setActiveDataView(root.__nodeDetailDataView || (hasSchemaField ? "schema" : "preview"));
           return;
         }

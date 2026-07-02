@@ -240,6 +240,7 @@ const CONFIG = {
       },
       { key:"header_row", label:"ヘッダ行", kind:"number", required:true, default:1 },
       { key:"data_start_row", label:"データ開始行", kind:"number", required:true, default:2 },
+      { key:"chunk_size", label:"分割行数", kind:"number", required:false, default:50000 },
       { key:"date_cleansing", label:"日付クレンジング", kind:"checkbox", required:false, default:true },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
@@ -266,6 +267,7 @@ const CONFIG = {
       { key:"sheet_name", label:"シート名", kind:"text", required:true, default:"シート1", allowVars:true },
       { key:"header_row", label:"ヘッダ行", kind:"number", required:true, default:1 },
       { key:"data_start_row", label:"データ開始行", kind:"number", required:true, default:2 },
+      { key:"chunk_size", label:"分割行数", kind:"number", required:false, default:50000 },
       { key:"date_cleansing", label:"日付クレンジング", kind:"checkbox", required:false, default:true },
       { key:"schema", label:"スキーマ定義", kind:"textarea", required:false, allowVars:true }
     ],
@@ -422,7 +424,7 @@ const CONFIG = {
         { value:"append", label:"追記" }
       ]},
       { key:"target_file_path", label:"対象ファイル", kind:"file", required:true, allowVars:true, accept:".md,.markdown,.txt" },
-      { key:"content", label:"入力内容", kind:"textarea", required:true, allowVars:true, placeholder:"{{step1.field_name}} で step の1行目を参照できます。" }
+      { key:"content", label:"入力内容", kind:"textarea", codeLanguage:"markdown", required:true, allowVars:true, placeholder:"{{step1.field_name}} で step の1行目を参照できます。" }
     ],
 
     "WindowsConnector.mouse_click": [

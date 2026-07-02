@@ -1,7 +1,12 @@
 import os
+import time
 from typing import Any
 import pandas as pd
 from connectors.base_connector import BaseConnector
+
+
+DEFAULT_CHUNK_SIZE = 50000
+
 
 class CSVConnector(BaseConnector):
     def _resolve_usecols_from_schema_origin(self, schema: Any):
@@ -40,6 +45,18 @@ class CSVConnector(BaseConnector):
             if os.path.exists(candidate):
                 return candidate.replace("\\", "/")
         return normalized
+
+    @staticmethod
+    def _resolve_chunk_size(value: Any) -> int:
+        if value is None:
+            return 0
+        text = str(value).strip()
+        if not text:
+            return 0
+        chunk_size = int(text)
+        if chunk_size < 0:
+            raise ValueError("chunk_size は 0 以上で指定してください。")
+        return chunk_size
     
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
         if action == "read_csv":
@@ -53,6 +70,7 @@ class CSVConnector(BaseConnector):
                 delimiter=str(params.get('delimiter', ',')),
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
+                chunk_size=self._resolve_chunk_size(params.get("chunk_size", DEFAULT_CHUNK_SIZE)),
                 schema=params.get('schema'),
                 date_cleansing=self._to_bool_flag(params.get("date_cleansing", True)),
             )
@@ -100,6 +118,7 @@ class CSVConnector(BaseConnector):
         delimiter: str,
         header_row: int,
         data_start_row: int,
+        chunk_size: int | None = DEFAULT_CHUNK_SIZE,
         schema: Any = None,
         date_cleansing: bool = True,
     ):
@@ -113,17 +132,66 @@ class CSVConnector(BaseConnector):
 
         skiprows = list(range(header_row, data_start_row - 1)) if data_start_row > header_row + 1 else None
         usecols = self._resolve_usecols_from_schema_origin(schema)
+        resolved_chunk_size = self._resolve_chunk_size(chunk_size)
 
         try:
-            df = pd.read_csv(
-                normalized_path,
-                encoding=encoding,
-                sep=self._normalize_delimiter(delimiter),
-                header=header_row - 1,
-                skiprows=skiprows,
-                dtype=object,
-                usecols=usecols,
-            )
+            read_kwargs = {
+                "encoding": encoding,
+                "sep": self._normalize_delimiter(delimiter),
+                "header": header_row - 1,
+                "skiprows": skiprows,
+                "dtype": object,
+                "usecols": usecols,
+            }
+            read_started = time.perf_counter()
+            if resolved_chunk_size > 0:
+                chunks = []
+                total_rows = 0
+                for chunk_index, chunk in enumerate(
+                    pd.read_csv(normalized_path, chunksize=resolved_chunk_size, **read_kwargs),
+                    start=1,
+                ):
+                    chunks.append(chunk)
+                    total_rows += len(chunk.index)
+                    elapsed_ms = round((time.perf_counter() - read_started) * 1000, 1)
+                    self.log_performance("run.connector.chunk.finish", {
+                        "connector": "csv_connector",
+                        "action": "read_csv",
+                        "chunk_index": chunk_index,
+                        "chunk_size": resolved_chunk_size,
+                        "rows": len(chunk.index),
+                        "total_rows": total_rows,
+                        "elapsed_ms": elapsed_ms,
+                    })
+                    self.log_execution(
+                        f"CSV chunk read chunk={chunk_index} rows={len(chunk.index)} total_rows={total_rows} elapsed_ms={elapsed_ms}"
+                    )
+                df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame()
+                read_elapsed_ms = round((time.perf_counter() - read_started) * 1000, 1)
+                self.log_performance("run.connector.library.finish", {
+                    "connector": "csv_connector",
+                    "action": "read_csv",
+                    "phase": "read_csv",
+                    "library": "pandas/read_csv_chunks",
+                    "chunk_size": resolved_chunk_size,
+                    "chunks": len(chunks),
+                    "elapsed_ms": read_elapsed_ms,
+                    "rows": len(df.index),
+                    "cols": len(df.columns),
+                })
+            else:
+                df = pd.read_csv(normalized_path, **read_kwargs)
+                read_elapsed_ms = round((time.perf_counter() - read_started) * 1000, 1)
+                self.log_performance("run.connector.library.finish", {
+                    "connector": "csv_connector",
+                    "action": "read_csv",
+                    "phase": "read_csv",
+                    "library": "pandas/read_csv",
+                    "chunk_size": 0,
+                    "elapsed_ms": read_elapsed_ms,
+                    "rows": len(df.index),
+                    "cols": len(df.columns),
+                })
         except pd.errors.EmptyDataError:
             result = self.attach_dataframe_schema(
                 pd.DataFrame(),

@@ -16,11 +16,11 @@
   const constants = nodeCanvasParts.constants || {
     NODE_W: 60,
     NODE_H: 60,
-    LEVEL_MARGIN: 128,
-    MIN_SIBLING_GAP: 56,
+    LEVEL_MARGIN: 64,
+    MIN_SIBLING_GAP: 28,
     START_X: 44,
     START_Y: 40,
-    GRID_SIZE: 64,
+    GRID_SIZE: 32,
     BTN_X_OFFSET: 12,
     BTN_GAP: 20,
     BTN_R: 8,
@@ -46,7 +46,6 @@
   const CANVAS_MIN_HEIGHT = 1200;
   const CANVAS_PADDING_RIGHT = 520;
   const CANVAS_PADDING_BOTTOM = 260;
-  const AUTO_LAYOUT_OFFSET_Y = NODE_H;
 
   function clampCanvasCoordinate(value) {
     return Math.max(8, Math.round(Number(value) || 0));
@@ -57,7 +56,7 @@
   }
 
   function toCanvasCoordinate(unit, origin) {
-    const size = Math.max(1, Number(GRID_SIZE) || 64);
+    const size = Math.max(1, Number(GRID_SIZE) || 32);
     const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
     const rawUnit = Number(unit);
     if (!Number.isFinite(rawUnit)) return base;
@@ -65,7 +64,7 @@
   }
 
   function toGridCoordinate(value, origin) {
-    const size = Math.max(1, Number(GRID_SIZE) || 64);
+    const size = Math.max(1, Number(GRID_SIZE) || 32);
     const base = Number.isFinite(Number(origin)) ? Number(origin) : 0;
     const raw = Number(value);
     if (!Number.isFinite(raw)) return 0;
@@ -305,7 +304,7 @@
       setDisplayChildren(node.id, getChildren(node.id).map((n) => n.id));
     });
 
-    const initialLayoutY = START_Y + AUTO_LAYOUT_OFFSET_Y;
+    const initialLayoutY = START_Y;
     start.x = START_X;
     start.y = initialLayoutY;
 

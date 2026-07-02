@@ -12,7 +12,7 @@
   const FILE_ICON_MAP_CONFIG_PATH = 'file_icon_map.json';
   const MAX_OPEN_TABS = 4;
   const MAX_RECENT_ROOTS = 10;
-  const TEXT_EXTENSIONS = new Set(['.md', '.sql', '.py', '.zizd']);
+  const TEXT_EXTENSIONS = new Set(['.md', '.sql', '.py', '.json', '.zizd']);
   const FLOW_EXTENSIONS = new Set(['.zizd']);
   const DEFAULT_FILE_ICON_MAP = {
     default: './icons/block.svg',
@@ -162,6 +162,7 @@
     const ext = fileExtensionFromPath(tab?.relPath || '');
     if (ext === 'sql') return 'sql';
     if (ext === 'py') return 'python';
+    if (ext === 'json') return 'json';
     return '';
   }
 
@@ -1899,7 +1900,7 @@
     row.addEventListener('click', () => {
       const textExt = fileName.includes('.') ? `.${fileName.split('.').pop().toLowerCase()}` : '';
       if (!TEXT_EXTENSIONS.has(textExt)) {
-        showMessage('このファイル形式はエディタ対応外です。(.md/.sql/.py/.zizd のみ)', { kind: 'info', title: '未対応' });
+        showMessage('このファイル形式はエディタ対応外です。(.md/.sql/.py/.json/.zizd のみ)', { kind: 'info', title: '未対応' });
         return;
       }
       void openWorkspaceFile(scope, relPath);
@@ -2053,7 +2054,22 @@
     } else {
       state.globalStore.leftMode = normalized;
     }
+    syncSidebarActionSelection();
     void renderLeftArea();
+  }
+
+  function syncSidebarActionSelection() {
+    const current = String(state.globalStore.leftMode || '').trim();
+    document.querySelectorAll('.sidebar [data-sidebar-action]').forEach((button) => {
+      const action = String(button.dataset.sidebarAction || '').trim();
+      const active = (action === 'project-select' || action === 'explorer') && action === current;
+      button.classList.toggle('is-current', active);
+      if (active) {
+        button.setAttribute('aria-current', 'page');
+      } else {
+        button.removeAttribute('aria-current');
+      }
+    });
   }
 
   function bindSidebarActions() {

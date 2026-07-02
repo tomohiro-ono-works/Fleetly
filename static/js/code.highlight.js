@@ -11,6 +11,7 @@
     "JOIN", "LEFT", "LIKE", "LIMIT", "NOT", "NULL", "ON", "OR", "ORDER", "OUTER", "RIGHT",
     "SELECT", "SET", "TABLE", "THEN", "UNION", "UPDATE", "VALUES", "WHEN", "WHERE", "WITH"
   ]);
+  const JSON_LITERALS = new Set(["true", "false", "null"]);
 
   function escapeHtml(value) {
     return String(value || "")
@@ -197,12 +198,64 @@
     return out.join("");
   }
 
+  function tokenizeJson(text) {
+    const out = [];
+    let index = 0;
+
+    while (index < text.length) {
+      const ch = text[index];
+
+      if (ch === "\"") {
+        let end = index + 1;
+        while (end < text.length) {
+          const current = text[end];
+          if (current === "\\") {
+            end += 2;
+            continue;
+          }
+          if (current === "\"") {
+            end += 1;
+            break;
+          }
+          end += 1;
+        }
+        out.push(wrapToken(text.slice(index, end), "cm-string"));
+        index = end;
+        continue;
+      }
+
+      if (ch === "-" || /\d/.test(ch)) {
+        const match = text.slice(index).match(/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/);
+        if (match && match[0]) {
+          out.push(wrapToken(match[0], "cm-number"));
+          index += match[0].length;
+          continue;
+        }
+      }
+
+      if (/[A-Za-z]/.test(ch)) {
+        let end = index + 1;
+        while (end < text.length && /[A-Za-z]/.test(text[end])) end += 1;
+        const word = text.slice(index, end);
+        out.push(wrapToken(word, JSON_LITERALS.has(word) ? "cm-keyword" : ""));
+        index = end;
+        continue;
+      }
+
+      out.push(escapeHtml(ch));
+      index += 1;
+    }
+
+    return out.join("");
+  }
+
   function renderHighlightedHtml(text, language) {
     const source = String(text || "");
     if (!source) return " ";
 
     if (language === "python") return tokenizePython(source);
     if (language === "sql") return tokenizeSql(source);
+    if (language === "json") return tokenizeJson(source);
     return escapeHtml(source);
   }
 

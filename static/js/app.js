@@ -2862,18 +2862,9 @@
         }
         const selectedAction = String(action || "").trim();
         if (selectedAction) {
-          document.querySelectorAll(".sidebar [data-sidebar-action]").forEach((button) => {
-            const isCurrent = button === item;
-            button.classList.toggle("is-current", isCurrent);
-            if (isCurrent) button.setAttribute("aria-current", "page");
-            else button.removeAttribute("aria-current");
-          });
           window.dispatchEvent(new CustomEvent("ziz:sidebar-action", {
             detail: { action: selectedAction }
           }));
-        } else {
-          item.classList.remove("is-current");
-          item.removeAttribute("aria-current");
         }
         item.blur?.();
         if (!expanded) {
@@ -2985,9 +2976,9 @@
 
   function getRightSidebarWidthBounds() {
     const FIXED_RIGHT_SIDEBAR = {
-      initial: 400,
+      initial: 600,
       min: 300,
-      maxViewportRatio: 0.5
+      maxViewportRatio: 0.6
     };
     const appShell = document.querySelector(".app-shell");
     const leftSidebar = document.querySelector(".sidebar");
@@ -3353,6 +3344,7 @@
 
   window.addEventListener("ziz:bridge-ready", () => {
     logUiEvent("bridge.ready", {}, { source: "startup" });
+    if (embeddedMode) return;
     refreshHomeLists().then(() => onStateChanged({ history: false })).catch(() => onStateChanged({ history: false }));
   });
 
@@ -3392,17 +3384,18 @@
 
   exposeEmbeddedApi();
 
-  if (bridgeApi?.available?.()) {
+  if (!embeddedMode && bridgeApi?.available?.()) {
     refreshHomeLists().then(() => onStateChanged({ history: false })).catch(() => onStateChanged({ history: false }));
   }
 
   setRunButtonLocked(false);
-  onStateChanged({ history: false });
   if (embeddedMode) {
     loadEmbeddedFlowByPath().catch((error) => {
       console.error("[embedded] initial load failed", error);
       postEmbeddedEvent("load-error", { message: error?.message || String(error || "") });
     });
+  } else {
+    onStateChanged({ history: false });
   }
 })();
 

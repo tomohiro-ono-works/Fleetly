@@ -1,12 +1,23 @@
 import os
+import posixpath
 import time
+import zipfile
 from datetime import datetime, date
 from typing import Any
+import xml.etree.ElementTree as ET
 
 import pandas as pd
 from openpyxl import load_workbook
+from openpyxl.utils.cell import column_index_from_string, get_column_letter
 
 from connectors.base_connector import BaseConnector
+
+
+XLSX_MAIN_NS = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
+XLSX_OFFICE_REL_NS = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+XLSX_PACKAGE_REL_NS = "{http://schemas.openxmlformats.org/package/2006/relationships}"
+DEFAULT_CHUNK_SIZE = 50000
+
 
 class ExcelConnector(BaseConnector):
     def _resolve_usecols_from_schema_origin(self, schema: Any):
@@ -25,6 +36,18 @@ class ExcelConnector(BaseConnector):
         return usecols or None
 
     @staticmethod
+    def _resolve_chunk_size(value: Any) -> int:
+        if value is None:
+            return DEFAULT_CHUNK_SIZE
+        text = str(value).strip()
+        if not text:
+            return DEFAULT_CHUNK_SIZE
+        chunk_size = int(text)
+        if chunk_size <= 0:
+            raise ValueError("chunk_size は 1 以上で指定してください。")
+        return chunk_size
+
+    @staticmethod
     def _normalize_excel_value(value: Any) -> Any:
         if pd.isna(value):
             return None
@@ -35,6 +58,108 @@ class ExcelConnector(BaseConnector):
         if isinstance(value, date):
             return value.isoformat()
         return value
+
+    def preview_excel(self, path: str, sheet_name: str | None = None, max_rows: int = 30) -> dict[str, Any]:
+        normalized_path = self.normalize_file_path(path)
+        if normalized_path is None or not os.path.exists(normalized_path):
+            raise FileNotFoundError(f"ファイルが見つかりません: {normalized_path}")
+        if not str(normalized_path).lower().endswith(".xlsx"):
+            raise ValueError("Excel preview は .xlsx のみ対応しています。")
+
+        row_limit = max(1, int(max_rows or 30))
+        with zipfile.ZipFile(normalized_path) as archive:
+            workbook = ET.fromstring(archive.read("xl/workbook.xml"))
+            sheets = [
+                {
+                    "name": sheet.attrib.get("name", ""),
+                    "rid": sheet.attrib.get(XLSX_OFFICE_REL_NS + "id", ""),
+                }
+                for sheet in workbook.findall(".//" + XLSX_MAIN_NS + "sheet")
+            ]
+            sheet_names = [sheet["name"] for sheet in sheets if sheet["name"]]
+            if not sheet_names:
+                raise ValueError("シートがありません。")
+
+            rels = ET.fromstring(archive.read("xl/_rels/workbook.xml.rels"))
+            targets = {}
+            for rel in rels.findall(XLSX_PACKAGE_REL_NS + "Relationship"):
+                target = str(rel.attrib.get("Target", "")).replace("\\", "/")
+                targets[rel.attrib.get("Id", "")] = posixpath.normpath(
+                    target.lstrip("/") if target.startswith("/") else posixpath.join("xl", target)
+                )
+
+            selected_sheet = str(sheet_name or "").strip()
+            target_sheet_name = selected_sheet if selected_sheet in sheet_names else sheet_names[0]
+            target_sheet = next(sheet for sheet in sheets if sheet.get("name") == target_sheet_name)
+            worksheet_path = targets.get(target_sheet.get("rid", ""))
+            if not worksheet_path:
+                raise ValueError(f"シート参照が見つかりませんでした: {target_sheet_name}")
+            if worksheet_path not in archive.namelist():
+                raise FileNotFoundError(f"シート実体が見つかりません: {worksheet_path}")
+
+            rows: list[list[Any]] = []
+            shared_refs: set[int] = set()
+            with archive.open(worksheet_path) as handle:
+                for _event, row_elem in ET.iterparse(handle, events=("end",)):
+                    if row_elem.tag != XLSX_MAIN_NS + "row":
+                        continue
+                    row_values: list[Any] = []
+                    for cell in row_elem.findall(XLSX_MAIN_NS + "c"):
+                        ref = cell.attrib.get("r", "")
+                        letters = "".join(char for char in ref if char.isalpha())
+                        col_index = column_index_from_string(letters) - 1 if letters else len(row_values)
+                        cell_type = cell.attrib.get("t")
+                        if cell_type == "inlineStr":
+                            inline = cell.find(XLSX_MAIN_NS + "is")
+                            value = "".join(inline.itertext()) if inline is not None else None
+                        else:
+                            value_node = cell.find(XLSX_MAIN_NS + "v")
+                            raw_value = "".join(value_node.itertext()) if value_node is not None else ""
+                            value = raw_value or None
+                            if cell_type == "s" and value is not None:
+                                value = ("shared", int(value))
+                                shared_refs.add(value[1])
+                        while len(row_values) <= col_index:
+                            row_values.append(None)
+                        row_values[col_index] = value
+                    rows.append(row_values)
+                    row_elem.clear()
+                    if len(rows) >= row_limit:
+                        break
+
+            shared_strings: dict[int, str] = {}
+            if shared_refs and "xl/sharedStrings.xml" in archive.namelist():
+                current_index = -1
+                with archive.open("xl/sharedStrings.xml") as handle:
+                    for _event, item in ET.iterparse(handle, events=("end",)):
+                        if item.tag == XLSX_MAIN_NS + "si":
+                            current_index += 1
+                            if current_index in shared_refs:
+                                shared_strings[current_index] = "".join(item.itertext())
+                                if len(shared_strings) == len(shared_refs):
+                                    item.clear()
+                                    break
+                            item.clear()
+
+        resolved_rows = [
+            [
+                shared_strings.get(value[1], "") if isinstance(value, tuple) and value[0] == "shared" else value
+                for value in row
+            ]
+            for row in rows
+        ]
+        col_count = max((len(row) for row in resolved_rows), default=0)
+        return {
+            "sheet_names": sheet_names,
+            "sheet_name": target_sheet_name,
+            "columns": [get_column_letter(index + 1) for index in range(col_count)],
+            "rows2d": [
+                [(row[index] if index < len(row) else None) for index in range(col_count)]
+                for row in resolved_rows
+            ],
+            "base_row": 0,
+            "col_count": col_count,
+        }
 
     def _build_dataframe_from_worksheet_rows(
         self,
@@ -89,6 +214,7 @@ class ExcelConnector(BaseConnector):
                 sheet_name=str(params.get('sheet_name', "")),
                 header_row=int(params.get('header_row', 1)),
                 data_start_row=int(params.get('data_start_row', 2)),
+                chunk_size=self._resolve_chunk_size(params.get("chunk_size", DEFAULT_CHUNK_SIZE)),
                 schema=params.get('schema'),
                 date_cleansing=self._to_bool_flag(params.get("date_cleansing", True)),
             )
@@ -156,87 +282,116 @@ class ExcelConnector(BaseConnector):
         finally:
             workbook.close()
 
-    def read_excel(
+    def _read_excel_chunked(
         self,
-        path: str,
+        normalized_path: str,
         sheet_name: str,
         header_row: int,
         data_start_row: int,
+        chunk_size: int,
         schema: Any = None,
         date_cleansing: bool = True,
     ) -> pd.DataFrame:
-        normalized_path = self.normalize_file_path(path)
-        if normalized_path is None or not os.path.exists(normalized_path):
-            raise FileNotFoundError(f"ファイルが見つかりません: {normalized_path}")
-        if header_row < 1:
-            raise ValueError("header_row は 1 以上で指定してください。")
-        if data_start_row < header_row:
-            raise ValueError("data_start_row は header_row 以上で指定してください。")
-
-        skiprows = list(range(header_row, data_start_row - 1)) if data_start_row > header_row + 1 else None
-        target_sheet = sheet_name or 0
         usecols = self._resolve_usecols_from_schema_origin(schema)
-
+        read_started = time.perf_counter()
+        epoch_started = time.perf_counter()
+        workbook = load_workbook(normalized_path, read_only=True, data_only=True)
         try:
-            read_started = time.perf_counter()
-            df = pd.read_excel(
-                normalized_path,
-                sheet_name=target_sheet,
-                header=header_row - 1,
-                skiprows=skiprows,
-                dtype=object,
-                engine="openpyxl",
-                usecols=usecols,
-            )
-            read_elapsed_ms = round((time.perf_counter() - read_started) * 1000, 1)
-            self.log_performance("run.connector.library.finish", {
-                "connector": "excel_connector",
-                "action": "read_excel",
-                "phase": "read_excel",
-                "library": "pandas/openpyxl",
-                "elapsed_ms": read_elapsed_ms,
-                "rows": len(df.index),
-                "cols": len(df.columns),
-            })
-            self.log_execution(
-                f"Excel pandas read elapsed_ms={read_elapsed_ms} rows={len(df.index)} cols={len(df.columns)}"
-            )
-        except ValueError as exc:
-            message = str(exc)
-            if "Worksheet" in message or "sheet" in message.lower():
+            try:
+                worksheet = workbook[sheet_name] if sheet_name else workbook.active
+            except KeyError as exc:
                 raise ValueError(f"シートが見つかりませんでした: {sheet_name}") from exc
-            if usecols:
-                missing = ", ".join(usecols)
-                raise ValueError(f"schema適用エラー(列存在チェック): 指定列が存在しません [{missing}]") from exc
-            raise
 
-        if not isinstance(df, pd.DataFrame):
-            raise ValueError("Excel の読み込み結果が不正です。")
+            date_serial_system = (
+                self._resolve_excel_serial_system_from_workbook(workbook)
+                if date_cleansing
+                else "excel_1900"
+            )
+            epoch_elapsed_ms = round((time.perf_counter() - epoch_started) * 1000, 1)
 
-        df.columns = [
-            str(column) if column is not None and not pd.isna(column) else f"col_{index}"
-            for index, column in enumerate(df.columns)
-        ]
-        normalize_started = time.perf_counter()
-        normalized_df = df.apply(lambda col: col.map(self._normalize_excel_value))
-        normalize_elapsed_ms = round((time.perf_counter() - normalize_started) * 1000, 1)
-        self.log_performance("run.connector.phase.finish", {
+            selected_headers: list[str] | None = None
+            selected_indices: list[int] = []
+            records: list[dict[str, Any]] = []
+            chunks: list[pd.DataFrame] = []
+            total_rows = 0
+            chunk_index = 0
+
+            def flush_chunk() -> None:
+                nonlocal records, total_rows, chunk_index
+                if not records or selected_headers is None:
+                    return
+                chunk_index += 1
+                chunk = pd.DataFrame.from_records(records, columns=selected_headers)
+                chunks.append(chunk)
+                total_rows += len(chunk.index)
+                elapsed_ms = round((time.perf_counter() - read_started) * 1000, 1)
+                self.log_performance("run.connector.chunk.finish", {
+                    "connector": "excel_connector",
+                    "action": "read_excel",
+                    "chunk_index": chunk_index,
+                    "chunk_size": chunk_size,
+                    "rows": len(chunk.index),
+                    "total_rows": total_rows,
+                    "elapsed_ms": elapsed_ms,
+                })
+                self.log_execution(
+                    f"Excel chunk read chunk={chunk_index} rows={len(chunk.index)} total_rows={total_rows} elapsed_ms={elapsed_ms}"
+                )
+                records = []
+
+            for row_number, row_values in enumerate(worksheet.iter_rows(values_only=True), start=1):
+                if row_number < header_row:
+                    continue
+                if row_number == header_row:
+                    headers = [
+                        str(value) if value is not None and str(value) != "" else f"col_{index}"
+                        for index, value in enumerate(row_values)
+                    ]
+                    if usecols:
+                        missing = [column for column in usecols if column not in headers]
+                        if missing:
+                            raise ValueError(
+                                f"schema適用エラー(列存在チェック): 指定列が存在しません [{', '.join(missing)}]"
+                            )
+                        selected_indices = [headers.index(column) for column in usecols]
+                    else:
+                        selected_indices = list(range(len(headers)))
+                    selected_headers = [headers[index] for index in selected_indices]
+                    continue
+                if row_number < data_start_row:
+                    continue
+                if selected_headers is None:
+                    raise ValueError("header_row が読込範囲を超えています。")
+
+                normalized_values = [
+                    self._normalize_excel_value(row_values[index] if index < len(row_values) else None)
+                    for index in selected_indices
+                ]
+                if any(value is not None and value != "" for value in normalized_values):
+                    records.append(dict(zip(selected_headers, normalized_values)))
+                if len(records) >= chunk_size:
+                    flush_chunk()
+
+            if selected_headers is None:
+                raise ValueError("header_row が読込範囲を超えています。")
+            flush_chunk()
+            df = pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=selected_headers)
+        finally:
+            workbook.close()
+
+        read_elapsed_ms = round((time.perf_counter() - read_started) * 1000, 1)
+        self.log_performance("run.connector.library.finish", {
             "connector": "excel_connector",
             "action": "read_excel",
-            "phase": "normalize",
-            "elapsed_ms": normalize_elapsed_ms,
-            "rows": len(normalized_df.index),
-            "cols": len(normalized_df.columns),
+            "phase": "read_excel",
+            "library": "openpyxl/read_only",
+            "chunk_size": chunk_size,
+            "chunks": chunk_index,
+            "elapsed_ms": read_elapsed_ms,
+            "rows": len(df.index),
+            "cols": len(df.columns),
         })
-        self.log_execution(f"Excel normalize elapsed_ms={normalize_elapsed_ms}")
 
-        epoch_started = time.perf_counter()
-        date_serial_system = (
-            self._resolve_excel_serial_system(normalized_path)
-            if date_cleansing
-            else "excel_1900"
-        )
-        epoch_elapsed_ms = round((time.perf_counter() - epoch_started) * 1000, 1)
         if date_cleansing:
             self.log_performance("run.connector.phase.finish", {
                 "connector": "excel_connector",
@@ -258,7 +413,7 @@ class ExcelConnector(BaseConnector):
 
         schema_started = time.perf_counter()
         result = self.attach_dataframe_schema(
-            normalized_df,
+            df,
             schema_override=schema,
             date_serial_system=date_serial_system,
             date_cleansing=date_cleansing,
@@ -275,6 +430,35 @@ class ExcelConnector(BaseConnector):
         self.log_execution(f"Excel schema apply elapsed_ms={schema_elapsed_ms}")
         self.log_date_parse_metrics(result)
         return result
+
+    def read_excel(
+        self,
+        path: str,
+        sheet_name: str,
+        header_row: int,
+        data_start_row: int,
+        chunk_size: int | None = DEFAULT_CHUNK_SIZE,
+        schema: Any = None,
+        date_cleansing: bool = True,
+    ) -> pd.DataFrame:
+        normalized_path = self.normalize_file_path(path)
+        if normalized_path is None or not os.path.exists(normalized_path):
+            raise FileNotFoundError(f"ファイルが見つかりません: {normalized_path}")
+        if header_row < 1:
+            raise ValueError("header_row は 1 以上で指定してください。")
+        if data_start_row < header_row:
+            raise ValueError("data_start_row は header_row 以上で指定してください。")
+
+        resolved_chunk_size = self._resolve_chunk_size(chunk_size)
+        return self._read_excel_chunked(
+            normalized_path=normalized_path,
+            sheet_name=sheet_name,
+            header_row=header_row,
+            data_start_row=data_start_row,
+            chunk_size=resolved_chunk_size,
+            schema=schema,
+            date_cleansing=date_cleansing,
+        )
 
     def read_excel_range(
         self,
