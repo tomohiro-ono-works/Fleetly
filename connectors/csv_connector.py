@@ -198,6 +198,7 @@ class CSVConnector(BaseConnector):
                 schema_override=schema,
                 date_serial_system="excel_1900",
                 date_cleansing=date_cleansing,
+                allow_rename=False,
             )
             self.log_date_parse_metrics(result)
             return result
@@ -212,6 +213,7 @@ class CSVConnector(BaseConnector):
             schema_override=schema,
             date_serial_system="excel_1900",
             date_cleansing=date_cleansing,
+            allow_rename=False,
         )
         self.log_date_parse_metrics(result)
         return result
@@ -230,4 +232,7 @@ class CSVConnector(BaseConnector):
             schema_items = self.parse_schema_definition(schema)
             df = self.apply_schema_to_dataframe(df, schema_items)
         df.to_csv(normalized_output_path, index=False, encoding=encoding, sep=self._normalize_delimiter(delimiter))
-        return f"CSV保存完了: {normalized_output_path}"
+        return self.build_execution_metadata(
+            target=os.path.basename(normalized_output_path),
+            path=normalized_output_path,
+        )

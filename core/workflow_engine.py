@@ -3,17 +3,18 @@ import concurrent.futures
 import os
 import warnings
 import yaml
-import importlib
-import inspect
-import pkgutil
 import re
 import heapq
-import threading
 import time
 from datetime import datetime
 import getpass
 from collections import defaultdict
-from connectors.base_connector import BaseConnector
+from core.connector_factory import ConnectorFactory
+from shared.tabular_preview import (
+    build_dataframe_ui_cache,
+    is_dataframe_like,
+)
+from shared.process_runner import ProcessCancelledError
 
 warnings.filterwarnings("ignore")
 
@@ -21,99 +22,43 @@ class WorkflowEngine:
     VARIABLE_NAME_CHAR_CLASS = r"a-zA-Z0-9_\u3040-\u309F\u30A0-\u30FF\u3400-\u4DBF\u4E00-\u9FFF\u3005"
     TEMPLATE_REF_PATTERN = rf"[{VARIABLE_NAME_CHAR_CLASS}]+(?:\.[{VARIABLE_NAME_CHAR_CLASS}]+)*(?:\(\))?"
 
-    def __init__(self, logger, step_status_callback=None, performance_callback=None):
+    def __init__(
+        self,
+        logger,
+        step_status_callback=None,
+        performance_callback=None,
+        step_result_callback=None,
+    ):
         self.logger = logger
         self.step_status_callback = step_status_callback
         self.performance_callback = performance_callback
+        self.step_result_callback = step_result_callback
         self.context = {}  # データを一時保持するメモリ空間
-        self.connector_classes = {}  # 必要になった時点で遅延ロード
-        self._connector_lock = threading.Lock()
+        self.connector_factory = ConnectorFactory(logger=logger)
         self._cancel_event = None
+        self._worker_pool = None
+        self._run_id = ""
+        self._max_parallel_steps = 4
+        self._secret_values = set()
         self._context_ref_param_keys = {"input_data", "input_data_rename"}
         self._loop_children_by_owner = {}
         self._inline_loop_children_enabled = False
 
-    def _to_snake_case(self, name: str) -> str:
-        text = str(name or "")
-        text = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", text)
-        text = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", text)
-        return text.lower()
-
-    def _connector_module_candidates(self, conn_name: str):
-        raw = str(conn_name or "").strip()
-        snake = self._to_snake_case(raw)
-        candidates = []
-        for name in [raw, snake, f"{snake}_connector" if snake and not snake.endswith("_connector") else snake]:
-            if name and name not in candidates:
-                candidates.append(name)
-        return candidates
-
-    def _resolve_connector_class_from_module(self, module, cache_keys=None):
-        for name, obj in inspect.getmembers(module, inspect.isclass):
-            if issubclass(obj, BaseConnector) and obj is not BaseConnector:
-                for key in (cache_keys or []):
-                    if key:
-                        self.connector_classes[key] = obj
-                return obj
-        return None
-
-    def _load_connector_by_class_name_scan(self, conn_name: str):
-        import connectors
-
-        package_path = os.path.dirname(str(connectors.__file__))
-        for _, module_name, is_pkg in pkgutil.iter_modules([package_path]):
-            if is_pkg or module_name == "base_connector":
-                continue
-
-            full_module_name = f"connectors.{module_name}"
-            module = importlib.import_module(full_module_name)
-            for name, obj in inspect.getmembers(module, inspect.isclass):
-                if obj is BaseConnector or not issubclass(obj, BaseConnector):
-                    continue
-                if name == conn_name:
-                    self.connector_classes[conn_name] = obj
-                    self.connector_classes[module_name] = obj
-                    return obj, module_name
-
-        return None, None
-
-    def _get_connector_class(self, conn_name):
-        """
-        指定されたコネクタクラスを遅延ロードして返す（2回目以降はキャッシュを返す）
-        """
-        if not conn_name:
-            raise ValueError("コネクタ名が指定されていません。")
-
-        with self._connector_lock:
-            connector_class = self.connector_classes.get(conn_name)
-            if connector_class:
-                return connector_class
-
-            for module_name in self._connector_module_candidates(conn_name):
-                full_module_name = f"connectors.{module_name}"
-                try:
-                    module = importlib.import_module(full_module_name)
-                except ModuleNotFoundError as e:
-                    if e.name == full_module_name:
-                        continue
-                    raise
-
-                connector_class = self._resolve_connector_class_from_module(module, cache_keys=[conn_name, module_name])
-                if connector_class:
-                    self.logger.info(f"コネクタをロードしました: {conn_name} (module: {module_name})")
-                    return connector_class
-                raise Exception(f"コネクタ '{conn_name}' は見つかりましたが、BaseConnector実装がありません。")
-
-            connector_class, resolved_module = self._load_connector_by_class_name_scan(conn_name)
-            if connector_class:
-                self.logger.info(f"コネクタをロードしました: {conn_name} (module: {resolved_module})")
-                return connector_class
-
-        raise Exception(f"コネクタ '{conn_name}' が見つかりません。")
+    def configure_runtime(
+        self,
+        *,
+        run_id="",
+        worker_pool=None,
+        max_parallel_steps=4,
+        secret_values=None,
+    ):
+        self._run_id = str(run_id or "").strip()
+        self._worker_pool = worker_pool
+        self._max_parallel_steps = max(1, int(max_parallel_steps))
+        self._secret_values = set(secret_values or set())
 
     def _create_connector(self, conn_name):
-        connector_class = self._get_connector_class(conn_name)
-        return connector_class()
+        return self.connector_factory.create(conn_name)
 
     def _normalize_context_ref(self, value):
         text = str(value or "").strip()
@@ -495,7 +440,7 @@ class WorkflowEngine:
         }
 
     def _looks_like_dataframe(self, value):
-        return hasattr(value, "columns") and hasattr(value, "head") and hasattr(value, "attrs")
+        return is_dataframe_like(value)
 
     def _emit_performance(self, event, payload=None):
         if not callable(self.performance_callback):
@@ -528,58 +473,7 @@ class WorkflowEngine:
             return False
 
     def _build_dataframe_ui_cache(self, dataframe):
-        try:
-            preview = dataframe.head(100)
-            columns = [str(column) for column in preview.columns]
-            rows = []
-            for _, row in preview.iterrows():
-                values = []
-                for value in row.tolist():
-                    if self._is_missing_preview_value(value):
-                        values.append("")
-                    else:
-                        values.append(str(value))
-                rows.append(values)
-            schema_items = []
-            existing_schema = dataframe.attrs.get("ziz_schema")
-            if isinstance(existing_schema, list) and existing_schema:
-                schema_items = existing_schema
-            else:
-                for column in dataframe.columns:
-                    schema_items.append({
-                        "origin_name": str(column),
-                        "new_name": str(column),
-                        "description": str(column),
-                        "ziz_datatype": str(getattr(dataframe[column], "dtype", "") or ""),
-                    })
-            return {
-                "kind": "dataframe",
-                "preview": {
-                    "columns": columns,
-                    "rows": rows,
-                    "row_count": len(rows),
-                    "truncated": bool(len(dataframe.index) > len(rows)),
-                },
-                "schema": {
-                    "columns": [
-                        {
-                            "origin_name": str(item.get("origin_name") or item.get("name_ja") or item.get("name_en") or ""),
-                            "new_name": str(item.get("new_name") or item.get("name_en") or item.get("origin_name") or ""),
-                            "description": str(item.get("description") or item.get("name_ja") or item.get("origin_name") or ""),
-                            "ziz_datatype": str(item.get("ziz_datatype") or ""),
-                        }
-                        for item in schema_items
-                    ]
-                },
-                "row_count": int(len(dataframe.index)),
-            }
-        except Exception:
-            return {
-                "kind": "dataframe",
-                "preview": {"columns": [], "rows": [], "row_count": 0, "truncated": False},
-                "schema": {"columns": []},
-                "row_count": 0,
-            }
+        return build_dataframe_ui_cache(dataframe)
 
     def _collect_step_context_refs(self, value):
         refs = set()
@@ -622,8 +516,7 @@ class WorkflowEngine:
                 continue
             params = step.get("params", {}) or {}
             refs = self._collect_step_context_refs(params)
-            action = str(step.get("action") or "").strip()
-            if action == "loop_tasks":
+            if str(step.get("node_type") or "task").strip() == "loop":
                 source_ref = self._normalize_context_ref(
                     (params.get("source_step_id") or params.get("input_data"))
                 )
@@ -637,8 +530,8 @@ class WorkflowEngine:
                 producers_by_consumer[consumer_id].add(producer_id)
 
         remaining_consumers = {
-            producer_id: len(consumers)
-            for producer_id, consumers in consumers_by_producer.items()
+            producer_id: len(consumers_by_producer.get(producer_id, set()))
+            for producer_id in output_var_to_step.values()
         }
         return {
             "remaining_consumers": remaining_consumers,
@@ -656,24 +549,48 @@ class WorkflowEngine:
             remaining[producer_id] = max(0, int(remaining.get(producer_id, 0)) - 1)
             if remaining[producer_id] != 0:
                 continue
-            producer_output_var = str((plan.get("producer_step_meta") or {}).get(producer_id, "")).strip()
-            if producer_output_var and producer_output_var in self.context:
-                del self.context[producer_output_var]
-                self.logger.info(
-                    "[%s] context寿命管理: %s を解放しました。",
-                    step_id,
-                    producer_output_var,
-                )
-            report_entries = (plan.get("report_entry_by_step_id") or {})
-            producer_entry = report_entries.get(producer_id)
-            if isinstance(producer_entry, dict):
-                producer_entry["result"] = None
+            self._release_producer_result(
+                producer_id,
+                step_id,
+                plan,
+            )
+        self._release_producer_result(
+            str(step_id or ""),
+            str(step_id or ""),
+            plan,
+        )
+
+    def _release_producer_result(self, producer_id, terminal_step_id, plan):
+        if not producer_id:
+            return
+        if producer_id in set(plan.get("retain_producer_ids") or set()):
+            return
+        remaining = plan.get("remaining_consumers") or {}
+        if int(remaining.get(producer_id, 0)) != 0:
+            return
+        producer_output_var = str(
+            (plan.get("producer_step_meta") or {}).get(producer_id, "")
+        ).strip()
+        if producer_output_var and producer_output_var in self.context:
+            del self.context[producer_output_var]
+            self.logger.info(
+                "[%s] context寿命管理: %s を解放しました。",
+                terminal_step_id,
+                producer_output_var,
+            )
+        report_entries = plan.get("report_entry_by_step_id") or {}
+        producer_entry = report_entries.get(producer_id)
+        if isinstance(producer_entry, dict):
+            producer_entry["result"] = None
 
     def _apply_define_values_result(self, step, result):
         if str(step.get("action") or "").strip() != "define_values":
             return
         rows = []
-        if hasattr(result, "to_dict") and callable(getattr(result, "to_dict", None)) and hasattr(result, "columns"):
+        result_attrs = getattr(result, "attrs", None)
+        if isinstance(result_attrs, dict) and isinstance(result_attrs.get("ziz_define_values"), list):
+            rows = result_attrs.get("ziz_define_values") or []
+        elif hasattr(result, "to_dict") and callable(getattr(result, "to_dict", None)) and hasattr(result, "columns"):
             try:
                 rows = result.to_dict(orient="records")
             except Exception:
@@ -704,15 +621,26 @@ class WorkflowEngine:
         except Exception:
             return
 
+    def _emit_step_result(self, report_entry):
+        if not callable(self.step_result_callback):
+            return
+        if not isinstance(report_entry, dict):
+            return
+        try:
+            self.step_result_callback(report_entry)
+        except Exception:
+            return
+
     def _execute_step(self, step, context):
         if self._is_cancel_requested():
             raise RuntimeError("__FLOW_CANCELLED__")
         step_id = step.get("step_id")
+        context["__step_id"] = str(step_id or "")
         conn_name = step.get("connector")
         action = step.get("action")
         params = self._resolve_step_params(step.get("params", {}) or {})
 
-        if action == "loop_tasks":
+        if str(step.get("node_type") or "task").strip() == "loop":
             ref_key = self._normalize_context_ref(params.get("source_step_id") or params.get("input_data"))
             if not ref_key:
                 raise ValueError("source_step_id は必須です。")
@@ -775,11 +703,17 @@ class WorkflowEngine:
             finally:
                 del loop_records
 
-        self._emit_step_status(step_id, "running", f"{conn_name} -> {action}")
-        self.logger.info(f"[{step_id}] 実行中: {conn_name} -> {action}")
         connector = self._create_connector(conn_name)
         if hasattr(connector, "set_execution_logger"):
-            connector.set_execution_logger(self.logger, step_id, self._emit_performance)
+            connector.set_execution_logger(
+                self.logger,
+                step_id,
+                self._emit_performance,
+                connector_id=conn_name,
+                action_id=action,
+                cancel_event=self._cancel_event,
+                secret_values=self._secret_values,
+            )
         started = time.perf_counter()
         self._emit_performance("run.core.connector.start", {
             "step_id": step_id,
@@ -787,7 +721,37 @@ class WorkflowEngine:
             "action": action,
         })
         try:
-            result = connector.execute(action, params, context)
+            if self._worker_pool is None:
+                self._emit_step_status(
+                    step_id,
+                    "running",
+                    f"{conn_name} -> {action}",
+                )
+                self.logger.info(
+                    f"[{step_id}] 実行中: {conn_name} -> {action}"
+                )
+                result = connector.execute(action, params, context)
+            else:
+                with self._worker_pool.lease(
+                    self._run_id,
+                    cancel_event=self._cancel_event,
+                    on_queued=lambda: self._emit_step_status(
+                        step_id,
+                        "queued",
+                        "実行待ち",
+                    ),
+                ) as acquired:
+                    if not acquired:
+                        raise RuntimeError("__FLOW_CANCELLED__")
+                    self._emit_step_status(
+                        step_id,
+                        "running",
+                        f"{conn_name} -> {action}",
+                    )
+                    self.logger.info(
+                        f"[{step_id}] 実行中: {conn_name} -> {action}"
+                    )
+                    result = connector.execute(action, params, context)
         finally:
             elapsed_ms = round((time.perf_counter() - started) * 1000, 1)
             self._emit_performance("run.core.connector.finish", {
@@ -833,17 +797,24 @@ class WorkflowEngine:
             else:
                 report_entry = self._build_step_report(step, "success", result=result)
             report["steps"].append(report_entry)
+            self._emit_step_result(report_entry)
             report_step_map = (lifetime_plan or {}).get("report_entry_by_step_id")
             if isinstance(report_step_map, dict):
                 report_step_map[str(sid or "")] = report_entry
             self._emit_step_status(sid, "success", f"{step.get('connector')} -> {step.get('action')}")
             return None
         except Exception as e:
-            if str(e) == "__FLOW_CANCELLED__":
+            if isinstance(e, ProcessCancelledError) or str(e) == "__FLOW_CANCELLED__":
                 self._mark_cancelled(report)
                 return report["error"]
             message = str(e)
-            report["steps"].append(self._build_step_report(step, "error", error=message))
+            report_entry = self._build_step_report(
+                step,
+                "error",
+                error=message,
+            )
+            report["steps"].append(report_entry)
+            self._emit_step_result(report_entry)
             report["error"] = message
             self._emit_step_status(sid, "error", message)
             self.logger.error(f"[{sid}] エラー発生: {message}")
@@ -863,17 +834,30 @@ class WorkflowEngine:
         pending = {}
         active_output_vars = {}
         started = set()
-        cycle_warned = False
-
-        max_workers = max(1, len(reachable))
+        queued_notified = set()
+        max_workers = max(
+            1,
+            min(self._max_parallel_steps, len(reachable)),
+        )
+        for _, step_id in ready:
+            self._emit_step_status(step_id, "queued", "実行待ち")
+            queued_notified.add(step_id)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=max_workers)
         try:
             while pending or ready or len(started) < len(reachable):
-                if self._is_cancel_requested() and not pending:
+                if (
+                    self._is_cancel_requested()
+                    and not report.get("_primary_error")
+                    and not pending
+                ):
                     self._mark_cancelled(report)
                     break
 
-                while ready and not report["error"]:
+                while (
+                    ready
+                    and len(pending) < max_workers
+                    and not report["error"]
+                ):
                     if self._is_cancel_requested():
                         break
                     _, step_id = heapq.heappop(ready)
@@ -886,10 +870,14 @@ class WorkflowEngine:
                             f"並行実行中に output_variable が競合しています: {output_var} "
                             f"({active_output_vars[output_var]} / {step_id})"
                         )
-                        report["steps"].append(self._build_step_report(step, "error", error=message))
-                        report["error"] = message
-                        self._emit_step_status(step_id, "error", message)
-                        self.logger.error(f"[{step_id}] エラー発生: {message}")
+                        self._record_parallel_failure(
+                            report,
+                            step,
+                            message,
+                            pending,
+                            active_output_vars,
+                            lifetime_plan,
+                        )
                         break
 
                     future = executor.submit(self._execute_step, step, copy.copy(self.context))
@@ -913,14 +901,14 @@ class WorkflowEngine:
                         break
 
                     remaining_ids.sort(key=lambda step_id: (visit_rank.get(step_id, len(visit_rank)), step_id))
-                    if not cycle_warned:
-                        self.logger.warning(
-                            "flows.edges に循環または未解決の依存があるため、一部ステップを到達順で補完します: %s",
-                            ", ".join(remaining_ids)
-                        )
-                        cycle_warned = True
-                    heapq.heappush(ready, (visit_rank.get(remaining_ids[0], len(visit_rank)), remaining_ids[0]))
-                    continue
+                    message = (
+                        "flows.edges に循環または未解決の依存があります: "
+                        + ", ".join(remaining_ids)
+                    )
+                    report["error"] = message
+                    report["_primary_error"] = message
+                    self.logger.error(message)
+                    break
 
                 done, _ = concurrent.futures.wait(
                     list(pending.keys()),
@@ -934,9 +922,19 @@ class WorkflowEngine:
                         active_output_vars.pop(output_var, None)
 
                     try:
+                        if future.cancelled():
+                            self._record_skipped_step(
+                                report,
+                                step,
+                                lifetime_plan,
+                            )
+                            continue
                         result = future.result()
                         self._apply_define_values_result(step, result)
-                        if self._is_cancel_requested():
+                        if (
+                            self._is_cancel_requested()
+                            and not report.get("_primary_error")
+                        ):
                             self._mark_cancelled(report)
                         if output_var:
                             self.context[output_var] = result
@@ -958,6 +956,7 @@ class WorkflowEngine:
                         else:
                             report_entry = self._build_step_report(step, "success", result=result)
                         report["steps"].append(report_entry)
+                        self._emit_step_result(report_entry)
                         report_step_map = (lifetime_plan or {}).get("report_entry_by_step_id")
                         if isinstance(report_step_map, dict):
                             report_step_map[str(sid or "")] = report_entry
@@ -970,25 +969,137 @@ class WorkflowEngine:
                                 indegree[next_id] -= 1
                                 if indegree[next_id] == 0 and next_id not in started:
                                     heapq.heappush(ready, (visit_rank.get(next_id, len(visit_rank)), next_id))
+                                    if next_id not in queued_notified:
+                                        self._emit_step_status(
+                                            next_id,
+                                            "queued",
+                                            "実行待ち",
+                                        )
+                                        queued_notified.add(next_id)
                     except Exception as e:
-                        if str(e) == "__FLOW_CANCELLED__":
-                            self._mark_cancelled(report)
+                        if (
+                            isinstance(e, ProcessCancelledError)
+                            or str(e) == "__FLOW_CANCELLED__"
+                        ):
+                            report_entry = self._build_step_report(
+                                step,
+                                "cancelled",
+                                error="実行がキャンセルされました。",
+                            )
+                            report["steps"].append(report_entry)
+                            self._emit_step_result(report_entry)
+                            self._emit_step_status(
+                                sid,
+                                "cancelled",
+                                "実行がキャンセルされました。",
+                            )
+                            if not report.get("_primary_error"):
+                                self._mark_cancelled(report)
                             continue
                         message = str(e)
-                        report["steps"].append(self._build_step_report(step, "error", error=message))
-                        if not report["error"]:
-                            report["error"] = message
-                        self._emit_step_status(sid, "error", message)
-                        self.logger.error(f"[{sid}] エラー発生: {message}")
+                        self._record_parallel_failure(
+                            report,
+                            step,
+                            message,
+                            pending,
+                            active_output_vars,
+                            lifetime_plan,
+                        )
 
+            if report.get("_primary_error") or report.get("cancelled"):
+                completed_ids = {
+                    str(step.get("step_id") or "")
+                    for step in report.get("steps") or []
+                }
+                for step_id in sorted(
+                    reachable - completed_ids,
+                    key=lambda value: (
+                        visit_rank.get(value, len(visit_rank)),
+                        value,
+                    ),
+                ):
+                    self._record_skipped_step(
+                        report,
+                        step_by_id[step_id],
+                        lifetime_plan,
+                    )
+            report.pop("_primary_error", None)
             return report["error"]
         finally:
             executor.shutdown(wait=True, cancel_futures=bool(report["error"]))
+
+    def _record_parallel_failure(
+        self,
+        report,
+        step,
+        message,
+        pending,
+        active_output_vars,
+        lifetime_plan,
+    ):
+        step_id = str(step.get("step_id") or "")
+        report_entry = self._build_step_report(
+            step,
+            "error",
+            error=message,
+        )
+        report["steps"].append(report_entry)
+        self._emit_step_result(report_entry)
+        if not report.get("_primary_error"):
+            report["_primary_error"] = message
+            report["error"] = message
+            if self._cancel_event is not None:
+                self._cancel_event.set()
+            for future, (queued_step, output_var) in list(pending.items()):
+                if not future.cancel():
+                    continue
+                pending.pop(future, None)
+                if output_var:
+                    active_output_vars.pop(output_var, None)
+                self._record_skipped_step(
+                    report,
+                    queued_step,
+                    lifetime_plan,
+                )
+        self._emit_step_status(step_id, "error", message)
+        self.logger.error(f"[{step_id}] エラー発生: {message}")
+
+    def _record_skipped_step(self, report, step, lifetime_plan):
+        step_id = str(step.get("step_id") or "")
+        if any(
+            str(item.get("step_id") or "") == step_id
+            for item in report.get("steps") or []
+        ):
+            return
+        report_entry = self._build_step_report(
+            step,
+            "skipped",
+            error="先行する失敗またはキャンセルにより実行されませんでした。",
+        )
+        report["steps"].append(report_entry)
+        self._emit_step_result(report_entry)
+        report_step_map = (lifetime_plan or {}).get(
+            "report_entry_by_step_id"
+        )
+        if isinstance(report_step_map, dict):
+            report_step_map[step_id] = report_entry
+        self._emit_step_status(
+            step_id,
+            "skipped",
+            "実行されませんでした。",
+        )
+        self._decrement_lifetime_after_step(
+            step_id,
+            lifetime_plan,
+            report,
+        )
 
     def _is_cancel_requested(self):
         return bool(self._cancel_event and self._cancel_event.is_set())
 
     def _mark_cancelled(self, report, message="実行がキャンセルされました。"):
+        if report.get("_primary_error"):
+            return
         if report.get("cancelled"):
             return
         report["cancelled"] = True
@@ -1033,7 +1144,10 @@ class WorkflowEngine:
                 self.logger.error(message)
                 report["error"] = message
                 return report
-            self._inline_loop_children_enabled = str(target_step.get("action") or "").strip() == "loop_tasks"
+            self._inline_loop_children_enabled = (
+                str(target_step.get("node_type") or "task").strip()
+                == "loop"
+            )
             config = {
                 "metadata": copy.deepcopy(config.get("metadata") or {}),
                 "variables": copy.deepcopy(config.get("variables") or {}),
@@ -1063,11 +1177,22 @@ class WorkflowEngine:
                 producer_step_meta[sid] = output_var
         lifetime_plan["producer_step_meta"] = producer_step_meta
         lifetime_plan["report_entry_by_step_id"] = {}
+        lifetime_plan["retain_producer_ids"] = (
+            {str(only_step_id)}
+            if only_step_id
+            else set()
+        )
 
         if runtime["mode"] == "sequential":
-            for step in runtime["steps"]:
+            for index, step in enumerate(runtime["steps"]):
                 error = self._run_step_sequential(step, report, lifetime_plan=lifetime_plan)
                 if error:
+                    for skipped_step in runtime["steps"][index + 1:]:
+                        self._record_skipped_step(
+                            report,
+                            skipped_step,
+                            lifetime_plan,
+                        )
                     if report.get("cancelled"):
                         return report
                     return report

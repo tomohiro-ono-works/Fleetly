@@ -1,0 +1,163 @@
+.zcwd {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 320px;
+  overflow: hidden;
+  color: var(--text-primary);
+  background: var(--flow-canvas-bg);
+  font-family: var(--sans);
+  outline: none;
+  isolation: isolate;
+}
+
+.zcwd:focus-visible {
+  outline: 2px solid var(--brand-600);
+  outline-offset: -2px;
+}
+
+.zcwd-canvas {
+  position: absolute;
+  inset: 0;
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: var(--flow-canvas-bg);
+  cursor: default;
+  outline: none;
+  touch-action: none;
+}
+
+.zcwd-canvas:focus-visible {
+  outline: 2px solid var(--brand-600);
+  outline-offset: -2px;
+}
+
+.zcwd-toolbar {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  right: 12px;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 34px;
+  align-items: center;
+  gap: 6px;
+  padding: 4px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-page);
+  box-shadow: var(--shadow-soft-weak);
+}
+
+.zcwd-tool,
+.zcwd-note-color {
+  width: 34px;
+  min-width: 34px;
+  height: 34px;
+  margin: 0;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-ui);
+  background: transparent;
+  font: 700 15px/1 var(--mono);
+  cursor: pointer;
+}
+
+.zcwd-tool:hover,
+.zcwd-note-color:hover {
+  border-color: var(--border-hover);
+  background: var(--surface-hover);
+}
+
+.zcwd-tool:focus-visible,
+.zcwd-note-color:focus-visible {
+  border-color: var(--brand-600);
+  outline: none;
+}
+
+.zcwd-note-color {
+  padding: 3px;
+}
+
+.zcwd-context-menu {
+  position: absolute;
+  z-index: 40;
+  min-width: 148px;
+  padding: 6px;
+  border: 1px solid var(--border-default);
+  border-radius: 8px;
+  background: var(--surface-page);
+  box-shadow: var(--shadow-soft);
+}
+
+.zcwd-context-menu[hidden] {
+  display: none;
+}
+
+.zcwd-context-menu__item {
+  width: 100%;
+  min-height: 32px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 5px;
+  color: var(--text-primary);
+  background: transparent;
+  text-align: left;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.zcwd-context-menu__item:hover {
+  background: var(--surface-hover);
+}
+
+.zcwd-context-menu__item.is-danger {
+  color: var(--semantic-error-fg);
+}
+
+.zcwd-message {
+  position: absolute;
+  z-index: 35;
+  right: 12px;
+  bottom: 12px;
+  max-width: min(420px, calc(100% - 24px));
+  padding: 8px 10px;
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  color: var(--text-primary);
+  background: var(--surface-page);
+  box-shadow: var(--shadow-soft);
+  font-size: 12px;
+}
+
+.zcwd-message[data-kind="error"] {
+  border-color: var(--semantic-error-fg);
+  color: var(--semantic-error-fg);
+}
+
+.zcwd-message[hidden] {
+  display: none;
+}
+
+.zcwd-note-editor {
+  position: absolute;
+  z-index: 30;
+  min-width: 160px;
+  min-height: 96px;
+  margin: 0;
+  padding: 8px;
+  border: 2px solid var(--brand-700);
+  border-radius: 8px;
+  color: var(--text-primary);
+  background: var(--surface-page);
+  font: 13px/1.35 var(--sans);
+  resize: none;
+  outline: none;
+}
+
+.zcwd-note-editor[hidden] {
+  display: none;
+}

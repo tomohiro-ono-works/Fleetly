@@ -176,7 +176,13 @@
     return new Promise((resolve) => {
       dialogState.resolver = resolve;
       showDialog(message, { ...options, kind: options?.kind || "warning", mode: "confirm" });
-      if (els.cancel) els.cancel.hidden = false;
+      if (els.ok && options?.labels?.ok) {
+        els.ok.textContent = String(options.labels.ok);
+      }
+      if (els.cancel) {
+        els.cancel.textContent = String(options?.labels?.cancel || "キャンセル");
+        els.cancel.hidden = false;
+      }
       els.cancel?.focus?.();
     });
   }
@@ -296,7 +302,6 @@
     choose: chooseDialog,
     close: closeDialog,
   };
-  window.zizDialog = dialogApi;
   const packages = window.zizPackages = window.zizPackages || {};
   const core = packages.core = packages.core || {};
   core.dialog = dialogApi;

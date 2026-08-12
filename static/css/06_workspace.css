@@ -13,6 +13,38 @@
   grid-template-columns: 0 minmax(0, 1fr);
 }
 
+.workspace-layout.has-right-sidebar {
+  grid-template-columns:
+    var(--workspace-left-area-width)
+    minmax(0, 1fr)
+    var(--right-sidebar-width);
+}
+
+.workspace-layout.has-right-sidebar.is-left-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) var(--right-sidebar-width);
+}
+
+body.right-sidebar-collapsed .workspace-layout.has-right-sidebar {
+  grid-template-columns: var(--workspace-left-area-width) minmax(0, 1fr) 0;
+}
+
+body.right-sidebar-collapsed
+  .workspace-layout.has-right-sidebar.is-left-collapsed {
+  grid-template-columns: 0 minmax(0, 1fr) 0;
+}
+
+.workspace-layout.has-right-sidebar > #rightSidebar {
+  position: relative;
+  top: 0;
+  width: var(--right-sidebar-width);
+  height: 100%;
+}
+
+body.right-sidebar-collapsed
+  .workspace-layout.has-right-sidebar > #rightSidebar {
+  width: 0;
+}
+
 .workspace-global-left-area {
   min-width: 0;
   min-height: 0;

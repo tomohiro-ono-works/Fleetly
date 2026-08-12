@@ -1,0 +1,331 @@
+.standalone-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.standalone-controls select {
+  width: auto;
+  height: 28px;
+  min-width: 118px;
+  max-width: 190px;
+  padding: 0 24px 0 7px;
+  font-size: 12px;
+  background: var(--surface-subtle);
+}
+
+.standalone-export-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 4px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.standalone-export-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+}
+
+.standalone-export-toggle span {
+  font-size: 12px;
+}
+
+.standalone-toolbar-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 28px;
+  height: 28px;
+  padding: 0 7px;
+  border: 1px solid var(--border-default);
+  border-radius: 5px;
+  background: var(--surface-subtle);
+  color: var(--text-primary);
+}
+
+.standalone-toolbar-button:hover:not(:disabled),
+.standalone-toolbar-button.is-active {
+  border-color: var(--brand-300);
+  background: var(--interactive-hover-bg);
+}
+
+.standalone-toolbar-button img {
+  width: 15px;
+  height: 15px;
+}
+
+.standalone-toolbar-button span {
+  font-size: 12px;
+}
+
+.standalone-toolbar-status {
+  min-width: 46px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.standalone-params-panel {
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(260px, 1fr));
+  gap: 18px;
+  max-height: 38%;
+  overflow: auto;
+  padding: 10px 12px 12px;
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-page2);
+}
+
+.standalone-params-panel[hidden] {
+  display: none !important;
+}
+
+.standalone-params-panel > section {
+  min-width: 0;
+}
+
+.standalone-params-panel h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  line-height: 18px;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+
+.standalone-export-action-select {
+  width: min(100%, 360px);
+  height: 28px;
+  margin: 0 0 8px;
+}
+
+.standalone-param-form {
+  display: grid;
+  gap: 8px;
+}
+
+.standalone-param-form .row {
+  grid-template-columns: minmax(96px, 130px) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.standalone-param-form .row > label {
+  min-width: 0;
+}
+
+.standalone-param-form textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.standalone-param-form.is-disabled {
+  opacity: 0.72;
+}
+
+.standalone-result-host {
+  flex: 0 0 clamp(180px, 34%, 360px);
+  min-height: 0;
+}
+
+.standalone-result-host[hidden] {
+  display: none !important;
+}
+
+.standalone-result-panel {
+  display: grid;
+  grid-template-rows: 34px minmax(0, 1fr);
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border-top: 1px solid var(--border-divider);
+  background: var(--surface-subtle);
+}
+
+.standalone-result-panel[hidden] {
+  display: none !important;
+}
+
+.standalone-result-header {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-page2);
+}
+
+.standalone-result-tabs {
+  display: inline-flex;
+  align-items: stretch;
+  height: 100%;
+}
+
+.standalone-result-tabs button {
+  min-width: 58px;
+  height: 100%;
+  padding: 0 9px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.standalone-result-tabs button.is-active {
+  border-bottom-color: var(--brand-500);
+  color: var(--text-primary);
+}
+
+.standalone-result-status {
+  margin-left: auto;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.standalone-result-status[data-tone="success"] {
+  color: var(--brand-800);
+}
+
+.standalone-result-status[data-tone="error"] {
+  color: var(--semantic-error-fg);
+}
+
+.standalone-result-close {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 18px;
+}
+
+.standalone-result-body,
+.standalone-log-body {
+  min-height: 0;
+  overflow: auto;
+}
+
+.standalone-result-body[hidden],
+.standalone-log-body[hidden] {
+  display: none !important;
+}
+
+.standalone-result-summary {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  min-height: 28px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border-divider);
+  background: var(--surface-subtle);
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.standalone-result-table-scroll {
+  width: 100%;
+  min-height: 0;
+  overflow: auto;
+}
+
+.standalone-result-table,
+.standalone-log-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: 12px;
+}
+
+.standalone-result-table th,
+.standalone-result-table td,
+.standalone-log-table th,
+.standalone-log-table td {
+  max-width: 420px;
+  padding: 6px 9px;
+  border-right: 1px solid var(--border-divider);
+  border-bottom: 1px solid var(--border-divider);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.standalone-result-table th,
+.standalone-log-table th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--surface-hover);
+  color: var(--text-primary);
+  font-weight: 650;
+}
+
+.standalone-log-table td:last-child {
+  min-width: 280px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.standalone-log-table tr[data-level="error"] td {
+  color: var(--semantic-error-fg);
+  background: var(--semantic-warning-bg);
+}
+
+.standalone-result-text {
+  margin: 0;
+  min-height: 100%;
+  padding: 10px 12px;
+  color: var(--text-primary);
+  font: 12px/1.5 Consolas, "Courier New", monospace;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.standalone-result-message {
+  padding: 12px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.standalone-result-message.is-error {
+  color: var(--semantic-error-fg);
+}
+
+@media (max-width: 760px) {
+  .workspace-text-toolbar {
+    align-items: flex-start;
+  }
+
+  .workspace-text-actions,
+  .standalone-controls {
+    flex-wrap: wrap;
+  }
+
+  .standalone-controls select {
+    min-width: 104px;
+    max-width: 152px;
+  }
+
+  .standalone-params-panel {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .standalone-param-form .row {
+    grid-template-columns: minmax(84px, 112px) minmax(0, 1fr);
+  }
+
+  .standalone-result-host {
+    flex-basis: 42%;
+  }
+}

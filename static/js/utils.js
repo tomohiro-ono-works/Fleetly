@@ -3,7 +3,8 @@ const utils = {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(attrs)) {
       if (k === "class") node.className = v;
-      else if (k === "html") node.innerHTML = v;
+      else if (k === "text") node.textContent = String(v ?? "");
+      else if (k === "html") throw new Error("utils.el の html 属性は使用できません。");
       else if (k.startsWith("on") && typeof v === "function") node.addEventListener(k.slice(2), v);
       else node.setAttribute(k, v);
     }
@@ -12,7 +13,10 @@ const utils = {
   },
 
   getFormSchema(config, connector, action) {
-    return (config?.forms && config.forms[`${connector}.${action}`]) || [];
+    const actionConfig = (config?.actions?.[connector] || [])
+      .find((item) => item.id === action) || null;
+    const formSchemaId = actionConfig?.formSchemaId || `${connector}.${action}`;
+    return (config?.forms && config.forms[formSchemaId]) || [];
   },
 
   downloadText(filename, text) {
@@ -121,7 +125,6 @@ const utils = {
   }
 };
 
-window.utils = utils;
 const __zizPackagesUtils = window.zizPackages = window.zizPackages || {};
 const __zizCoreUtils = __zizPackagesUtils.core = __zizPackagesUtils.core || {};
 __zizCoreUtils.utils = utils;

@@ -1,12 +1,15 @@
 ﻿(function () {
   const searchParams = new URLSearchParams(window.location.search);
   if (searchParams.get('embedded') === '1') return;
-  const bridge = (window.zizPackages || {}).core?.bridge || window.zizBridge || null;
-  const dialog = (window.zizPackages || {}).core?.dialog || window.zizDialog || null;
+  const bridge = (window.zizPackages || {}).core?.bridge || null;
+  const workspaceApi = (window.zizPackages || {}).app?.workspace || null;
+  const documentsApi = (window.zizPackages || {}).app?.documents || null;
+  const dialog = (window.zizPackages || {}).core?.dialog || null;
   const shell = window.zizWorkspaceShell || null;
-  if (!bridge || !shell) return;
+  if (!bridge || !workspaceApi || !documentsApi || !shell) return;
 
   const STORAGE_KEY_PENDING_SIDEBAR_ACTION = 'ziz.workspace.pendingSidebarAction.v1';
+  const STORAGE_KEY_PENDING_FLOW = 'ziz.pendingFlow.v1';
   const RECENT_ROOTS_CONFIG_SCOPE = 'config';
   const RECENT_ROOTS_CONFIG_PATH = 'recent_roots.json';
   const FILE_ICON_MAP_CONFIG_PATH = 'file_icon_map.json';
@@ -49,13 +52,16 @@
   let draggedTabId = '';
 
   function getShellApi() {
-    return window.zizShell || {};
+    return window.zizPackages?.app?.shell || {};
   }
 
   function getCodeEditorsApi() {
     return (window.zizPackages && window.zizPackages.core && window.zizPackages.core.codeEditors)
-      || window.codeEditors
       || null;
+  }
+
+  function getStandaloneDocumentsApi() {
+    return window.zizPackages?.app?.standaloneDocuments || null;
   }
 
   async function ensureCodeEditorsApi() {
@@ -101,6 +107,16 @@
     return getTab(state.activeTabId || '');
   }
 
+  function publishActiveTabChange() {
+    const tab = activeTab();
+    window.dispatchEvent(new CustomEvent('ziz:workspace-active-tab-change', {
+      detail: {
+        tab_id: String(tab?.id || ''),
+        kind: String(tab?.kind || '')
+      }
+    }));
+  }
+
   function addTab(tab, orderIndex) {
     state.tabStore[tab.id] = tab;
     const index = Number.isInteger(orderIndex)
@@ -119,7 +135,13 @@
   }
 
   function isTabRunning(tabId) {
-    return !!tabId && String(tabId) === String(runningFlowTabId || '');
+    const normalizedTabId = String(tabId || '');
+    if (!normalizedTabId) return false;
+    const tab = getTab(normalizedTabId);
+    if (tab?.kind === 'text') {
+      return tab.standaloneController?.isRunning?.() === true;
+    }
+    return normalizedTabId === String(runningFlowTabId || '');
   }
 
   function normalizeError(error) {
@@ -156,6 +178,17 @@
     const dotIndex = fileName.lastIndexOf('.');
     if (dotIndex < 0 || dotIndex === fileName.length - 1) return '';
     return String(fileName.slice(dotIndex + 1) || '').trim().toLowerCase();
+  }
+
+  function absolutePathFromTab(tab) {
+    const rootPath = tab?.scope === 'config'
+      ? state.globalStore.configRoot
+      : state.globalStore.workspaceRoot;
+    const root = String(rootPath || '').replace(/[\\/]+$/, '');
+    const relPath = String(tab?.relPath || '').replace(/^[\\/]+/, '');
+    if (!root || !relPath) return '';
+    const separator = root.includes('\\') ? '\\' : '/';
+    return `${root}${separator}${relPath.replace(/[\\/]/g, separator)}`;
   }
 
   function getWorkspaceEditorLanguage(tab) {
@@ -206,6 +239,56 @@
     if (value.startsWith('s')) return 'save';
     if (value.startsWith('d')) return 'discard';
     return 'cancel';
+  }
+
+  async function askRunningCloseDecision(tab) {
+    const title = String(tab?.name || 'document');
+    const message = `${title} は実行中です。閉じる場合は実行をキャンセルします。`;
+    if (dialog?.confirm) {
+      return dialog.confirm(message, {
+        title: '実行中のdocument',
+        kind: 'warning',
+        labels: {
+          ok: '実行をキャンセルして閉じる',
+          cancel: '閉じずに続行',
+        },
+      });
+    }
+    return window.confirm(`${message}\n実行をキャンセルして閉じますか？`);
+  }
+
+  async function cancelRunningFlowForClose(tab) {
+    const api = getFlowTabApi(tab);
+    if (!api?.cancelRun || !api?.isRunning) {
+      throw createFlowLoadError(
+        '実行中のdocumentへ接続できないため、キャンセルできません。',
+        'E_RUN_CANCEL_UNAVAILABLE'
+      );
+    }
+    await api.cancelRun();
+    while (api.isRunning()) {
+      await new Promise((resolve) => window.setTimeout(resolve, 50));
+    }
+    if (runningFlowTabId === tab.id) {
+      runningFlowTabId = '';
+      renderTabs();
+    }
+  }
+
+  async function cancelRunningTabForClose(tab) {
+    if (tab?.kind === 'text') {
+      const controller = tab.standaloneController;
+      if (!controller?.cancelAndWait || !controller?.isRunning) {
+        throw createFlowLoadError(
+          '実行中のdocumentへ接続できないため、キャンセルできません。',
+          'E_RUN_CANCEL_UNAVAILABLE'
+        );
+      }
+      await controller.cancelAndWait();
+      renderTabs();
+      return;
+    }
+    await cancelRunningFlowForClose(tab);
   }
 
   function askConflictDecision(tab) {
@@ -395,7 +478,7 @@
   async function readRecentRootsFromConfig() {
     if (!bridge?.call) return [];
     try {
-      const payload = await bridge.call('workspace.readText', {
+      const payload = await workspaceApi.readText({
         scope: RECENT_ROOTS_CONFIG_SCOPE,
         rel_path: RECENT_ROOTS_CONFIG_PATH,
       });
@@ -433,7 +516,7 @@
       2
     );
     try {
-      await bridge.call('workspace.writeText', {
+      await workspaceApi.writeText({
         scope: RECENT_ROOTS_CONFIG_SCOPE,
         rel_path: RECENT_ROOTS_CONFIG_PATH,
         content: payload,
@@ -489,7 +572,7 @@
       return;
     }
     try {
-      const payload = await bridge.call('workspace.readText', {
+      const payload = await workspaceApi.readText({
         scope: RECENT_ROOTS_CONFIG_SCOPE,
         rel_path: FILE_ICON_MAP_CONFIG_PATH,
       });
@@ -517,6 +600,18 @@
       return String(parsed?.action || '').trim();
     } catch (_) {
       return '';
+    }
+  }
+
+  function readAndClearPendingFlow() {
+    try {
+      const raw = window.sessionStorage.getItem(STORAGE_KEY_PENDING_FLOW);
+      if (!raw) return null;
+      window.sessionStorage.removeItem(STORAGE_KEY_PENDING_FLOW);
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (_) {
+      return null;
     }
   }
 
@@ -574,6 +669,7 @@
       syncGlobalFlowNameInput(tab);
       void ensureFlowTabLoaded(tab);
     }
+    publishActiveTabChange();
   }
 
   async function saveTab(tabId, options = {}) {
@@ -595,7 +691,7 @@
         force: payload.force,
         content_length: String(payload.content || '').length,
       });
-      const result = await bridge.call('workspace.writeText', payload);
+      const result = await workspaceApi.writeText(payload);
       logSaveTrace('saveTab.response', {
         tab_id: tab.id,
         saved: !!result?.saved,
@@ -654,7 +750,7 @@
       if (!ok) return false;
     }
     try {
-      const result = await bridge.call('workspace.readText', {
+      const result = await workspaceApi.readText({
         scope: tab.scope,
         rel_path: tab.relPath,
       });
@@ -682,8 +778,18 @@
     const tab = getTab(tabId);
     if (!tab) return true;
     if (isTabRunning(tab.id)) {
-      showMessage('実行中のタブは閉じられません。', { kind: 'warning', title: '実行中' });
-      return false;
+      const closeRunning = await askRunningCloseDecision(tab);
+      if (!closeRunning) return false;
+      try {
+        await cancelRunningTabForClose(tab);
+      } catch (error) {
+        const normalized = normalizeError(error);
+        showMessage(`実行をキャンセルできませんでした。\n${normalized.message}`, {
+          kind: 'error',
+          title: 'キャンセルエラー',
+        });
+        return false;
+      }
     }
     if (tab.dirty && !options.skipPrompt) {
       const decision = await askSaveDecision(tab);
@@ -694,27 +800,34 @@
       }
     }
 
+    if (tab.docSessionId) {
+      if (bridge?.available?.()) {
+        try {
+          await documentsApi.close({
+            doc_session_id: String(tab.docSessionId || ''),
+          });
+        } catch (error) {
+          const normalized = normalizeError(error);
+          logInfo('documents.close failed', normalized);
+          showMessage(`documentを閉じられませんでした。\n${normalized.message}`, { kind: 'error', title: 'クローズエラー' });
+          return false;
+        }
+      }
+    }
+
     const tabIndex = state.tabOrder.indexOf(tab.id);
     if (tabIndex >= 0) state.tabOrder.splice(tabIndex, 1);
     if (state.activeTabId === tab.id) {
       state.activeTabId = state.tabOrder[tabIndex] || state.tabOrder[tabIndex - 1] || '';
     }
     if (isFlowTab(tab) && tab.iframeEl) {
-      if (bridge?.available?.()) {
-        try {
-          await bridge.call('flow.tabClosed', {
-            workspace_tab_id: String(tab.id || ''),
-          });
-        } catch (error) {
-          logInfo('flow.tabClosed failed', normalizeError(error));
-        }
-      }
       try {
         tab.iframeEl.src = 'about:blank';
       } catch (_) {
         // ignore
       }
     }
+    tab.standaloneController?.destroy?.();
     if (tab.viewEl) {
       tab.viewEl.remove();
     }
@@ -726,6 +839,7 @@
     if (isFlowTab(nextActive)) {
       void ensureFlowTabLoaded(nextActive);
     }
+    publishActiveTabChange();
     return true;
   }
 
@@ -773,6 +887,13 @@
       const button = event.target?.closest?.('button[data-action]');
       if (!button) return;
       const action = button.dataset.action;
+      if (isTabRunning(tab.id) && (action === 'save' || action === 'reload')) {
+        showMessage('実行中のタブは保存・再読み込みできません。', {
+          kind: 'warning',
+          title: '実行中',
+        });
+        return;
+      }
       if (action === 'save') {
         await saveTab(tab.id);
       }
@@ -781,7 +902,14 @@
       }
     });
 
+    const paramsHost = document.createElement('div');
+    paramsHost.hidden = true;
+    const resultHost = document.createElement('div');
+    resultHost.className = 'standalone-result-host';
+    resultHost.hidden = true;
+
     wrap.appendChild(toolbar);
+    wrap.appendChild(paramsHost);
     if (language) {
       tab.codeEditorLanguage = language;
       const editorHost = document.createElement('div');
@@ -806,7 +934,41 @@
     } else {
       wrap.appendChild(textarea);
     }
+    wrap.appendChild(resultHost);
     tab.textareaEl = textarea;
+
+    const standaloneDocuments = getStandaloneDocumentsApi();
+    if (standaloneDocuments?.create) {
+      try {
+        tab.hiddenBindings = tab.hiddenBindings || {};
+        tab.standaloneController = standaloneDocuments.create({
+          toolbarHost: toolbar.querySelector('.workspace-text-actions'),
+          panelHost: paramsHost,
+          resultHost,
+          docSessionId: tab.docSessionId,
+          extension: fileExtensionFromPath(tab.relPath),
+          hiddenBindings: tab.hiddenBindings,
+          getDocument: () => ({
+            scope: tab.scope,
+            relPath: tab.relPath,
+            content: tab.content,
+            dirty: tab.dirty,
+            absolutePath: absolutePathFromTab(tab),
+          }),
+          onRunningChange: (running) => {
+            textarea.readOnly = running === true;
+            toolbar.querySelectorAll(
+              'button[data-action="save"], button[data-action="reload"]'
+            ).forEach((button) => {
+              button.disabled = running === true;
+            });
+            renderTabs();
+          },
+        });
+      } catch (error) {
+        console.error('[workspace] standalone controller mount failed', error);
+      }
+    }
     return wrap;
   }
 
@@ -834,6 +996,12 @@
 
   function normalizeFlowTabId(scope, relPath) {
     return `tab-flow:${scope}:${String(relPath || '').replace(/\\/g, '/').toLowerCase()}`;
+  }
+
+  function createDocSessionId() {
+    const randomPart = window.crypto?.randomUUID?.().replace(/-/g, '')
+      || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+    return `docsession_${randomPart}`;
   }
 
   function buildEmbeddedFlowUrl(tab) {
@@ -949,6 +1117,7 @@
       const detail = {
         ...(payload && typeof payload === 'object' ? payload : {}),
         __workspace_tab_id: String(tab.id || ''),
+        __doc_session_id: String(tab.docSessionId || ''),
         __workspace_request_id: String(requestId || ''),
       };
       frameWindow.dispatchEvent(new frameWindow.CustomEvent('ziz:workspace-flow-open', { detail }));
@@ -962,25 +1131,29 @@
     }
   }
 
-  async function fetchFlowPayloadByPath(scope, relPath, workspaceTabId = '') {
+  async function fetchFlowPayloadByPath(scope, relPath, docSessionId) {
     if (!bridge?.available?.()) return null;
-    return bridge.call('flow.load', {
+    return documentsApi.load({
       scope: scope === 'config' ? 'config' : 'root',
       rel_path: String(relPath || '').replace(/\\/g, '/'),
-      workspace_tab_id: String(workspaceTabId || ''),
+      doc_session_id: String(docSessionId || ''),
     });
   }
 
   async function fetchFlowPayload(tab) {
-    return fetchFlowPayloadByPath(tab.scope, tab.relPath, tab.id);
+    if (!String(tab?.relPath || '').trim()) {
+      return tab?.flowPayload || null;
+    }
+    return fetchFlowPayloadByPath(tab.scope, tab.relPath, tab.docSessionId);
   }
 
   async function fetchFlowMtime(tab) {
+    if (!String(tab?.relPath || '').trim()) return 0;
     if (!bridge?.available?.()) return 0;
     const scope = tab.scope === 'config' ? 'config' : 'root';
     const relPath = String(tab.relPath || '').replace(/\\/g, '/');
     try {
-      const stat = await bridge.call('workspace.stat', {
+      const stat = await workspaceApi.stat({
         scope,
         rel_path: relPath,
       });
@@ -990,7 +1163,7 @@
       if (normalized.code !== 'E_ACCESS_DENIED' && normalized.code !== 'E_NOT_FOUND') {
         logInfo('workspace.stat failed; fallback to workspace.readText', normalized);
       }
-      const text = await bridge.call('workspace.readText', {
+      const text = await workspaceApi.readText({
         scope,
         rel_path: relPath,
       });
@@ -1015,13 +1188,14 @@
     }
 
     try {
-      const result = await bridge.call('workspace.readText', {
+      const result = await workspaceApi.readText({
         scope: normalizedScope,
         rel_path: normalizedRelPath,
       });
       const tab = {
         id: tabId,
         kind: 'text',
+        docSessionId: createDocSessionId(),
         name: stripExtension(String(result?.file_name || normalizedRelPath.split('/').pop() || normalizedRelPath)),
         scope: normalizedScope,
         relPath: normalizedRelPath,
@@ -1044,6 +1218,7 @@
     if (!tab || !isFlowTab(tab)) return false;
     if (!tab.iframeEl) return false;
     if (tab.flowPayloadApplied && !tab.flowForceReload) {
+      if (!String(tab.relPath || '').trim()) return true;
       try {
         const latestMtimeNs = await fetchFlowMtime(tab);
         if (latestMtimeNs > 0 && Number(tab.flowLastMtimeNs || 0) === latestMtimeNs) {
@@ -1057,10 +1232,17 @@
     if (tab.flowLoadPromise) return !!(await tab.flowLoadPromise);
     tab.flowLoadPromise = (async () => {
       try {
-        if (!tab.flowCurrentMtimeNs || tab.flowForceReload || !tab.flowPayloadApplied) {
+        if (
+          String(tab.relPath || '').trim() &&
+          (!tab.flowCurrentMtimeNs || tab.flowForceReload || !tab.flowPayloadApplied)
+        ) {
           tab.flowCurrentMtimeNs = await fetchFlowMtime(tab);
         }
-        if (!tab.flowPayload || tab.flowForceReload || tab.flowPayloadApplied) {
+        if (
+          !tab.flowPayload ||
+          String(tab.relPath || '').trim() &&
+            (tab.flowForceReload || tab.flowPayloadApplied)
+        ) {
           tab.flowPayload = await fetchFlowPayload(tab);
         }
         if (!tab.flowPayload) return false;
@@ -1076,12 +1258,6 @@
           throw createFlowLoadError('データフロー画面への読込指示に失敗しました。', 'E_FLOW_DISPATCH');
         }
         await ackPromise;
-        const canonicalName = canonicalNameFromTab(tab);
-        try {
-          api?.setFlowName?.(canonicalName);
-        } catch (_) {
-          // ignore sync failure
-        }
         tab.flowPayloadApplied = true;
         tab.flowForceReload = false;
         tab.flowLastMtimeNs = Number(tab.flowCurrentMtimeNs || tab.flowLastMtimeNs || 0);
@@ -1115,9 +1291,14 @@
       activateTab(existing.id);
       return true;
     }
+    const docSessionId = createDocSessionId();
     let preloadedFlowPayload = null;
     try {
-      preloadedFlowPayload = await fetchFlowPayloadByPath(normalizedScope, normalizedRelPath, tabId);
+      preloadedFlowPayload = await fetchFlowPayloadByPath(
+        normalizedScope,
+        normalizedRelPath,
+        docSessionId,
+      );
       if (!preloadedFlowPayload || preloadedFlowPayload.selected === false) {
         return false;
       }
@@ -1128,7 +1309,14 @@
     }
     if (!options.bypassLimit) {
       const ok = await ensureTabCapacity();
-      if (!ok) return false;
+      if (!ok) {
+        try {
+          await documentsApi.close({ doc_session_id: docSessionId });
+        } catch (_) {
+          // The document session will be cleared when the app exits.
+        }
+        return false;
+      }
     }
     const fallbackTab = activeTab();
     const name = stripExtension(normalizedRelPath.split('/').pop() || normalizedRelPath || 'Dataflow');
@@ -1138,6 +1326,8 @@
       name,
       scope: normalizedScope,
       relPath: normalizedRelPath,
+      docSessionId,
+      documentRef: String(preloadedFlowPayload.document_ref || ''),
       dirty: false,
       closable: true,
       viewEl: null,
@@ -1151,6 +1341,55 @@
       flowLoadAckTimer: 0,
       flowCurrentMtimeNs: 0,
       flowLastMtimeNs: 0,
+      flowForceReload: false,
+      flowHasLoadedOnce: false,
+      flowFallbackTabId: String(fallbackTab?.id || ''),
+    };
+    createFlowView(tab);
+    addTab(tab, options.orderIndex);
+    return true;
+  }
+
+  async function openPreloadedFlow(payload, options = {}) {
+    if (!payload || typeof payload !== 'object' || !payload.document) {
+      return false;
+    }
+    if (!options.bypassLimit) {
+      const ok = await ensureTabCapacity();
+      if (!ok) return false;
+    }
+    const docSessionId = String(payload.doc_session_id || '') ||
+      createDocSessionId();
+    const documentRef = String(payload.document_ref || '');
+    const tabId = `tab-flow:document:${documentRef || docSessionId}`;
+    const existing = getTab(tabId);
+    if (existing) {
+      activateTab(existing.id);
+      return true;
+    }
+    const fallbackTab = activeTab();
+    const fileName = String(payload.file_name || 'データフロー.zizd');
+    const tab = {
+      id: tabId,
+      kind: 'dataflow',
+      name: stripExtension(fileName),
+      scope: '',
+      relPath: '',
+      docSessionId,
+      documentRef,
+      dirty: false,
+      closable: true,
+      viewEl: null,
+      iframeEl: null,
+      flowPayload: { ...payload, doc_session_id: docSessionId },
+      flowPayloadApplied: false,
+      flowFrameReady: false,
+      flowLoadPromise: null,
+      flowLoadErrorShown: false,
+      flowLoadPending: null,
+      flowLoadAckTimer: 0,
+      flowCurrentMtimeNs: Number(payload.mtime_ns || 0),
+      flowLastMtimeNs: Number(payload.mtime_ns || 0),
       flowForceReload: false,
       flowHasLoadedOnce: false,
       flowFallbackTabId: String(fallbackTab?.id || ''),
@@ -1278,8 +1517,6 @@
     const value = canonicalNameFromTab(tab);
     if (input.value !== value) {
       input.value = value;
-      input.dispatchEvent(new Event('input', { bubbles: true }));
-      input.dispatchEvent(new Event('change', { bubbles: true }));
     }
   }
 
@@ -1296,7 +1533,7 @@
       if (action === 'save') {
         if (tab.kind === 'text') return saveTab(tab.id);
         const api = getFlowTabApi(tab);
-        logSaveTrace('invokeTabAction.flow.save.call', {
+        logSaveTrace('invokeTabAction.documents.save.call', {
           tab_id: tab.id,
           has_api: !!api,
           has_save_flow: !!api?.saveFlow,
@@ -1305,7 +1542,7 @@
         });
         if (!api?.saveFlow) return false;
         const result = await api.saveFlow();
-        logSaveTrace('invokeTabAction.flow.save.response', {
+        logSaveTrace('invokeTabAction.documents.save.response', {
           tab_id: tab.id,
           saved: !(result && result.saved === false),
           raw_saved: result?.saved,
@@ -1313,15 +1550,31 @@
         });
         return !(result && result.saved === false);
       }
-      if (tab.kind === 'text') return false;
+      if (tab.kind === 'text') {
+        if (['run', 'dry-run', 'cancel'].includes(action)) {
+          return tab.standaloneController?.invoke?.(action) || false;
+        }
+        return false;
+      }
       const api = getFlowTabApi(tab);
       if (!api) return false;
       if (action === 'undo') {
         await api.undo?.();
+        window.dispatchEvent(new CustomEvent('ziz:workflow-property-refresh'));
         return true;
       }
       if (action === 'redo') {
         await api.redo?.();
+        window.dispatchEvent(new CustomEvent('ziz:workflow-property-refresh'));
+        return true;
+      }
+      if (action === 'add-flow') {
+        await api.addFlow?.();
+        window.dispatchEvent(new CustomEvent('ziz:workflow-property-refresh'));
+        return true;
+      }
+      if (action === 'cancel') {
+        await api.cancelRun?.();
         return true;
       }
       if (action === 'import') {
@@ -1479,26 +1732,37 @@
     const safeName = String(flowName || '新規データフロー').replace(/'/g, "''");
     return [
       'metadata:',
-      '  mode: dataflow',
+      "  mode: 'dataflow'",
       `  name: '${safeName}'`,
-      'variables:',
-      '  start: []',
+      "  default_flow_id: '01'",
       'steps:',
-      '  - step_id: step1',
-      '    connector: windows_connector',
-      '    action: define_values',
-      '    params: {}',
-      '    output_variable: step1',
+      "  - step_id: '01'",
+      "    flow_id: '01'",
+      "    label: '変数定義'",
+      "    connector_id: 'WindowsConnector'",
+      "    action_id: 'define_values'",
+      '    ui_position:',
+      '      x: 320',
+      '      y: 220',
       'flows:',
-      '  edges:',
-      '    - from: START',
-      '      to: step1',
-      '      kind: primary',
-      '      order: 1',
-      '    - from: step1',
-      '      to: END',
-      '      kind: primary',
-      '      order: 1',
+      "  '01':",
+      "    label: 'フロー 01'",
+      '    start:',
+      '      ui_position:',
+      '        x: 80',
+      '        y: 220',
+      '      variables: []',
+      '    end:',
+      '      ui_position:',
+      '        x: 660',
+      '        y: 220',
+      '    edges:',
+      "      - from: 'START'",
+      "        to: '01'",
+      '        order: 1',
+      "      - from: '01'",
+      "        to: 'END'",
+      '        order: 1',
       'notes: []',
       ''
     ].join('\n');
@@ -1563,7 +1827,7 @@
     if (meta.extension === '.zizd') content = createFlowFileContent(fileStem);
     if (meta.extension === '.sql') content = '-- SQL\n';
     if (meta.extension === '.md') content = '# メモ\n';
-    await bridge.call('workspace.writeText', {
+    await workspaceApi.writeText({
       scope: targetScope,
       rel_path: newRelPath,
       content,
@@ -1578,7 +1842,7 @@
     const baseDir = targetKind === 'dir' ? relPath : parentRelPath(relPath);
     const dirName = await generateUniqueDirName(targetScope, baseDir, 'new_folder');
     const newRelPath = toChildRelPath(baseDir, dirName);
-    await bridge.call('workspace.mkdir', {
+    await workspaceApi.mkdir({
       scope: targetScope,
       rel_path: newRelPath,
     });
@@ -1590,9 +1854,10 @@
     if (!normalizedRelPath) return;
     const confirmed = window.confirm(`削除しますか？\n${normalizedRelPath}`);
     if (!confirmed) return;
-    const result = await bridge.call('workspace.delete', {
+    const result = await workspaceApi.delete({
       scope: targetScope,
       rel_path: normalizedRelPath,
+      recursive: kind === 'dir',
     });
     await closeTabsForDeletedPath(targetScope, normalizedRelPath, kind === 'dir' ? 'dir' : String(result?.kind || 'file'));
   }
@@ -1639,17 +1904,17 @@
       await requestTabClose(openedTabs[i].id, { skipPrompt: true });
     }
 
-    const filePayload = await bridge.call('workspace.readText', {
+    const filePayload = await workspaceApi.readText({
       scope: targetScope,
       rel_path: oldRelPath,
     });
-    await bridge.call('workspace.writeText', {
+    await workspaceApi.writeText({
       scope: targetScope,
       rel_path: nextRelPath,
       content: String(filePayload?.content || ''),
       force: false,
     });
-    await bridge.call('workspace.delete', {
+    await workspaceApi.delete({
       scope: targetScope,
       rel_path: oldRelPath,
     });
@@ -1758,7 +2023,7 @@
     let payload = null;
     try {
       // ダイアログ表示中はロックしない（固まって見えるのを防ぐ）
-      payload = await bridge.call('workspace.pickRoot', {
+      payload = await workspaceApi.pickRoot({
         title: 'ワークスペースルートを選択',
         current_value: state.globalStore.workspaceRoot,
       });
@@ -1772,7 +2037,7 @@
     try {
       const closedAll = await closeAllTabsOnRootChange();
       if (!closedAll) return;
-      const applied = await bridge.call('workspace.setRoot', { root_path: String(payload.root_path || '') });
+      const applied = await workspaceApi.setRoot({ root_path: String(payload.root_path || '') });
       state.globalStore.workspaceRoot = String(applied?.root_path || payload.root_path || '');
       state.globalStore.configRoot = String(applied?.config_path || payload.config_path || '');
       pushRecentRoot(state.globalStore.workspaceRoot, { skipScheduleSave: true });
@@ -1801,7 +2066,7 @@
     try {
       const closedAll = await closeAllTabsOnRootChange();
       if (!closedAll) return;
-      const payload = await bridge.call('workspace.setRoot', { root_path: targetRoot });
+      const payload = await workspaceApi.setRoot({ root_path: targetRoot });
       state.globalStore.workspaceRoot = String(payload?.root_path || targetRoot);
       state.globalStore.configRoot = String(payload?.config_path || state.globalStore.configRoot || '');
       pushRecentRoot(state.globalStore.workspaceRoot, { skipScheduleSave: true });
@@ -1858,7 +2123,7 @@
   }
 
   async function loadTreeEntries(scope, relPath) {
-    const result = await bridge.call('workspace.list', {
+    const result = await workspaceApi.list({
       scope,
       rel_path: relPath,
     });
@@ -2007,7 +2272,11 @@
       wrapper.appendChild(configNode);
     } catch (error) {
       const normalized = normalizeError(error);
-      wrapper.innerHTML = `<div class="workspace-tree-error">${normalized.message}</div>`;
+      wrapper.innerHTML = '';
+      const errorMessage = document.createElement('div');
+      errorMessage.className = 'workspace-tree-error';
+      errorMessage.textContent = String(normalized.message || '');
+      wrapper.appendChild(errorMessage);
     }
   }
 
@@ -2120,7 +2389,7 @@
       }
       if (key === 'enter') {
         event.preventDefault();
-        void invokeActiveTabAction('run');
+        void invokeActiveTabAction(event.shiftKey ? 'dry-run' : 'run');
       }
     }, true);
   }
@@ -2145,6 +2414,19 @@
           runningFlowTabId = '';
         }
         renderTabs();
+        if (state.activeTabId === tab.id) {
+          window.dispatchEvent(new CustomEvent('ziz:workflow-property-refresh'));
+        }
+        return;
+      }
+
+      if (type === 'selection') {
+        tab.flowSelection = detail;
+        if (state.activeTabId === tab.id) {
+          window.dispatchEvent(new CustomEvent('ziz:workflow-selection', {
+            detail
+          }));
+        }
         return;
       }
 
@@ -2153,7 +2435,14 @@
         tab.flowForceReload = false;
         tab.flowHasLoadedOnce = true;
         tab.flowLoadErrorShown = false;
+        if (detail.flow_name) {
+          const input = document.getElementById('flowName');
+          if (input && document.activeElement !== input) {
+            input.value = String(detail.flow_name);
+          }
+        }
         settleFlowLoadAck(tab, 'loaded', detail);
+        if (state.activeTabId === tab.id) publishActiveTabChange();
         return;
       }
 
@@ -2178,7 +2467,27 @@
         // タブ名はファイル名基準で固定し、flow_name では上書きしない。
         // （ファイル選択時の認知とタブ表示を一致させるため）
         tab.dirty = !!detail.dirty;
+        if (detail.mtime_ns) {
+          tab.flowCurrentMtimeNs = Number(detail.mtime_ns || 0);
+          tab.flowLastMtimeNs = Number(detail.mtime_ns || 0);
+        }
+        if (detail.flow_name) {
+          const input = document.getElementById('flowName');
+          if (
+            input &&
+            state.activeTabId === tab.id &&
+            document.activeElement !== input
+          ) {
+            input.value = String(detail.flow_name);
+          }
+        }
         renderTabs();
+        if (
+          state.activeTabId === tab.id &&
+          ['undo', 'redo'].includes(String(detail.type || ''))
+        ) {
+          window.dispatchEvent(new CustomEvent('ziz:workflow-property-refresh'));
+        }
         return;
       }
 
@@ -2190,9 +2499,31 @@
     });
   }
 
+  function bindWorkflowShellCommands() {
+    const actionMap = {
+      'flow.add': 'add-flow',
+      'document.undo': 'undo',
+      'document.redo': 'redo',
+      'run.start': 'run',
+      'run.cancel': 'cancel',
+      'document.save': 'save',
+    };
+    window.addEventListener('ziz:workflow-shell-command', (event) => {
+      const action = actionMap[String(event?.detail?.commandId || '')];
+      if (action) void invokeActiveTabAction(action);
+    });
+    window.addEventListener('ziz:workflow-title-change', (event) => {
+      const tab = activeTab();
+      if (!isFlowTab(tab)) return;
+      const name = String(event?.detail?.name || '').trim();
+      if (!name) return;
+      getFlowTabApi(tab)?.setFlowName?.(name);
+    });
+  }
+
   async function initRoots() {
     try {
-      const payload = await bridge.call('workspace.getRoot', {});
+      const payload = await workspaceApi.getRoot();
       state.globalStore.workspaceRoot = String(payload?.root_path || '');
       state.globalStore.configRoot = String(payload?.config_path || '');
       if (state.globalStore.workspaceRoot) {
@@ -2206,6 +2537,18 @@
   function exposeApi() {
     window.zizWorkspace = {
       openTextFile,
+      getActiveFlowApi() {
+        const tab = activeTab();
+        return isFlowTab(tab) ? getFlowTabApi(tab) : null;
+      },
+      getActiveTab() {
+        const tab = activeTab();
+        return tab ? {
+          id: tab.id,
+          kind: tab.kind,
+          doc_session_id: tab.docSessionId || ''
+        } : null;
+      },
       saveActiveTab: async () => {
         const tab = activeTab();
         if (!tab || tab.kind !== 'text') return false;
@@ -2220,6 +2563,7 @@
     bindContextMenuActions();
     bindExplorerContextMenuActions();
     bindWorkspaceRunEvents();
+    bindWorkflowShellCommands();
     bindGlobalSaveShortcut();
 
     mountTabViews();
@@ -2230,6 +2574,10 @@
     await loadRecentRootsFromConfig();
     await loadFileIconMapFromConfig();
     await initRoots();
+    const pendingFlow = readAndClearPendingFlow();
+    if (pendingFlow) {
+      await openPreloadedFlow(pendingFlow);
+    }
     const pendingAction = readAndClearPendingSidebarAction();
     if (pendingAction === 'project-select' || pendingAction === 'explorer') {
       setLeftMode(pendingAction);

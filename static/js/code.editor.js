@@ -8,7 +8,7 @@
   const SUGGEST_INDEX_LOADING = new Map();
 
   function getShellApi() {
-    return window.zizShell || {};
+    return window.zizPackages?.app?.shell || {};
   }
 
   async function loadScriptOnce(path) {
@@ -89,7 +89,6 @@
 
   function getBridgeApi() {
     return (window.zizPackages && window.zizPackages.core && window.zizPackages.core.bridge)
-      || window.zizBridge
       || null;
   }
 
@@ -665,7 +664,6 @@
   }
 
   const codeEditors = { mountCodeEditor };
-  window.codeEditors = codeEditors;
   const packages = window.zizPackages = window.zizPackages || {};
   const core = packages.core = packages.core || {};
   core.codeEditors = codeEditors;

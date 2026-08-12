@@ -1,0 +1,27 @@
+.zwd-app-node {
+  gap: 2px;
+}
+
+.zwd-app-node__meta {
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  gap: 5px;
+}
+
+.zwd-app-node__icon {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  object-fit: contain;
+}
+
+.zwd-app-node__connector,
+.zwd-app-node__detail {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font: 10px/14px var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -1,0 +1,30 @@
+{
+  "name": "zizai-playwright-tests",
+  "version": "1.0.0",
+  "description": "zizai の Playwright テスト一式",
+  "main": "index.js",
+  "directories": {
+    "doc": "../docs"
+  },
+  "scripts": {
+    "test:e2e": "playwright test --config playwright.config.js",
+    "test:e2e:ui": "playwright test --config playwright.config.js --ui",
+    "test:e2e:category": "powershell -ExecutionPolicy Bypass -File scripts/run-e2e-by-category.ps1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tomohiro-ono-works/zizai.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/tomohiro-ono-works/zizai/issues"
+  },
+  "homepage": "https://github.com/tomohiro-ono-works/zizai#readme",
+  "devDependencies": {
+    "@playwright/test": "^1.59.1",
+    "@types/node": "^25.5.2"
+  }
+}

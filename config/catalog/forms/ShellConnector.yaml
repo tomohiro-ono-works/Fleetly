@@ -1,0 +1,11 @@
+form_schema_id: 'ShellConnector.execute_bat'
+fields:
+  - key: 'file_path'
+    label: 'バッチファイル'
+    kind: 'file'
+    required: true
+  - key: 'args'
+    label: '引数'
+    kind: 'text'
+    required: false
+    allowVars: true

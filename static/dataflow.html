@@ -3,21 +3,29 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' qrc:; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'none'; object-src 'none'; base-uri 'none'; frame-src 'self'; form-action 'none'">
   <title>ziz</title>
   <link rel="icon" href="./icons/ziz.svg">
   <link rel="stylesheet" href="./css/00_tokens.css">
   <link rel="stylesheet" href="./css/01_base.css?v=20260619-1">
   <link rel="stylesheet" href="./css/05_sidebar.css?v=20260512-1">
   <link rel="stylesheet" href="./css/06_workspace.css?v=20260619-1">
+  <link rel="stylesheet" href="./css/ui-shell.css?v=20260729-1">
+  <link rel="stylesheet" href="./css/app-shell.adapter.css?v=20260729-1">
   <link rel="stylesheet" href="./css/10_header.css?v=20260619-1">
   <link rel="stylesheet" href="./css/15_dialog.css?v=20260406-3">
   <link rel="stylesheet" href="./css/20_node-detail.css?v=20260419-5">
   <link rel="stylesheet" href="./css/22_code-editor.css?v=20260411-1">
   <link rel="stylesheet" href="./css/30_flowchart.css?v=20260429-3">
   <link rel="stylesheet" href="./css/40_detail-panel.css?v=20260512-1">
+  <link rel="stylesheet" href="./css/workflow-designer.css?v=20260729-1">
+  <link rel="stylesheet" href="./css/workflow-designer.adapter.css?v=20260729-1">
+  <link rel="stylesheet" href="./css/classic-workflow-designer.css?v=20260730-1">
+  <link rel="stylesheet" href="./css/tabular-import-assistant.css?v=20260729-1">
   <link rel="stylesheet" href="./css/90_responsive.css">
-  <link rel="stylesheet" href="./modal/modal_core.css">
-  <link rel="stylesheet" href="./modal/excel_modal.css">
+  <link rel="stylesheet" href="./css/workflow-app.css?v=20260729-1">
+  <link rel="stylesheet" href="./css/workflow-property-result.css?v=20260729-1">
+  <link rel="stylesheet" href="./css/standalone-run.css?v=20260729-1">
 </head>
 <body
   data-shell-page="dataflow"
@@ -37,73 +45,6 @@
     </section>
   </main>
 
-  <div id="excelModal" class="mdl" aria-hidden="true">
-    <div class="mdl__backdrop" data-mdl-close></div>
-    <div class="mdl__panel" role="dialog" aria-modal="true" aria-labelledby="excelTitle">
-      <div class="mdl__header">
-        <div class="mdl__title" id="excelTitle">Excelアシスタント</div>
-        <button class="mbtn" type="button" data-mdl-close>閉じる</button>
-      </div>
-      <div class="mdl__bar">
-        <button id="xPick" class="mbtn" type="button">ファイル選択</button>
-        <span id="xFileLabel" class="mdl__hint">未選択</span>
-        <label class="mdl__hint">シート:
-          <select id="xSheet" class="mselect" disabled></select>
-        </label>
-        <span class="mdl__hint" id="xStatus"></span>
-        <span class="mdl__hint">クリック: ヘッダー行 / ダブルクリック: データ開始行（上から30行）</span>
-      </div>
-      <div id="xTableWrap" class="mdl__tablewrap preview-tablewrap"></div>
-      <div class="mdl__footer">
-        <span class="mdl__hint" id="xPicked"></span>
-        <div class="mdl__actions">
-          <button class="mbtn" type="button" data-mdl-close>キャンセル</button>
-          <button class="mbtn mbtn--primary" type="button" id="xOk">OK</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
-  <div id="csvModal" class="mdl" aria-hidden="true">
-    <div class="mdl__backdrop" data-mdl-close></div>
-    <div class="mdl__panel" role="dialog" aria-modal="true" aria-labelledby="csvTitle">
-      <div class="mdl__header">
-        <div class="mdl__title" id="csvTitle">CSVアシスタント</div>
-        <button class="mbtn" type="button" data-mdl-close>閉じる</button>
-      </div>
-      <div class="mdl__bar">
-        <button id="cPick" class="mbtn" type="button">ファイル選択</button>
-        <span id="cFileLabel" class="mdl__hint">未選択</span>
-        <input id="cFile" class="minput" type="file" accept=".csv,.tsv,.txt" style="display:none" />
-        <label class="mdl__hint">文字コード:
-          <select id="cEncoding" class="mselect">
-            <option value="utf8">utf8</option>
-            <option value="shift_jis">shift_jis</option>
-            <option value="cp932">cp932</option>
-          </select>
-        </label>
-        <label class="mdl__hint">区切り文字:
-          <select id="cDelimiter" class="mselect">
-            <option value=",">カンマ (,)</option>
-            <option value="\t">タブ (TAB)</option>
-            <option value=";">セミコロン (;)</option>
-            <option value="|">パイプ (|)</option>
-          </select>
-        </label>
-        <span class="mdl__hint" id="cStatus"></span>
-        <span class="mdl__hint">クリック: ヘッダー行 / ダブルクリック: データ開始行（上から30行）</span>
-      </div>
-      <div id="cTableWrap" class="mdl__tablewrap preview-tablewrap"></div>
-      <div class="mdl__footer">
-        <span class="mdl__hint" id="cPicked"></span>
-        <div class="mdl__actions">
-          <button class="mbtn" type="button" data-mdl-close>キャンセル</button>
-          <button class="mbtn mbtn--primary" type="button" id="cOk">OK</button>
-        </div>
-      </div>
-    </div>
-  </div>
-
   <div id="appDialog" class="app-dialog" aria-hidden="true">
     <div class="app-dialog__backdrop" data-app-dialog-close></div>
     <div class="app-dialog__panel" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle">
@@ -119,27 +60,89 @@
     </div>
   </div>
 
-  <script src="./config/config.js?v=20260419-1"></script>
-  <script src="./js/packages/core.package.js?v=20260406-2"></script>
-  <script src="./js/packages/ui.package.js?v=20260406-1"></script>
+  <script src="./js/packages/core.package.js?v=20260729-1"></script>
+  <script src="./js/packages/ui.package.js?v=20260729-1"></script>
   <script src="./js/utils.js?v=20260406-1"></script>
   <script src="./js/dialog.js?v=20260406-5"></script>
-  <script src="./js/state.js?v=20260419-4"></script>
-  <script src="./js/vars.js"></script>
   <script src="./js/bridge.js?v=20260406-1"></script>
-  <script src="./modal/modal_core.js?v=20260407-1"></script>
-  <script src="./js/ui.fields.js?v=20260419-2"></script>
-  <script src="./js/ui.node.shared.js?v=20260411-2"></script>
-  <script src="./js/ui.node.canvas.layout.js?v=20260419-1"></script>
-  <script src="./js/ui.node.canvas.draw.js?v=20260419-20"></script>
-  <script src="./js/ui.node.canvas.hit.js?v=20260419-2"></script>
-  <script src="./js/ui.node.canvas.js?v=20260419-4"></script>
-  <script src="./js/ui.node.detail.js?v=20260419-5"></script>
-  <script src="./js/ui.node.runtime.js?v=20260411-3"></script>
-  <script src="./js/ui.renderer.js?v=20260518-1"></script>
-  <script src="./js/app-shell.js?v=20260619-1"></script>
+  <script src="./js/workspace.adapter.js?v=20260729-1"></script>
+  <script src="./js/documents.adapter.js?v=20260729-1"></script>
+  <script src="./js/result.adapter.js?v=20260729-1"></script>
+  <script src="./js/run.adapter.js?v=20260729-1"></script>
+  <script src="./js/catalog.adapter.js?v=20260729-1"></script>
+  <script src="./js/ui.fields.js?v=20260729-1"></script>
+  <script src="./js/standalone-app/standalone_form.js?v=20260729-1"></script>
+  <script src="./js/standalone-app/standalone_result_view.js?v=20260729-1"></script>
+  <script src="./js/standalone-app/standalone_controller.js?v=20260729-1"></script>
+  <script src="./js/tabular-import/assistant_events.js?v=20260729-1"></script>
+  <script src="./js/tabular-import/assistant_types.js?v=20260729-1"></script>
+  <script src="./js/tabular-import/format_excel.js?v=20260729-1"></script>
+  <script src="./js/tabular-import/format_delimited.js?v=20260729-1"></script>
+  <script src="./js/tabular-import/assistant_dom.js?v=20260729-1"></script>
+  <script src="./js/tabular-import/assistant_view.js?v=20260729-1"></script>
+  <script src="./js/tabular-import/assistant_requests.js?v=20260729-1"></script>
+  <script src="./js/tabular-import/tabular_import_assistant.js?v=20260729-1"></script>
+  <script src="./js/tabular-import.adapter.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_events.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_types.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_document.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_ids.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_graph.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_fragments.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_clone.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_core_api.js?v=20260730-1"></script>
+  <script src="./js/workflow-designer/designer_dom.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_note_dom.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_feedback.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_render.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_note_edit.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_selection.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_commands.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/designer_interaction.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer/workflow_designer.js?v=20260729-1"></script>
+  <script src="./js/classic-workflow-designer/classic_dom.js?v=20260730-1"></script>
+  <script src="./js/classic-workflow-designer/classic_graph.js?v=20260730-1"></script>
+  <script src="./js/classic-workflow-designer/classic_draw_primitives.js?v=20260730-1"></script>
+  <script src="./js/classic-workflow-designer/classic_draw_nodes.js?v=20260730-1"></script>
+  <script src="./js/classic-workflow-designer/classic_renderer.js?v=20260730-1"></script>
+  <script src="./js/classic-workflow-designer/classic_note_editor.js?v=20260730-1"></script>
+  <script src="./js/classic-workflow-designer/classic_interaction.js?v=20260730-1"></script>
+  <script src="./js/classic-workflow-designer/classic_workflow_designer.js?v=20260730-1"></script>
+  <script src="./js/workflow-document.store-patch.js?v=20260729-1"></script>
+  <script src="./js/workflow-document.store.js?v=20260729-1"></script>
+  <script src="./js/workflow-document.command-support.js?v=20260729-1"></script>
+  <script src="./js/workflow-document.command-graph.js?v=20260729-1"></script>
+  <script src="./js/workflow-document.command-connect.js?v=20260729-1"></script>
+  <script src="./js/workflow-document.command-flow.js?v=20260729-1"></script>
+  <script src="./js/workflow-document.command-edit.js?v=20260729-1"></script>
+  <script src="./js/workflow-document.command-delete.js?v=20260729-1"></script>
+  <script src="./js/workflow-document.commands.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer.zizai-renderers.js?v=20260729-1"></script>
+  <script src="./js/workflow-designer.adapter.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/document_contract.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/property_context.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/data_area_schema_model.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/data_area_schema.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/data_area_runtime.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/data_area_view.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/data_area_controller.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/property_form.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/property_panel.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/embedded_controller.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/workflow_run_controller.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/workflow_session.js?v=20260729-1"></script>
+  <script src="./js/workflow-app/workspace_shell.js?v=20260729-1"></script>
+  <script src="./js/ui-shell/shell_events.js?v=20260729-1"></script>
+  <script src="./js/ui-shell/shell_types.js?v=20260729-1"></script>
+  <script src="./js/ui-shell/shell_regions.js?v=20260729-1"></script>
+  <script src="./js/ui-shell/shell_activitybar.js?v=20260729-1"></script>
+  <script src="./js/ui-shell/shell_tabs.js?v=20260729-1"></script>
+  <script src="./js/ui-shell/shell_layout.js?v=20260729-1"></script>
+  <script src="./js/ui-shell/app_shell.js?v=20260729-1"></script>
+  <script src="./js/app-shell.zizai-view.js?v=20260729-1"></script>
+  <script src="./js/app-shell.js?v=20260729-1"></script>
   <script src="./js/workspace.shell.js?v=20260505-3"></script>
-  <script src="./js/workspace.manager.js?v=20260506-5"></script>
-  <script src="./js/app.js?v=20260518-1"></script>
+  <script src="./js/workspace.manager.js?v=20260729-1"></script>
+  <script src="./js/app.workflow.js?v=20260729-1"></script>
 </body>
 </html>

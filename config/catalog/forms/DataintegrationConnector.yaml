@@ -1,0 +1,57 @@
+forms:
+  - form_schema_id: 'DataintegrationConnector.replace_fields_forrenamelist'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'rename_list_path'
+        label: 'RENAMEリストファイル'
+        kind: 'file'
+        required: true
+        default: 'config\rename.csv'
+        accept: '.csv'
+      - key: 'pre_rename_cleansing'
+        label: 'リネーム前クレンジング'
+        kind: 'checklist'
+        required: false
+        options:
+          - value: 'remove_spaces'
+            label: 'スペース（全角・半角）を削除'
+          - value: 'remove_newlines'
+            label: '改行削除'
+          - value: 'to_halfwidth_alnum'
+            label: '全角（数字・英語）を半角変換'
+          - value: 'symbols_to_snake'
+            label: '半角記号をスネークケースに変換'
+      - key: 'post_rename_cleansing'
+        label: 'リネーム後クレンジング'
+        kind: 'checklist'
+        required: false
+        options:
+          - value: 'exclude_japanese_columns'
+            label: '全角（漢字・ひらがな・カタカナ）文字を含むカラムを対象から外す'
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+  - form_schema_id: 'DataintegrationConnector.filter_rows'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'conditions'
+        label: '条件指定'
+        kind: 'filter-builder'
+        required: false
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true

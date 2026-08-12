@@ -1,0 +1,265 @@
+forms:
+  - form_schema_id: 'WindowsConnector.define_values'
+    fields:
+      - key: 'define_values'
+        label: 'パラメータ'
+        kind: 'define-values-editor'
+        required: false
+  - form_schema_id: 'WindowsConnector.loop_tasks'
+    fields:
+      - key: 'source_step_id'
+        label: '繰り返しデータ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'max_iterations'
+        label: '最大反復数'
+        kind: 'number'
+        required: false
+        default: 30
+        min: 1
+  - form_schema_id: 'WindowsConnector.rename_and_move_file'
+    fields:
+      - key: 'source_file_path'
+        label: '対象ファイル'
+        kind: 'file'
+        required: true
+        allowVars: true
+      - key: 'destination_folder'
+        label: '変更後フォルダ'
+        kind: 'dir'
+        required: false
+        allowVars: true
+      - key: 'destination_file_name'
+        label: '変更後ファイル名'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '未指定の場合は変更しない'
+      - key: 'allow_missing_source'
+        label: '対象ファイルが存在しない場合は成功扱いにする'
+        kind: 'checkbox'
+        required: false
+        default: false
+  - form_schema_id: 'WindowsConnector.search_files_by_name'
+    fields:
+      - key: 'root_folder'
+        label: 'ルートフォルダ'
+        kind: 'dir'
+        required: true
+        allowVars: true
+      - key: 'recursive'
+        label: '再帰的に子階層のフォルダを検索する'
+        kind: 'checkbox'
+        required: false
+        default: false
+      - key: 'file_name_pattern'
+        label: '検索するファイル名（正規表現）'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: ^売上_.*'
+      - key: 'file_extension_pattern'
+        label: '検索するファイルの拡張子（正規表現）'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: csv|xlsx'
+      - key: 'max_elapsed_seconds'
+        label: '最大経過時間（秒）'
+        kind: 'number'
+        required: true
+        default: 120
+        min: 30
+        max: 480
+  - form_schema_id: 'WindowsConnector.search_text_in_files'
+    fields:
+      - key: 'root_folder'
+        label: 'ルートフォルダ'
+        kind: 'dir'
+        required: true
+        allowVars: true
+      - key: 'recursive'
+        label: '再帰的に子階層のフォルダを検索する'
+        kind: 'checkbox'
+        required: false
+        default: false
+      - key: 'file_name_pattern'
+        label: '検索するファイル名（正規表現）'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: ^売上_.*'
+      - key: 'file_extension_pattern'
+        label: '検索するファイルの拡張子（正規表現）'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: md|txt'
+      - key: 'content_pattern'
+        label: '検索する文字列（正規表現）'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: error|warning'
+      - key: 'context_lines'
+        label: '取得行（前後行数）'
+        kind: 'number'
+        required: true
+        default: 0
+        min: 0
+        max: 200
+      - key: 'max_elapsed_seconds'
+        label: '最大経過時間（秒）'
+        kind: 'number'
+        required: true
+        default: 120
+        min: 30
+        max: 480
+  - form_schema_id: 'WindowsConnector.create_markdown_file'
+    fields:
+      - key: 'write_mode'
+        label: '書き込みモード'
+        kind: 'combo'
+        required: true
+        default: 'replace'
+        options:
+          - value: 'replace'
+            label: '置換'
+          - value: 'append'
+            label: '追記'
+      - key: 'target_file_path'
+        label: '対象ファイル'
+        kind: 'file'
+        required: true
+        allowVars: true
+        accept: '.md,.markdown,.txt'
+      - key: 'content'
+        label: '入力内容'
+        kind: 'textarea'
+        codeLanguage: 'markdown'
+        required: true
+        allowVars: true
+        placeholder: '{{step1.field_name}} で step の1行目を参照できます。'
+  - form_schema_id: 'WindowsConnector.mouse_click'
+    fields:
+      - key: 'coordinate_mode'
+        label: '座標指定'
+        kind: 'combo'
+        required: true
+        default: 'specified'
+        allowCustom: false
+        options:
+          - value: 'current'
+            label: '現在座標'
+          - value: 'specified'
+            label: '座標を指定する'
+      - key: 'x'
+        label: 'X 座標'
+        kind: 'number'
+        required: true
+        allowVars: true
+        placeholder: '例: 640'
+        visible_if:
+          key: 'coordinate_mode'
+          in:
+            - 'specified'
+            - ''
+      - key: 'y'
+        label: 'Y 座標'
+        kind: 'number'
+        required: true
+        allowVars: true
+        placeholder: '例: 480'
+        visible_if:
+          key: 'coordinate_mode'
+          in:
+            - 'specified'
+            - ''
+      - key: 'coordinate_picker'
+        label: 'マウスで指定する'
+        kind: 'mouse-coordinate-picker'
+        x_key: 'x'
+        y_key: 'y'
+        visible_if:
+          key: 'coordinate_mode'
+          in:
+            - 'specified'
+            - ''
+      - key: 'button'
+        label: 'ボタン'
+        kind: 'combo'
+        required: true
+        default: 'left'
+        allowCustom: false
+        options:
+          - value: 'left'
+            label: '左クリック'
+          - value: 'right'
+            label: '右クリック'
+      - key: 'click_count'
+        label: 'クリック回数'
+        kind: 'combo'
+        required: true
+        default: '1'
+        allowCustom: false
+        options:
+          - value: '1'
+            label: '1 回'
+          - value: '2'
+            label: '2 回（ダブルクリック）'
+  - form_schema_id: 'WindowsConnector.input_text'
+    fields:
+      - key: 'input_mode'
+        label: '入力モード'
+        kind: 'combo'
+        required: true
+        default: 'replace'
+        allowCustom: false
+        options:
+          - value: 'replace'
+            label: '置換（全選択して入力）'
+          - value: 'append'
+            label: '追記'
+      - key: 'text'
+        label: '入力文字列'
+        kind: 'textarea'
+        required: true
+        allowVars: true
+  - form_schema_id: 'WindowsConnector.send_keys'
+    fields:
+      - key: 'modifier_keys'
+        label: '修飾キー'
+        kind: 'checklist'
+        required: false
+        options:
+          - value: 'ctrl'
+            label: 'Ctrl'
+          - value: 'shift'
+            label: 'Shift'
+          - value: 'alt'
+            label: 'Alt'
+      - key: 'key'
+        label: 'キー'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: A, 1, ENTER, F5'
+      - key: 'wait_seconds'
+        label: '送信後待機 (秒)'
+        kind: 'number'
+        required: false
+        default: 0
+        min: 0
+        allowVars: true
+  - form_schema_id: 'WindowsConnector.wait'
+    fields:
+      - key: 'duration_seconds'
+        label: '待機時間 (秒)'
+        kind: 'number'
+        required: true
+        default: 1
+        min: 0
+        max: 600
+        allowVars: true

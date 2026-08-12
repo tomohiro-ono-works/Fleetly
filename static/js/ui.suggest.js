@@ -161,5 +161,7 @@
   }
 
   const uiSuggest = { wrapWithVarSuggest, attachCodeEditorVarSuggest };
-  window.uiSuggest = uiSuggest;
+  const packagesOut = window.zizPackages = window.zizPackages || {};
+  const uiOut = packagesOut.ui = packagesOut.ui || {};
+  uiOut.suggest = uiSuggest;
 })();

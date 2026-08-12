@@ -1,0 +1,242 @@
+forms:
+  - form_schema_id: 'PlotlyConnector.plot_combined_bar_line'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'x_col'
+        label: 'X列'
+        kind: 'text'
+        required: true
+        allowVars: true
+      - key: 'bar_col'
+        label: '棒グラフ列'
+        kind: 'text'
+        required: true
+        allowVars: true
+      - key: 'line_col'
+        label: '折れ線列'
+        kind: 'text'
+        required: true
+        allowVars: true
+      - key: 'title'
+        label: 'タイトル'
+        kind: 'text'
+        required: false
+        allowVars: true
+        default: '棒グラフ＋折れ線グラフ'
+      - key: 'output_folder'
+        label: '出力フォルダ'
+        kind: 'dir'
+        required: true
+      - key: 'file_name'
+        label: '出力ファイル名'
+        kind: 'text'
+        required: true
+        default: 'combined_bar_line'
+        allowVars: true
+      - key: 'mode'
+        label: '出力形式'
+        kind: 'combo'
+        required: true
+        default: 'png'
+        options:
+          - 'png'
+          - 'html'
+          - 'jpg'
+          - 'jpeg'
+          - 'pdf'
+          - 'svg'
+  - form_schema_id: 'PlotlyConnector.plot_stacked_bar'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'x_col'
+        label: 'X列'
+        kind: 'text'
+        required: true
+        allowVars: true
+      - key: 'y_cols'
+        label: '積み上げ列'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: cost,profit'
+      - key: 'is_percent'
+        label: '100%積み上げ'
+        kind: 'combo'
+        required: false
+        default: ''
+        options:
+          - ''
+          - '1'
+      - key: 'title'
+        label: 'タイトル'
+        kind: 'text'
+        required: false
+        allowVars: true
+        default: '積み上げ棒グラフ'
+      - key: 'output_folder'
+        label: '出力フォルダ'
+        kind: 'dir'
+        required: true
+      - key: 'file_name'
+        label: '出力ファイル名'
+        kind: 'text'
+        required: true
+        default: 'stacked_bar'
+        allowVars: true
+      - key: 'mode'
+        label: '出力形式'
+        kind: 'combo'
+        required: true
+        default: 'png'
+        options:
+          - 'png'
+          - 'html'
+          - 'jpg'
+          - 'jpeg'
+          - 'pdf'
+          - 'svg'
+  - form_schema_id: 'PlotlyConnector.plot_scorecard'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'value_col'
+        label: '値列'
+        kind: 'text'
+        required: true
+        allowVars: true
+      - key: 'title'
+        label: 'タイトル'
+        kind: 'text'
+        required: false
+        allowVars: true
+        default: 'スコアカード'
+      - key: 'output_folder'
+        label: '出力フォルダ'
+        kind: 'dir'
+        required: true
+      - key: 'file_name'
+        label: '出力ファイル名'
+        kind: 'text'
+        required: true
+        default: 'scorecard'
+        allowVars: true
+      - key: 'mode'
+        label: '出力形式'
+        kind: 'combo'
+        required: true
+        default: 'png'
+        options:
+          - 'png'
+          - 'html'
+          - 'jpg'
+          - 'jpeg'
+          - 'pdf'
+          - 'svg'
+  - form_schema_id: 'PlotlyConnector.plot_funnel'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'stage_col'
+        label: 'ステージ列'
+        kind: 'text'
+        required: true
+        allowVars: true
+      - key: 'value_col'
+        label: '値列'
+        kind: 'text'
+        required: true
+        allowVars: true
+      - key: 'title'
+        label: 'タイトル'
+        kind: 'text'
+        required: false
+        allowVars: true
+        default: 'ファネルチャート'
+      - key: 'output_folder'
+        label: '出力フォルダ'
+        kind: 'dir'
+        required: true
+      - key: 'file_name'
+        label: '出力ファイル名'
+        kind: 'text'
+        required: true
+        default: 'funnel'
+        allowVars: true
+      - key: 'mode'
+        label: '出力形式'
+        kind: 'combo'
+        required: true
+        default: 'png'
+        options:
+          - 'png'
+          - 'html'
+          - 'jpg'
+          - 'jpeg'
+          - 'pdf'
+          - 'svg'
+  - form_schema_id: 'PlotlyConnector.plot_radar'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'value_cols'
+        label: '値列（カンマ区切り）'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: sales,profit,cost'
+      - key: 'name'
+        label: '系列名'
+        kind: 'text'
+        required: false
+        allowVars: true
+        default: 'series'
+      - key: 'title'
+        label: 'タイトル'
+        kind: 'text'
+        required: false
+        allowVars: true
+        default: 'レーダーチャート'
+      - key: 'output_folder'
+        label: '出力フォルダ'
+        kind: 'dir'
+        required: true
+      - key: 'file_name'
+        label: '出力ファイル名'
+        kind: 'text'
+        required: true
+        default: 'radar'
+        allowVars: true
+      - key: 'mode'
+        label: '出力形式'
+        kind: 'combo'
+        required: true
+        default: 'png'
+        options:
+          - 'png'
+          - 'html'
+          - 'jpg'
+          - 'jpeg'
+          - 'pdf'
+          - 'svg'

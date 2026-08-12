@@ -1,21 +1,20 @@
 import os
-import json
 import time
 import logging
 import ctypes
 from pathlib import Path
 
+from app.gui.host_navigation import (
+    ALLOW,
+    OPEN_EXTERNAL,
+    TrustedNavigationPolicy,
+)
+from app.gui.host_external import open_external_url
+from core.logger import setup_logger
+
 logger = logging.getLogger("ziz.gui_host")
 
 WINDOW_FRAME_COLOR = "#292941"
-
-
-def _is_within_path(path, base_dir):
-    try:
-        path.relative_to(base_dir)
-        return True
-    except ValueError:
-        return False
 
 
 def _configure_qtwebengine_environment():
@@ -37,12 +36,13 @@ def _set_windows_app_user_model_id():
     if os.name != "nt":
         return
     try:
-        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("tomoh.zizai.desktop")
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("zizai.desktop")
     except Exception:
         logger.debug("AppUserModelID の設定に失敗しました。", exc_info=True)
 
 
-def run_webview_app(form_html_path, debug=False):
+def run_webview_app(form_html_path, debug=False, ready_callback=None):
+    setup_logger(mode="gui", debug=bool(debug))
     startup_started = time.perf_counter()
     logger.info("[gui-startup] phase=begin debug=%s", bool(debug))
     _configure_qtwebengine_environment()
@@ -50,7 +50,7 @@ def run_webview_app(form_html_path, debug=False):
     logger.info("[gui-startup] phase=environment_configured elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
     try:
         from PySide6.QtCore import QElapsedTimer, QEvent, QRect, Qt, QTimer, QUrl, Signal
-        from PySide6.QtGui import QAction, QCursor, QIcon, QKeySequence
+        from PySide6.QtGui import QAction, QCursor, QDesktopServices, QIcon, QKeySequence
         from PySide6.QtWebChannel import QWebChannel
         from PySide6.QtWidgets import (
             QApplication,
@@ -76,47 +76,71 @@ def run_webview_app(form_html_path, debug=False):
         raise RuntimeError("PySide6 と Qt WebEngine がインストールされていません。") from error
     logger.info("[gui-startup] phase=qt_imported elapsed_ms=%s", round((time.perf_counter() - startup_started) * 1000, 1))
 
-    from .bridge import BridgeRuntime, WebViewBridge
+    from .bridge import BridgeRuntime
+    from .qwebchannel_transport import QWebChannelTransport
 
     html_path = Path(form_html_path).resolve()
     if not html_path.exists():
         raise FileNotFoundError(f"GUI ファイルが見つかりません: {html_path}")
+    bundled_asset_root = (Path(__file__).resolve().parents[2] / "static").resolve()
+    bundled_entry = (bundled_asset_root / "home.html").resolve()
+    if not debug and html_path != bundled_entry:
+        raise PermissionError("production GUI entryはbundled home.htmlに固定されています。")
+    asset_root = bundled_asset_root if html_path == bundled_entry else html_path.parent
+    navigation_policy = TrustedNavigationPolicy(
+        asset_root=asset_root,
+        entry_file=html_path,
+    )
 
     class LockedDownRequestInterceptor(QWebEngineUrlRequestInterceptor):
-        def __init__(self, base_dir, html_file):
+        def __init__(self, policy):
             super().__init__()
-            self._base_dir = Path(base_dir).resolve()
-            self._html_file = Path(html_file).resolve()
-            self._allowed_schemes = {"file", "qrc", "data", "blob", "about"}
+            self._policy = policy
 
         def interceptRequest(self, info):
             url = info.requestUrl()
-            scheme = str(url.scheme() or "").lower()
-            if scheme not in self._allowed_schemes:
-                info.block(True)
-                return
-            if scheme != "file":
-                return
-            local_file = Path(url.toLocalFile() or "").resolve()
-            if local_file == self._html_file or _is_within_path(local_file, self._base_dir):
+            if self._policy.allow_request(
+                url_text=url.toString(),
+                scheme=url.scheme(),
+                local_file=url.toLocalFile(),
+            ):
                 return
             info.block(True)
 
+    class ExternalOpenPage(QWebEnginePage):
+        def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
+            decision = navigation_policy.classify(
+                url_text=url.toString(),
+                scheme=url.scheme(),
+                local_file=url.toLocalFile(),
+                is_main_frame=True,
+            )
+            if decision == OPEN_EXTERNAL:
+                QDesktopServices.openUrl(url)
+            QTimer.singleShot(0, self.deleteLater)
+            return False
+
     class LockedDownPage(QWebEnginePage):
-        def __init__(self, profile, base_dir, html_file, parent=None):
+        def __init__(self, profile, policy, parent=None):
             super().__init__(profile, parent)
-            self._base_dir = Path(base_dir).resolve()
-            self._html_file = Path(html_file).resolve()
-            self._allowed_schemes = {"file", "qrc", "data", "blob", "about"}
+            self._policy = policy
 
         def acceptNavigationRequest(self, url, navigation_type, is_main_frame):
-            scheme = str(url.scheme() or "").lower()
-            if scheme not in self._allowed_schemes:
+            decision = self._policy.classify(
+                url_text=url.toString(),
+                scheme=url.scheme(),
+                local_file=url.toLocalFile(),
+                is_main_frame=bool(is_main_frame),
+            )
+            if decision == OPEN_EXTERNAL:
+                QDesktopServices.openUrl(url)
                 return False
-            if scheme != "file":
+            if decision == ALLOW:
                 return True
-            local_file = Path(url.toLocalFile() or "").resolve()
-            return local_file == self._html_file or _is_within_path(local_file, self._base_dir)
+            return False
+
+        def createWindow(self, window_type):
+            return ExternalOpenPage(self.profile(), self)
 
         def javaScriptConsoleMessage(self, level, message, line_number, source_id):
             logger.info(
@@ -423,8 +447,8 @@ def run_webview_app(form_html_path, debug=False):
         profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.DiskHttpCache)
     except Exception:
         logger.debug("WebView HTTPキャッシュ設定に失敗しました。", exc_info=True)
-    profile.setUrlRequestInterceptor(LockedDownRequestInterceptor(html_path.parent, html_path))
-    page = LockedDownPage(profile, html_path.parent, html_path, view)
+    profile.setUrlRequestInterceptor(LockedDownRequestInterceptor(navigation_policy))
+    page = LockedDownPage(profile, navigation_policy, view)
     view.setPage(page)
     logger.info(
         "[gui-startup] phase=webengine_objects_ready elapsed_ms=%s",
@@ -674,14 +698,14 @@ def run_webview_app(form_html_path, debug=False):
         save_flow_callback=pick_save_flow_dialog,
         window_control_callback=handle_window_control,
         coordinate_capture_callback=start_coordinate_capture,
+        open_external_callback=open_external_url,
     )
-    bridge = WebViewBridge(runtime)
-
-    def emit_event_to_frontend(message):
-        serialized = json.dumps(message, ensure_ascii=False)
-        bridge.messageToFrontend.emit(serialized)
-
-    runtime.set_event_sink(emit_event_to_frontend)
+    bridge = QWebChannelTransport(
+        runtime.dispatcher,
+        base_dir=runtime.base_dir,
+        sanitizer=runtime.security_sanitizer,
+    )
+    runtime.set_event_sink(bridge.publish)
 
     def emit_coordinate_preview(capture_id, x, y):
         runtime.emit_event("mouse.coordinateCapture.preview", {
@@ -707,6 +731,17 @@ def run_webview_app(form_html_path, debug=False):
     coordinate_capture_overlay.coordinate_cancelled.connect(emit_coordinate_cancelled)
     app.aboutToQuit.connect(coordinate_capture_overlay.close)
 
+    def shutdown_bridge():
+        try:
+            channel.deregisterObject(bridge)
+        except RuntimeError:
+            logger.exception("QWebChannel object deregistration failed during shutdown")
+        bridge.shutdown()
+        runtime.set_event_sink(None)
+        runtime.shutdown()
+
+    app.aboutToQuit.connect(shutdown_bridge)
+
     channel = QWebChannel(page)
     channel.registerObject("backendBridge", bridge)
     page.setWebChannel(channel)
@@ -714,6 +749,7 @@ def run_webview_app(form_html_path, debug=False):
 
     retry_state = {
         "attempts": 0,
+        "ready_notified": False,
     }
     startup_version = str(int(html_path.stat().st_mtime))
     target_url = QUrl.fromLocalFile(str(html_path))
@@ -747,6 +783,17 @@ def run_webview_app(form_html_path, debug=False):
                 retry_state["attempts"],
                 round((time.perf_counter() - startup_started) * 1000, 1),
             )
+            if (
+                not retry_state["ready_notified"]
+                and callable(ready_callback)
+            ):
+                retry_state["ready_notified"] = True
+                try:
+                    ready_callback()
+                except Exception:
+                    logger.exception(
+                        "GUI ready callbackの実行に失敗しました。"
+                    )
             return
         show_retry_overlay_for_load_failure()
 

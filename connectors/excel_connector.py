@@ -176,6 +176,7 @@ class ExcelConnector(BaseConnector):
                 schema_override=schema,
                 date_serial_system=date_serial_system,
                 date_cleansing=date_cleansing,
+                allow_rename=False,
             )
         if header_row < 1:
             raise ValueError("header_row は 1 以上で指定してください。")
@@ -202,6 +203,7 @@ class ExcelConnector(BaseConnector):
             schema_override=schema,
             date_serial_system=date_serial_system,
             date_cleansing=date_cleansing,
+            allow_rename=False,
         )
 
     def execute(self, action: str, params: dict[str, Any], context: dict[str, Any]) -> Any:
@@ -417,6 +419,7 @@ class ExcelConnector(BaseConnector):
             schema_override=schema,
             date_serial_system=date_serial_system,
             date_cleansing=date_cleansing,
+            allow_rename=False,
         )
         schema_elapsed_ms = round((time.perf_counter() - schema_started) * 1000, 1)
         self.log_performance("run.connector.phase.finish", {
@@ -538,7 +541,7 @@ class ExcelConnector(BaseConnector):
         if not os.path.exists(normalized_output_path):
             with pd.ExcelWriter(normalized_output_path, engine="openpyxl", mode="w") as writer:
                 df_to_write.to_excel(writer, sheet_name=sheet_name, index=False)
-            return f"Excel保存完了 [{mode}]: {normalized_output_path} (Sheet: {sheet_name})"
+            return self.build_execution_metadata(target=sheet_name, path=normalized_output_path)
 
         if mode == 'create_or_replace':
             with pd.ExcelWriter(
@@ -548,7 +551,7 @@ class ExcelConnector(BaseConnector):
                 if_sheet_exists="replace",
             ) as writer:
                 df_to_write.to_excel(writer, sheet_name=sheet_name, index=False)
-            return f"Excel保存完了 [{mode}]: {normalized_output_path} (Sheet: {sheet_name})"
+            return self.build_execution_metadata(target=sheet_name, path=normalized_output_path)
 
         workbook = load_workbook(normalized_output_path)
         try:
@@ -575,4 +578,4 @@ class ExcelConnector(BaseConnector):
                 startrow=start_row,
             )
 
-        return f"Excel保存完了 [{mode}]: {normalized_output_path} (Sheet: {sheet_name})"
+        return self.build_execution_metadata(target=sheet_name, path=normalized_output_path)

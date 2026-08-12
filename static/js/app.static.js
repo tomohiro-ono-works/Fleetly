@@ -3,7 +3,7 @@
   const corePkg = packages.core || {};
   const bridgeApi = corePkg.bridge || null;
   const dialogApi = corePkg.dialog || null;
-  const shellApi = window.zizShell || {};
+  const shellApi = packages.app?.shell || {};
   const bodyRoot = document.body;
   const bodyDataset = bodyRoot?.dataset || {};
 

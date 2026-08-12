@@ -5,7 +5,6 @@ import os
 import re
 import shutil
 import time
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -90,10 +89,12 @@ class WindowsConnector(BaseConnector):
         self._validate_define_values(rows)
 
         output_rows = []
+        variable_names = []
         for row in rows:
             name = str(row.get("name") or "").strip()
             if not name:
                 continue
+            variable_names.append(name)
             existed_before = name in context
             if name in self.SYSTEM_FIXED_VARIABLES:
                 fixed_value = context.get(name, row.get("value"))
@@ -113,7 +114,9 @@ class WindowsConnector(BaseConnector):
                 "definition_type": "overwritten" if existed_before else "defined",
             })
 
-        return self.to_dataframe(output_rows)
+        result = self.build_execution_metadata(target=", ".join(variable_names), path="")
+        result.attrs["ziz_define_values"] = output_rows
+        return result
 
     def rename_and_move_file(self, params: dict[str, Any]) -> pd.DataFrame:
         source_file_path = self._required_path_text(params, "source_file_path")
@@ -126,8 +129,8 @@ class WindowsConnector(BaseConnector):
             if allow_missing_source:
                 message = f"対象ファイルが存在しないためスキップしました: {source_file_path}"
                 return self._complete_action(
-                    action="rename_and_move_file",
                     target=str(source_file_path),
+                    path=str(source_file_path),
                     message=message,
                     log_level="warning",
                 )
@@ -146,8 +149,8 @@ class WindowsConnector(BaseConnector):
         shutil.move(str(source_path), str(target_path))
         message = f"ファイルを移動しました: {target_path}"
         return self._complete_action(
-            action="rename_and_move_file",
             target=str(target_path),
+            path=str(target_path),
             message=message,
         )
 
@@ -170,8 +173,8 @@ class WindowsConnector(BaseConnector):
 
         message = f"Markdown を保存しました: {target_path}"
         return self._complete_action(
-            action="create_markdown_file",
             target=str(target_path),
+            path=str(target_path),
             message=message,
         )
 
@@ -260,7 +263,6 @@ class WindowsConnector(BaseConnector):
 
         message = f"アクティブウィンドウへ {button} クリックを実行しました。"
         return self._complete_action(
-            action="mouse_click",
             target=f"screen:({x}, {y})",
             message=message,
         )
@@ -280,7 +282,6 @@ class WindowsConnector(BaseConnector):
 
         message = f"アクティブウィンドウへ {len(text)} 文字を入力しました。"
         return self._complete_action(
-            action="input_text",
             target="active_window",
             message=message,
         )
@@ -296,7 +297,6 @@ class WindowsConnector(BaseConnector):
 
         message = "アクティブウィンドウへキー入力を送信しました。"
         return self._complete_action(
-            action="send_keys",
             target="active_window",
             message=message,
         )
@@ -309,7 +309,6 @@ class WindowsConnector(BaseConnector):
         time.sleep(duration_seconds)
         message = f"{duration_seconds} 秒待機しました。"
         return self._complete_action(
-            action="wait",
             target="active_window",
             message=message,
         )
@@ -389,20 +388,13 @@ class WindowsConnector(BaseConnector):
     def _complete_action(
         self,
         *,
-        action: str,
         target: str,
         message: str,
+        path: str = "",
         log_level: str = "info",
     ) -> pd.DataFrame:
         self.log_execution(message, level=log_level)
-        return pd.DataFrame([{
-            "status": "success",
-            "executed_at": datetime.now(timezone.utc).isoformat(),
-            "connector": "WindowsConnector",
-            "action": str(action),
-            "target": str(target or ""),
-            "message": str(message or ""),
-        }])
+        return self.build_execution_metadata(target=target, path=path)
 
     @staticmethod
     def _optional_text(value: Any) -> str:

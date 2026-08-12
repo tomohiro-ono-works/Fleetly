@@ -2,15 +2,28 @@ from abc import ABC, abstractmethod
 import json
 import math
 import re
+from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 
 import pandas as pd
 
 class BaseConnector(ABC):
+    EXECUTION_METADATA_COLUMNS = ["job_id", "target", "path", "executed_at"]
+    EXECUTION_METADATA_SCHEMA = [
+        {"origin_name": "job_id", "new_name": "job_id", "description": "外部ジョブ ID", "ziz_datatype": "STRING"},
+        {"origin_name": "target", "new_name": "target", "description": "対象", "ziz_datatype": "STRING"},
+        {"origin_name": "path", "new_name": "path", "description": "出力先 URL またはパス", "ziz_datatype": "STRING"},
+        {"origin_name": "executed_at", "new_name": "executed_at", "description": "完了時刻", "ziz_datatype": "TIMESTAMP"},
+    ]
+
     def __init__(self) -> None:
         self._execution_logger = None
         self._execution_step_id = None
+        self._execution_connector_id = None
+        self._execution_action_id = None
         self._execution_perf_callback = None
+        self._execution_cancel_event = None
+        self._execution_secret_values = set()
 
     @staticmethod
     def normalize_file_path(file_path):
@@ -43,15 +56,36 @@ class BaseConnector(ABC):
             return [value]
         raise TypeError(f"レコード配列へ変換できない型です: {type(value).__name__}")
 
-    def set_execution_logger(self, logger, step_id: str | None = None, perf_callback=None) -> None:
+    def set_execution_logger(
+        self,
+        logger,
+        step_id: str | None = None,
+        perf_callback=None,
+        connector_id: str | None = None,
+        action_id: str | None = None,
+        cancel_event=None,
+        secret_values=None,
+    ) -> None:
         self._execution_logger = logger
         self._execution_step_id = step_id
+        self._execution_connector_id = connector_id
+        self._execution_action_id = action_id
         self._execution_perf_callback = perf_callback
+        self._execution_cancel_event = cancel_event
+        self._execution_secret_values = {
+            str(value)
+            for value in (secret_values or set())
+            if str(value or "")
+        }
 
     def clear_execution_logger(self) -> None:
         self._execution_logger = None
         self._execution_step_id = None
+        self._execution_connector_id = None
+        self._execution_action_id = None
         self._execution_perf_callback = None
+        self._execution_cancel_event = None
+        self._execution_secret_values = set()
 
     def log_performance(self, event: str, payload: dict | None = None) -> None:
         callback = self._execution_perf_callback
@@ -71,6 +105,7 @@ class BaseConnector(ABC):
         schema_override=None,
         date_serial_system: str = "excel_1900",
         date_cleansing: bool = True,
+        allow_rename: bool = True,
     ) -> pd.DataFrame:
         if isinstance(dataframe, pd.DataFrame):
             from core.type_registry import build_dataframe_schema
@@ -85,9 +120,64 @@ class BaseConnector(ABC):
                 schema_items,
                 date_serial_system=date_serial_system,
                 date_cleansing=date_cleansing,
+                allow_rename=allow_rename,
             )
+            if not allow_rename:
+                schema_items = BaseConnector._schema_items_without_rename(schema_items)
             dataframe.attrs["ziz_schema"] = schema_items
         return dataframe
+
+    @classmethod
+    def build_execution_metadata(
+        cls,
+        *,
+        job_id: object = "",
+        target: object = "",
+        path: object = "",
+        executed_at: object = None,
+    ) -> pd.DataFrame:
+        dataframe = pd.DataFrame(
+            [{
+                "job_id": "" if job_id is None else str(job_id),
+                "target": "" if target is None else str(target),
+                "path": "" if path is None else str(path),
+                "executed_at": cls._to_utc_iso(executed_at),
+            }],
+            columns=cls.EXECUTION_METADATA_COLUMNS,
+        )
+        dataframe.attrs["ziz_schema"] = [dict(item) for item in cls.EXECUTION_METADATA_SCHEMA]
+        return dataframe
+
+    @staticmethod
+    def _to_utc_iso(value: object = None) -> str:
+        if isinstance(value, datetime):
+            dt = value
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            else:
+                dt = dt.astimezone(timezone.utc)
+            return dt.isoformat().replace("+00:00", "Z")
+        if value is not None:
+            text = str(value).strip()
+            if text:
+                return text
+        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+    @staticmethod
+    def _schema_items_without_rename(schema_items):
+        normalized_items = []
+        for item in (schema_items if isinstance(schema_items, list) else []):
+            if not isinstance(item, dict):
+                continue
+            next_item = dict(item)
+            origin_name = str(next_item.get("origin_name") or next_item.get("name_ja") or "").strip()
+            new_name = str(next_item.get("new_name") or next_item.get("name_en") or "").strip()
+            canonical_name = origin_name or new_name
+            if canonical_name:
+                next_item["origin_name"] = canonical_name
+                next_item["new_name"] = canonical_name
+            normalized_items.append(next_item)
+        return normalized_items
 
     @staticmethod
     def parse_schema_definition(schema_value):
@@ -109,6 +199,7 @@ class BaseConnector(ABC):
         schema_items,
         date_serial_system: str = "excel_1900",
         date_cleansing: bool = True,
+        allow_rename: bool = True,
     ) -> pd.DataFrame:
         if not isinstance(dataframe, pd.DataFrame):
             return dataframe
@@ -211,19 +302,20 @@ class BaseConnector(ABC):
                 ) from error
 
         # 4) リネーム
-        rename_pairs = []
-        for index, item in enumerate(selected_items):
-            source_name = selected_sources[index]
-            renamed = str(item.get("new_name") or item.get("name_en") or "").strip()
-            if renamed and renamed != source_name:
-                rename_pairs.append((source_name, renamed))
-        if rename_pairs:
-            try:
-                normalized_df = normalized_df.rename(columns={source: target for source, target in rename_pairs})
-            except Exception as error:
-                raise ValueError(f"schema適用エラー(リネーム): {error}") from error
-            metrics["renamed_column_count"] = len(rename_pairs)
-            metrics["renamed_columns"] = [f"{source}->{target}" for source, target in rename_pairs]
+        if allow_rename:
+            rename_pairs = []
+            for index, item in enumerate(selected_items):
+                source_name = selected_sources[index]
+                renamed = str(item.get("new_name") or item.get("name_en") or "").strip()
+                if renamed and renamed != source_name:
+                    rename_pairs.append((source_name, renamed))
+            if rename_pairs:
+                try:
+                    normalized_df = normalized_df.rename(columns={source: target for source, target in rename_pairs})
+                except Exception as error:
+                    raise ValueError(f"schema適用エラー(リネーム): {error}") from error
+                metrics["renamed_column_count"] = len(rename_pairs)
+                metrics["renamed_columns"] = [f"{source}->{target}" for source, target in rename_pairs]
 
         normalized_df.attrs["ziz_date_parse_metrics"] = metrics
         return normalized_df
@@ -553,7 +645,22 @@ class BaseConnector(ABC):
         if not self._execution_logger or not message:
             return
         log_message = f"[{self._execution_step_id}] {message}" if self._execution_step_id else message
-        getattr(self._execution_logger, level, self._execution_logger.info)(log_message)
+        getattr(
+            self._execution_logger,
+            level,
+            self._execution_logger.info,
+        )(
+            log_message,
+            extra={
+                "category": "connector",
+                "step_id": self._execution_step_id or "",
+                "connector_id": self._execution_connector_id or "",
+                "action_id": self._execution_action_id or "",
+            },
+        )
+
+    def dry_run(self, action: str, params: dict, context: dict):
+        raise ValueError(f"dry runに対応していないactionです: {action}")
 
     @abstractmethod
     def execute(self, action: str, params: dict, context: dict):

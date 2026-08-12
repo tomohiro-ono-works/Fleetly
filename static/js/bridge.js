@@ -7,7 +7,7 @@
   const PREVIEW_TYPES = new Set(["preview.readExcel", "preview.readCsv"]);
 
   const state = {
-    version: "1.0",
+    version: "1",
     ready: false,
     backend: null,
     initRequested: false,
@@ -31,11 +31,11 @@
     if (pending.timeoutId) {
       window.clearTimeout(pending.timeoutId);
     }
-    if (result && result.error) {
-      pending.reject(result.error);
+    if (!result || result.ok !== true) {
+      pending.reject(result?.error || buildError("E_INVALID_RESPONSE", "ネイティブ応答の形式が不正です。"));
       return;
     }
-    pending.resolve(result ? result.payload : undefined);
+    pending.resolve(result.data);
   }
 
   function removeQueuedById(id) {
@@ -100,10 +100,15 @@
     }
     if (!message) return;
     if (message.kind === "res") {
+      if (String(message.v || "") !== state.version) {
+        rejectPending(message.id, buildError("E_CONTRACT_VERSION_MISMATCH", "プロトコルバージョンが一致しません。"));
+        return;
+      }
       settlePending(message.id, message);
       return;
     }
     if (message.kind === "evt") {
+      if (String(message.v || "") !== state.version) return;
       window.dispatchEvent(new CustomEvent("ziz:evt", { detail: message }));
     }
   }
@@ -230,7 +235,6 @@
   }
 
   const bridgeApi = createBridgeApi();
-  window.zizBridge = bridgeApi;
   const packages = window.zizPackages = window.zizPackages || {};
   const core = packages.core = packages.core || {};
   core.bridge = bridgeApi;

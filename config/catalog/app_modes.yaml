@@ -1,0 +1,26 @@
+version: 3
+app_modes:
+  - mode_id: 'dataflow'
+    label: 'データフロー'
+    default_flow_name: 'データフロー１'
+    file_extension: '.zizd'
+    node_defaults:
+      initial_connector_id: 'WindowsConnector'
+      initial_action_id: 'define_values'
+      preferred_connector_id: 'BQConnector'
+      preferred_action_id: 'execute_sql'
+      loop_connector_id: 'WindowsConnector'
+      loop_action_id: 'loop_tasks'
+    connector_ids:
+      - 'BQConnector'
+      - 'DuckConnector'
+      - 'ExcelConnector'
+      - 'CSVConnector'
+      - 'PythonConnector'
+      - 'DataintegrationConnector'
+      - 'VectorConnector'
+      - 'ShellConnector'
+      - 'WindowsConnector'
+      - 'SeleniumConnector'
+      - 'ChromeConnector'
+      - 'PlotlyConnector'

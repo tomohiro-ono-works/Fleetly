@@ -1,0 +1,384 @@
+forms:
+  - form_schema_id: 'SeleniumConnector.navigate'
+    fields:
+      - key: 'url'
+        label: 'URL'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: https://example.com'
+      - key: 'tab_mode'
+        label: 'タブモード'
+        kind: 'combo'
+        required: true
+        default: 'reuse_or_new'
+        options:
+          - 'current'
+          - 'new'
+          - 'reuse'
+          - 'reuse_or_new'
+      - key: 'headless'
+        label: 'ヘッドレス実行'
+        kind: 'checkbox'
+        required: false
+        default: false
+      - key: 'wait_until'
+        label: '遷移待機'
+        kind: 'combo'
+        required: true
+        default: 'none'
+        options:
+          - 'none'
+          - 'load'
+          - 'domcontentloaded'
+          - 'networkidle'
+      - key: 'timeout_ms'
+        label: 'タイムアウト(ms)'
+        kind: 'number'
+        required: false
+        default: 10000
+        min: 1000
+  - form_schema_id: 'SeleniumConnector.dom_action'
+    fields:
+      - key: 'source_step_id'
+        label: '参照ステップ'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: step6'
+      - key: 'operation'
+        label: '操作種別'
+        kind: 'combo'
+        required: true
+        default: 'click'
+        options:
+          - 'click'
+          - 'input'
+          - 'select'
+          - 'check'
+          - 'uncheck'
+          - 'key'
+          - 'scroll'
+      - key: 'selector_type'
+        label: 'セレクタ種別'
+        kind: 'combo'
+        required: false
+        default: 'css'
+        options:
+          - 'css'
+          - 'xpath'
+          - 'text'
+        visible_if:
+          key: 'operation'
+          in:
+            - 'click'
+            - 'input'
+            - 'select'
+            - 'check'
+            - 'uncheck'
+            - 'scroll'
+      - key: 'selector'
+        label: 'セレクタ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: #message'
+        visible_if:
+          key: 'operation'
+          in:
+            - 'click'
+            - 'input'
+            - 'select'
+            - 'check'
+            - 'uncheck'
+            - 'scroll'
+      - key: 'value'
+        label: '値'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: 送信予定メッセージ'
+        visible_if:
+          key: 'operation'
+          in:
+            - 'input'
+            - 'select'
+      - key: 'value_ref'
+        label: '値の参照変数'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: table_name'
+        visible_if:
+          key: 'operation'
+          equals: 'input'
+      - key: 'clear'
+        label: '入力前クリア'
+        kind: 'checkbox'
+        required: false
+        default: true
+        visible_if:
+          key: 'operation'
+          equals: 'input'
+      - key: 'label'
+        label: '選択ラベル'
+        kind: 'text'
+        required: false
+        allowVars: true
+        visible_if:
+          key: 'operation'
+          equals: 'select'
+      - key: 'index'
+        label: '選択インデックス'
+        kind: 'number'
+        required: false
+        min: 0
+        visible_if:
+          key: 'operation'
+          equals: 'select'
+      - key: 'key'
+        label: 'キー入力'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: Enter'
+        visible_if:
+          key: 'operation'
+          equals: 'key'
+      - key: 'to'
+        label: 'スクロール先'
+        kind: 'combo'
+        required: false
+        default: ''
+        options:
+          - ''
+          - 'top'
+          - 'bottom'
+          - 'element'
+        visible_if:
+          key: 'operation'
+          equals: 'scroll'
+      - key: 'direction'
+        label: 'スクロール方向'
+        kind: 'combo'
+        required: false
+        default: 'down'
+        options:
+          - 'up'
+          - 'down'
+          - 'left'
+          - 'right'
+        visible_if:
+          key: 'operation'
+          equals: 'scroll'
+      - key: 'amount'
+        label: 'スクロール量'
+        kind: 'number'
+        required: false
+        default: 800
+        min: 1
+        visible_if:
+          key: 'operation'
+          equals: 'scroll'
+      - key: 'timeout_ms'
+        label: 'タイムアウト(ms)'
+        kind: 'number'
+        required: false
+        default: 10000
+        min: 1000
+  - form_schema_id: 'SeleniumConnector.dom_get'
+    fields:
+      - key: 'source_step_id'
+        label: '参照ステップ'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: step6'
+      - key: 'get_type'
+        label: '取得種別'
+        kind: 'combo'
+        required: true
+        default: 'text'
+        options:
+          - 'html'
+          - 'text'
+          - 'value'
+          - 'attribute'
+          - 'count'
+      - key: 'selector_type'
+        label: 'セレクタ種別'
+        kind: 'combo'
+        required: false
+        default: 'css'
+        options:
+          - 'css'
+          - 'xpath'
+          - 'text'
+      - key: 'selector'
+        label: 'セレクタ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: .title'
+      - key: 'attribute'
+        label: '属性名'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: href'
+        visible_if:
+          key: 'get_type'
+          equals: 'attribute'
+      - key: 'all'
+        label: '複数要素を取得'
+        kind: 'checkbox'
+        required: false
+        default: false
+      - key: 'outer'
+        label: 'outerHTML取得'
+        kind: 'checkbox'
+        required: false
+        default: false
+        visible_if:
+          key: 'get_type'
+          equals: 'html'
+  - form_schema_id: 'SeleniumConnector.wait'
+    fields:
+      - key: 'source_step_id'
+        label: '参照ステップ'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: step6'
+      - key: 'until'
+        label: '待機条件'
+        kind: 'combo'
+        required: true
+        default: 'selector_visible'
+        options:
+          - 'selector_visible'
+          - 'selector_hidden'
+          - 'selector_attached'
+          - 'selector_detached'
+          - 'url_contains'
+          - 'url_equals'
+          - 'url_regex'
+          - 'load'
+          - 'sleep'
+      - key: 'selector_type'
+        label: 'セレクタ種別'
+        kind: 'combo'
+        required: false
+        default: 'css'
+        options:
+          - 'css'
+          - 'xpath'
+          - 'text'
+        visible_if:
+          key: 'until'
+          in:
+            - 'selector_visible'
+            - 'selector_hidden'
+            - 'selector_attached'
+            - 'selector_detached'
+      - key: 'selector'
+        label: 'セレクタ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        visible_if:
+          key: 'until'
+          in:
+            - 'selector_visible'
+            - 'selector_hidden'
+            - 'selector_attached'
+            - 'selector_detached'
+      - key: 'value'
+        label: 'URL条件'
+        kind: 'text'
+        required: true
+        allowVars: true
+        visible_if:
+          key: 'until'
+          in:
+            - 'url_contains'
+            - 'url_equals'
+            - 'url_regex'
+      - key: 'state'
+        label: '読み込み状態'
+        kind: 'combo'
+        required: false
+        default: 'domcontentloaded'
+        options:
+          - 'load'
+          - 'domcontentloaded'
+          - 'networkidle'
+        visible_if:
+          key: 'until'
+          equals: 'load'
+      - key: 'ms'
+        label: '待機時間(ms)'
+        kind: 'number'
+        required: true
+        default: 1000
+        min: 1
+        visible_if:
+          key: 'until'
+          equals: 'sleep'
+      - key: 'timeout_ms'
+        label: 'タイムアウト(ms)'
+        kind: 'number'
+        required: false
+        default: 10000
+        min: 1000
+  - form_schema_id: 'SeleniumConnector.screenshot'
+    fields:
+      - key: 'source_step_id'
+        label: '参照ステップ'
+        kind: 'text'
+        required: false
+        allowVars: true
+        placeholder: '例: step6'
+      - key: 'path'
+        label: '保存先パス'
+        kind: 'text'
+        required: true
+        allowVars: true
+        default: './workflows/web_screenshot.png'
+        placeholder: '例: ./workflows/web_screenshot.png'
+      - key: 'target'
+        label: '対象'
+        kind: 'combo'
+        required: true
+        default: 'page'
+        options:
+          - 'page'
+          - 'element'
+      - key: 'selector_type'
+        label: 'セレクタ種別'
+        kind: 'combo'
+        required: false
+        default: 'css'
+        options:
+          - 'css'
+          - 'xpath'
+          - 'text'
+        visible_if:
+          key: 'target'
+          equals: 'element'
+      - key: 'selector'
+        label: 'セレクタ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        visible_if:
+          key: 'target'
+          equals: 'element'
+      - key: 'full_page'
+        label: 'ページ全体を撮影'
+        kind: 'checkbox'
+        required: false
+        default: true
+        visible_if:
+          key: 'target'
+          equals: 'page'

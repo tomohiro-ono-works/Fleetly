@@ -1,0 +1,74 @@
+forms:
+  - form_schema_id: 'VectorConnector.embedding_vector_db'
+    fields:
+      - key: 'db_folder'
+        label: 'ベクトルDB保存先'
+        kind: 'dir'
+        required: true
+      - key: 'collection_name'
+        label: 'コレクション名'
+        kind: 'text'
+        required: true
+        default: 'default'
+        allowVars: true
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'id_column'
+        label: 'ID列名'
+        kind: 'text'
+        required: true
+        default: 'id'
+        allowVars: true
+      - key: 'text_column'
+        label: 'テキスト列名'
+        kind: 'text'
+        required: true
+        default: 'text'
+        allowVars: true
+      - key: 'model_name'
+        label: '埋め込みモデル'
+        kind: 'text'
+        required: false
+        default: 'cl-nagoya/ruri-v3-30m'
+        allowVars: true
+  - form_schema_id: 'VectorConnector.search_vector_db'
+    fields:
+      - key: 'db_folder'
+        label: 'ベクトルDB保存先'
+        kind: 'dir'
+        required: true
+      - key: 'collection_name'
+        label: 'コレクション名'
+        kind: 'text'
+        required: true
+        default: 'default'
+        allowVars: true
+      - key: 'query_text'
+        label: '検索テキスト'
+        kind: 'textarea'
+        required: true
+        allowVars: true
+      - key: 'top_k'
+        label: '取得件数'
+        kind: 'number'
+        required: true
+        default: 5
+        allowVars: true
+      - key: 'include_vector'
+        label: 'ベクトルを含める'
+        kind: 'combo'
+        required: true
+        default: 'false'
+        options:
+          - 'false'
+          - 'true'
+      - key: 'model_name'
+        label: '埋め込みモデル'
+        kind: 'text'
+        required: false
+        default: 'cl-nagoya/ruri-v3-30m'
+        allowVars: true

@@ -2,6 +2,7 @@ import argparse
 from pathlib import Path
 
 from app.gui.host import run_webview_app
+from app.gui.single_instance import GuiSingleInstanceGuard
 from app.main import run_cli
 from core.flow_locator import has_flow_extension, resolve_flow_path
 from core.logger import setup_logger
@@ -50,16 +51,28 @@ def run_headless(flow_path: str) -> int:
 
 
 def main():
-    setup_logger()
     args = parse_args()
     if args.show_help:
         print(HELP_TEXT)
         return 0
     if args.flow_path:
+        setup_logger(mode="cli")
         return run_headless(args.flow_path)
 
-    run_webview_app(HOME_HTML_PATH, debug=bool(args.debug))
-    return 0
+    instance_guard = GuiSingleInstanceGuard()
+    if not instance_guard.acquire():
+        print("Zizai GUIはすでに起動しています。")
+        return 2
+    try:
+        setup_logger(mode="gui", debug=bool(args.debug))
+        return int(
+            run_webview_app(
+                HOME_HTML_PATH,
+                debug=bool(args.debug),
+            )
+        )
+    finally:
+        instance_guard.release()
 
 
 if __name__ == "__main__":

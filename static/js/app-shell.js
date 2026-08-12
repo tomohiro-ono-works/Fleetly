@@ -1,92 +1,58 @@
 (function () {
   const body = document.body;
   const main = body?.querySelector("[data-shell-main]");
-  if (!body) return;
+  const packages = window.zizPackages = window.zizPackages || {};
+  const shellFactory = packages.uiShell?.createAppShell;
+  const view = packages.__zizaiShellAdapter || {};
+  if (!body || !main || typeof shellFactory !== "function") return;
+  if (body.querySelector(".zui-shell")) return;
 
   const page = body.dataset.shellPage || "home";
-  const title = body.dataset.shellTitle || "トップ画面";
-  const isDataflow = page === "dataflow";
   const isFlowLayoutPage = page === "dataflow";
-  const disablePrimaryActions = page === "settings";
   const embeddedMode = new URLSearchParams(window.location.search).get("embedded") === "1";
-  const urls = {
-    dataflow: body.dataset.dataflowUrl || "./dataflow.html",
-    settings: body.dataset.settingsUrl || "./settings.html",
-  };
   const runtimeVersion = new URLSearchParams(window.location.search).get("v") || "";
+  const urls = {
+    home: body.dataset.homeUrl || "./home.html",
+    dataflow: body.dataset.dataflowUrl || "./dataflow.html",
+    settings: body.dataset.settingsUrl || "./settings.html"
+  };
   const scriptLoadPromises = new Map();
+  const metricsCallbacks = [];
+  let metricsFrameId = 0;
+  let lastContentHeight = -1;
 
-  function current(name) {
-    const active = name === "dataflow" ? isDataflow : (page === name && !isDataflow);
-    return active ? ' is-current" aria-current="page"' : '"';
-  }
+  main.removeAttribute("data-shell-main");
+  const mountRoot = document.createElement("div");
+  mountRoot.className = "ziz-app-shell-mount";
+  body.insertBefore(mountRoot, body.firstChild);
 
-  function renderSidebar() {
-    return `
-      <aside class="sidebar" aria-label="主要ナビゲーション">
-        <div class="sidebar-top">
-          <button id="sidebarToggle" class="sidebar-toggle sidebar-home-btn" type="button" aria-label="トップ画面へ戻る" aria-expanded="false" aria-controls="sidebarNav" title="トップ画面へ戻る">
-            <span class="sidebar-toggle-icon"><img src="./icons/ziz_one.svg" alt="" /></span>
-          </button>
-        </div>
-        <nav id="sidebarNav" class="sidebar-nav">
-          <button class="sidebar-item" data-sidebar-action="project-select" title="プロジェクト選択"><span class="sidebar-item-icon"><img src="./icons/launch_project.svg" alt="" /></span><span class="sidebar-item-label">プロジェクト選択</span></button>
-          <button class="sidebar-item" data-sidebar-action="explorer" title="エクスプローラー"><span class="sidebar-item-icon"><img src="./icons/folder_open.svg" alt="" /></span><span class="sidebar-item-label">エクスプローラー</span></button>
-        </nav>
-        <div class="sidebar-bottom">
-          <button class="sidebar-item sidebar-item-settings${current("settings")} data-sidebar-action="settings" data-nav-url="${urls.settings}" title="設定"><span class="sidebar-item-icon"><img src="./icons/settings.svg" alt="" /></span><span class="sidebar-item-label">設定</span></button>
-        </div>
-      </aside>
-    `;
-  }
+  const appContent = view.createAppContent(main, isFlowLayoutPage);
+  const instance = shellFactory({
+    root: mountRoot,
+    layout: {
+      sidebarVisible: false,
+      rightPanelVisible: false,
+      bottomPanelVisible: false
+    },
+    regions: { main: appContent }
+  });
+  instance.mount();
 
-  function renderWindowActions() {
-    return `
-      <div class="shell-window-actions" id="shellWindowActions" aria-label="ウィンドウ操作">
-        <button id="btnDiagnostics" class="header-action-btn header-icon-btn" type="button" aria-label="診断" title="診断"><img src="./icons/healthcheck.svg" alt="" /></button>
-        <button id="btnWindowMinimize" class="header-action-btn header-icon-btn" type="button" aria-label="最小化" title="最小化"><img src="./icons/small.svg" alt="" /></button>
-        <button id="btnWindowMaximize" class="header-action-btn header-icon-btn window-control-btn" type="button" aria-label="拡大" title="拡大"><img src="./icons/middle.svg" alt="" /></button>
-        <button id="btnWindowClose" class="header-action-btn header-icon-btn window-control-btn is-close" type="button" aria-label="閉じる" title="閉じる"><img src="./icons/closel.svg" alt="" /></button>
-      </div>
-    `;
+  const shellRoot = mountRoot.querySelector(".zui-shell");
+  shellRoot?.classList.add("ziz-app-shell");
+  if (embeddedMode) {
+    body.classList.add("embedded-mode");
+  } else {
+    instance.setRegion("activitybar", view.createNavigation({ page, urls }));
+    shellRoot?.appendChild(view.createWindowActions());
   }
-
-  function renderRightSidebar() {
-    if (!isFlowLayoutPage) return "";
-    return `
-      <aside id="rightSidebar" class="right-sidebar" aria-label="ノード詳細">
-        <div id="rightSidebarResizer" class="right-sidebar-resizer" role="separator" aria-orientation="vertical" aria-label="右サイドバー幅"></div>
-        <div id="rightSidebarContent" class="right-sidebar-content">
-          <div id="nodeDetail"></div>
-        </div>
-      </aside>
-    `;
-  }
-
-  if (main && !body.querySelector(".app-shell")) {
-    const shell = document.createElement("div");
-    shell.className = `app-shell${isFlowLayoutPage ? " app-shell--with-right-sidebar" : ""}`;
-    if (embeddedMode) {
-      body.classList.add("embedded-mode");
-      shell.innerHTML = `<div class="app-main"></div>${renderRightSidebar()}`;
-    } else {
-      shell.innerHTML = `${renderSidebar()}${renderWindowActions()}<div class="app-main"></div>${renderRightSidebar()}`;
-    }
-    const appMain = shell.querySelector(".app-main");
-    if (appMain) {
-      main.removeAttribute("data-shell-main");
-      appMain.appendChild(main);
-      body.insertBefore(shell, body.firstChild);
-      if (isFlowLayoutPage) {
-        body.classList.add("flow-layout-page");
-      }
-    }
-  }
+  if (isFlowLayoutPage) body.classList.add("flow-layout-page");
+  delete packages.__zizaiShellAdapter;
 
   const refs = {
     body,
-    appShell: document.querySelector(".app-shell"),
-    appMain: document.querySelector(".app-shell > .app-main"),
+    appShell: shellRoot,
+    appMain: shellRoot?.querySelector(".zui-shell__main"),
     sidebarToggle: document.getElementById("sidebarToggle"),
     sidebarModeItems: Array.from(document.querySelectorAll("[data-app-mode]")),
     sidebarActionItems: Array.from(document.querySelectorAll("[data-sidebar-action]")),
@@ -102,16 +68,28 @@
     btnWindowClose: document.getElementById("btnWindowClose"),
     rightSidebar: document.getElementById("rightSidebar"),
     rightSidebarToggle: document.getElementById("rightSidebarToggle"),
-    rightSidebarNav: document.getElementById("rightSidebarNav"),
     rightPanelItems: Array.from(document.querySelectorAll("[data-right-panel]")),
     rightSidebarResizer: document.getElementById("rightSidebarResizer"),
-    rightSidebarContent: document.getElementById("rightSidebarContent"),
+    rightSidebarContent: document.getElementById("rightSidebarContent")
   };
 
   function syncShellMetrics() {
     const headerHeight = 0;
+    const contentHeight = Math.max(0, window.innerHeight - headerHeight);
+    if (contentHeight === lastContentHeight) return;
+    lastContentHeight = contentHeight;
     body.style.setProperty("--shell-header-height", `${headerHeight}px`);
-    body.style.setProperty("--shell-content-height", `${Math.max(0, window.innerHeight - headerHeight)}px`);
+    body.style.setProperty("--shell-content-height", `${contentHeight}px`);
+  }
+
+  function scheduleShellMetrics(callback) {
+    if (typeof callback === "function") metricsCallbacks.push(callback);
+    if (metricsFrameId) return;
+    metricsFrameId = window.requestAnimationFrame(() => {
+      metricsFrameId = 0;
+      syncShellMetrics();
+      metricsCallbacks.splice(0).forEach((onApplied) => onApplied());
+    });
   }
 
   function toAbsoluteUrl(url) {
@@ -124,7 +102,7 @@
       }
       return target.toString();
     } catch (_) {
-      return String(url || "");
+      return raw;
     }
   }
 
@@ -138,9 +116,7 @@
 
   function loadScriptOnce(url) {
     const src = normalizeScriptSrc(url);
-    if (scriptLoadPromises.has(src)) {
-      return scriptLoadPromises.get(src);
-    }
+    if (scriptLoadPromises.has(src)) return scriptLoadPromises.get(src);
     const existing = Array.from(document.scripts || []).find((script) => script.src === src);
     if (existing) {
       const resolved = Promise.resolve(existing);
@@ -168,13 +144,8 @@
 
   function setSidebarExpanded(expanded, onApplied) {
     body.classList.toggle("sidebar-expanded", Boolean(expanded));
-    if (refs.sidebarToggle) {
-      refs.sidebarToggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-    }
-    window.requestAnimationFrame(() => {
-      syncShellMetrics();
-      if (typeof onApplied === "function") onApplied();
-    });
+    refs.sidebarToggle?.setAttribute("aria-expanded", expanded ? "true" : "false");
+    scheduleShellMetrics(onApplied);
   }
 
   function isRightSidebarCollapsed() {
@@ -184,49 +155,33 @@
   function setRightSidebarCollapsed(collapsed, onApplied) {
     if (!isFlowLayoutPage) return;
     body.classList.toggle("right-sidebar-collapsed", Boolean(collapsed));
-    if (refs.rightSidebarToggle) {
-      refs.rightSidebarToggle.setAttribute("aria-expanded", collapsed ? "false" : "true");
-    }
-    window.requestAnimationFrame(() => {
-      syncShellMetrics();
-      if (typeof onApplied === "function") onApplied();
-    });
+    refs.rightSidebarToggle?.setAttribute("aria-expanded", collapsed ? "false" : "true");
+    scheduleShellMetrics(onApplied);
   }
 
   function setRightSidebarWidth(px, onApplied) {
     if (!isFlowLayoutPage) return;
     const width = Math.max(1, Math.floor(Number(px) || 0));
     body.style.setProperty("--right-sidebar-width", `${width}px`);
-    window.requestAnimationFrame(() => {
-      syncShellMetrics();
-      if (typeof onApplied === "function") onApplied();
-    });
+    scheduleShellMetrics(onApplied);
   }
 
   function setActiveRightPanel(panelKey) {
     const current = String(panelKey || "").trim();
     refs.rightPanelItems.forEach((item) => {
-      const key = String(item.dataset.rightPanel || "").trim();
-      const active = key === current;
+      const active = String(item.dataset.rightPanel || "").trim() === current;
       item.classList.toggle("is-current", active);
-      if (active) {
-        item.setAttribute("aria-current", "true");
-      } else {
-        item.removeAttribute("aria-current");
-      }
+      if (active) item.setAttribute("aria-current", "true");
+      else item.removeAttribute("aria-current");
     });
   }
 
   function setActiveSidebar(targetMode) {
     refs.sidebarModeItems.forEach((item) => {
-      const currentMode = String(item.dataset.appMode || "");
-      const active = currentMode === String(targetMode || "");
+      const active = String(item.dataset.appMode || "") === String(targetMode || "");
       item.classList.toggle("is-current", active);
-      if (active) {
-        item.setAttribute("aria-current", "page");
-      } else {
-        item.removeAttribute("aria-current");
-      }
+      if (active) item.setAttribute("aria-current", "page");
+      else item.removeAttribute("aria-current");
     });
     refs.sidebarActionItems.forEach((item) => {
       item.classList.remove("is-current");
@@ -234,9 +189,24 @@
     });
   }
 
+  function updateButton(button, config) {
+    if (!button || !config) return;
+    if (Object.prototype.hasOwnProperty.call(config, "title")) {
+      button.setAttribute("title", String(config.title || ""));
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "ariaLabel")) {
+      button.setAttribute("aria-label", String(config.ariaLabel || ""));
+    }
+    if (Object.prototype.hasOwnProperty.call(config, "disabled")) {
+      button.disabled = !!config.disabled;
+      button.setAttribute("aria-disabled", config.disabled ? "true" : "false");
+    }
+  }
+
   function updateHeader(options = {}) {
     if (refs.flowNameInput) {
-      if (Object.prototype.hasOwnProperty.call(options, "value") && document.activeElement !== refs.flowNameInput) {
+      if (Object.prototype.hasOwnProperty.call(options, "value")
+        && document.activeElement !== refs.flowNameInput) {
         refs.flowNameInput.value = String(options.value || "");
       }
       if (Object.prototype.hasOwnProperty.call(options, "placeholder")) {
@@ -249,21 +219,15 @@
         refs.flowNameInput.readOnly = !!options.readOnly;
       }
     }
-    [["btnUndo", options.undo], ["btnRedo", options.redo], ["btnRun", options.run], ["btnReset", options.reset], ["btnSave", options.save], ["btnDiagnostics", options.diagnostics]].forEach(([key, config]) => {
-      const button = refs[key];
-      if (!button || !config) return;
-      if (Object.prototype.hasOwnProperty.call(config, "title")) {
-        button.setAttribute("title", String(config.title || ""));
-      }
-      if (Object.prototype.hasOwnProperty.call(config, "ariaLabel")) {
-        button.setAttribute("aria-label", String(config.ariaLabel || ""));
-      }
-      if (Object.prototype.hasOwnProperty.call(config, "disabled")) {
-        button.disabled = !!config.disabled;
-        button.setAttribute("aria-disabled", config.disabled ? "true" : "false");
-      }
-    });
-    window.requestAnimationFrame(syncShellMetrics);
+    [
+      [refs.btnUndo, options.undo],
+      [refs.btnRedo, options.redo],
+      [refs.btnRun, options.run],
+      [refs.btnReset, options.reset],
+      [refs.btnSave, options.save],
+      [refs.btnDiagnostics, options.diagnostics]
+    ].forEach(([button, config]) => updateButton(button, config));
+    scheduleShellMetrics();
   }
 
   function bindSidebar(callbacks = {}) {
@@ -273,75 +237,67 @@
       };
     }
     refs.sidebarModeItems.forEach((item) => {
-      item.onclick = (event) => {
-        callbacks.onModeItem?.({
-          event,
-          item,
-          mode: String(item.dataset.appMode || ""),
-          navUrl: toAbsoluteUrl(item.dataset.navUrl || ""),
-          expanded: isSidebarExpanded(),
-        });
-      };
+      item.onclick = (event) => callbacks.onModeItem?.({
+        event,
+        item,
+        mode: String(item.dataset.appMode || ""),
+        navUrl: toAbsoluteUrl(item.dataset.navUrl || ""),
+        expanded: isSidebarExpanded()
+      });
     });
     refs.sidebarActionItems.forEach((item) => {
-      item.onclick = (event) => {
-        callbacks.onActionItem?.({
-          event,
-          item,
-          action: String(item.dataset.sidebarAction || ""),
-          navUrl: toAbsoluteUrl(item.dataset.navUrl || ""),
-          expanded: isSidebarExpanded(),
-        });
-      };
+      item.onclick = (event) => callbacks.onActionItem?.({
+        event,
+        item,
+        action: String(item.dataset.sidebarAction || ""),
+        navUrl: toAbsoluteUrl(item.dataset.navUrl || ""),
+        expanded: isSidebarExpanded()
+      });
     });
   }
 
   function bindHeader(callbacks = {}) {
-    if (refs.btnUndo) refs.btnUndo.onclick = (event) => callbacks.onUndo?.({ event, item: refs.btnUndo });
-    if (refs.btnRedo) refs.btnRedo.onclick = (event) => callbacks.onRedo?.({ event, item: refs.btnRedo });
-    if (refs.btnRun) refs.btnRun.onclick = (event) => callbacks.onRun?.({ event, item: refs.btnRun });
-    if (refs.btnReset) refs.btnReset.onclick = (event) => callbacks.onReset?.({ event, item: refs.btnReset });
-    if (refs.btnSave) refs.btnSave.onclick = (event) => callbacks.onSave?.({ event, item: refs.btnSave });
-    if (refs.btnDiagnostics) refs.btnDiagnostics.onclick = (event) => callbacks.onDiagnostics?.({ event, item: refs.btnDiagnostics });
-    if (refs.btnWindowMinimize) refs.btnWindowMinimize.onclick = (event) => callbacks.onWindowControl?.({ event, item: refs.btnWindowMinimize, action: "minimize" });
-    if (refs.btnWindowMaximize) refs.btnWindowMaximize.onclick = (event) => callbacks.onWindowControl?.({ event, item: refs.btnWindowMaximize, action: "maximize" });
-    if (refs.btnWindowClose) refs.btnWindowClose.onclick = (event) => callbacks.onWindowControl?.({ event, item: refs.btnWindowClose, action: "close" });
+    const bindings = [
+      [refs.btnUndo, "onUndo"],
+      [refs.btnRedo, "onRedo"],
+      [refs.btnRun, "onRun"],
+      [refs.btnReset, "onReset"],
+      [refs.btnSave, "onSave"],
+      [refs.btnDiagnostics, "onDiagnostics"]
+    ];
+    bindings.forEach(([button, callback]) => {
+      if (button) button.onclick = (event) => callbacks[callback]?.({ event, item: button });
+    });
+    const windowBindings = [
+      [refs.btnWindowMinimize, "minimize"],
+      [refs.btnWindowMaximize, "maximize"],
+      [refs.btnWindowClose, "close"]
+    ];
+    windowBindings.forEach(([button, action]) => {
+      if (button) {
+        button.onclick = (event) => callbacks.onWindowControl?.({ event, item: button, action });
+      }
+    });
     const dragRegion = document.getElementById("workspaceTabHeader");
     if (dragRegion) {
-      dragRegion.onmousedown = (event) => {
-        callbacks.onHeaderDrag?.({
-          event,
-          item: dragRegion,
-          isInteractiveTarget: !!event.target.closest("button, input, select, textarea, a, label"),
-        });
-      };
+      dragRegion.onmousedown = (event) => callbacks.onHeaderDrag?.({
+        event,
+        item: dragRegion,
+        isInteractiveTarget: !!event.target.closest("button, input, select, textarea, a, label")
+      });
     }
     if (refs.flowNameInput) {
-      refs.flowNameInput.oninput = (event) => callbacks.onTitleInput?.({ event, item: refs.flowNameInput, value: String(event.target.value || "") });
-      refs.flowNameInput.onchange = (event) => callbacks.onTitleChange?.({ event, item: refs.flowNameInput, value: String(event.target.value || "") });
+      refs.flowNameInput.oninput = (event) => callbacks.onTitleInput?.({
+        event,
+        item: refs.flowNameInput,
+        value: String(event.target.value || "")
+      });
+      refs.flowNameInput.onchange = (event) => callbacks.onTitleChange?.({
+        event,
+        item: refs.flowNameInput,
+        value: String(event.target.value || "")
+      });
     }
-  }
-
-  function bindRightSidebar(callbacks = {}) {
-    if (refs.rightSidebarToggle) {
-      refs.rightSidebarToggle.onclick = (event) => {
-        callbacks.onToggle?.({
-          event,
-          item: refs.rightSidebarToggle,
-          collapsed: isRightSidebarCollapsed()
-        });
-      };
-    }
-    refs.rightPanelItems.forEach((item) => {
-      item.onclick = (event) => {
-        callbacks.onPanelItem?.({
-          event,
-          item,
-          panel: String(item.dataset.rightPanel || ""),
-          collapsed: isRightSidebarCollapsed()
-        });
-      };
-    });
   }
 
   function getRightSidebarRefs() {
@@ -355,10 +311,28 @@
     };
   }
 
-  window.zizShell = {
+  bindSidebar({
+    onToggle() {
+      window.location.href = toAbsoluteUrl(urls.home);
+    },
+    onActionItem({ action, navUrl }) {
+      if (navUrl) {
+        window.location.href = navUrl;
+        return;
+      }
+      const selectedAction = String(action || "").trim();
+      if (!selectedAction) return;
+      window.dispatchEvent(new CustomEvent("ziz:sidebar-action", {
+        detail: { action: selectedAction }
+      }));
+    }
+  });
+
+  const app = packages.app = packages.app || {};
+  app.shell = Object.freeze({
+    instance,
     bindSidebar,
     bindHeader,
-    bindRightSidebar,
     updateHeader,
     isSidebarExpanded,
     setSidebarExpanded,
@@ -368,11 +342,9 @@
     setRightSidebarWidth,
     setActiveRightPanel,
     getRightSidebarRefs,
-    loadScriptOnce,
-  };
-
-  window.addEventListener("resize", () => {
-    syncShellMetrics();
+    loadScriptOnce
   });
-  window.requestAnimationFrame(syncShellMetrics);
+
+  window.addEventListener("resize", scheduleShellMetrics);
+  scheduleShellMetrics();
 })();

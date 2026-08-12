@@ -1,14 +1,16 @@
-from datetime import datetime, timezone
 import os
 import subprocess
 from typing import Any
 
-import pandas as pd
-
 from connectors.base_connector import BaseConnector
+from shared.process_runner import ProcessRunner
 
 
 class ShellConnector(BaseConnector):
+    def __init__(self, *, process_runner=None):
+        super().__init__()
+        self._process_runner = process_runner or ProcessRunner()
+
     def execute(self, action: str, params: dict, context: dict) -> Any:
         params = params or {}
         if action == "execute_bat":
@@ -26,38 +28,23 @@ class ShellConnector(BaseConnector):
             raise FileNotFoundError(f"BATファイルが見つかりません: {file_path}")
 
         command_str = self._build_command(file_path, args)
+        self._process_runner.run(
+            command_str,
+            label="ShellConnector.execute_bat",
+            shell=True,
+            encoding="cp932",
+            cancel_event=self._execution_cancel_event,
+            secrets=self._execution_secret_values,
+            on_stdout=lambda line: self.log_execution(line),
+            on_stderr=lambda line: self.log_execution(
+                line,
+                level="warning",
+            ),
+        )
 
-        try:
-            # shell=True は Windows で BAT を実行する際に必要
-            result = subprocess.run(
-                command_str,
-                shell=True,
-                check=True,
-                capture_output=True,
-                text=True,
-                encoding="cp932",
-                errors="replace",
-            )
-
-        except subprocess.CalledProcessError as e:
-            error_msg = f"BAT実行エラー (Exit Code: {e.returncode})\nStdout: {e.stdout}\nStderr: {e.stderr}"
-            raise RuntimeError(error_msg) from e
-
-        stdout = (result.stdout or "").strip()
-        stderr = (result.stderr or "").strip()
-        message = "BAT実行成功" if stdout else "BAT実行成功（出力なし）"
+        message = "BAT実行成功"
         self.log_execution(f"{message}: {file_path}")
-        return pd.DataFrame([{
-            "status": "success",
-            "executed_at": datetime.now(timezone.utc).isoformat(),
-            "connector": "ShellConnector",
-            "action": "execute_bat",
-            "target": str(file_path),
-            "message": message,
-            "stdout": stdout,
-            "stderr": stderr,
-            "returncode": result.returncode,
-        }])
+        return self.build_execution_metadata(target=file_path, path=file_path)
 
     @staticmethod
     def _build_command(file_path: str, args: Any) -> str:

@@ -1,0 +1,84 @@
+forms:
+  - form_schema_id: 'DuckConnector.create_db_file'
+    fields:
+      - key: 'db_folder'
+        label: 'DBファイルの場所'
+        kind: 'dir'
+        required: true
+      - key: 'db_file_name'
+        label: 'DBファイル名'
+        kind: 'text'
+        required: true
+        default: 'sample.duckdb'
+        allowVars: true
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+  - form_schema_id: 'DuckConnector.execute_sql_file'
+    fields:
+      - key: 'db_file'
+        label: 'DBファイル'
+        kind: 'file'
+        required: true
+        accept: '.duckdb,.db,.ddb'
+      - key: 'sql_file'
+        label: 'SQLファイル'
+        kind: 'file'
+        required: true
+        accept: '.sql'
+      - key: 'encoding'
+        label: '文字コード'
+        kind: 'combo'
+        required: true
+        default: 'utf8'
+        options:
+          - 'utf8'
+          - 'shift_jis'
+          - 'cp932'
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+  - form_schema_id: 'DuckConnector.execute_sql'
+    fields:
+      - key: 'db_file'
+        label: 'DBファイル'
+        kind: 'file'
+        required: true
+        accept: '.duckdb,.db,.ddb'
+      - key: 'sql'
+        label: 'SQL'
+        kind: 'textarea'
+        codeLanguage: 'sql'
+        required: true
+        allowVars: true
+        placeholder: |-
+          SELECT ...
+          FROM ...
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+  - form_schema_id: 'DuckConnector.create_table'
+    fields:
+      - key: 'db_file'
+        label: 'DBファイル'
+        kind: 'file'
+        required: true
+        accept: '.duckdb,.db,.ddb'
+      - key: 'input_data'
+        label: 'step'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'table_name'
+        label: 'テーブル名'
+        kind: 'text'
+        required: true
+        allowVars: true
+        default: 'table1'

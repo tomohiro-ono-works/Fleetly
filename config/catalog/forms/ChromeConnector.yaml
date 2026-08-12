@@ -1,0 +1,8 @@
+form_schema_id: 'ChromeConnector.open_in_chrome'
+fields:
+  - key: 'url'
+    label: 'URL'
+    kind: 'text'
+    required: true
+    allowVars: true
+    placeholder: '例: https://example.com'

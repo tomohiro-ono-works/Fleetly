@@ -135,18 +135,9 @@ class VectorConnector(BaseConnector):
         finally:
             connection.close()
 
-        return self.attach_dataframe_schema(
-            self.to_dataframe(
-                {
-                    "collection_name": storage["collection_name"],
-                    "registered_records": len(records),
-                    "db_folder": str(storage["folder"]),
-                    "index_path": str(storage["index_path"]),
-                    "metadata_path": str(storage["metadata_path"]),
-                    "model_name": normalized_model_name,
-                    "dimension": dimension,
-                }
-            )
+        return self.build_execution_metadata(
+            target=storage["collection_name"],
+            path=str(storage["folder"]),
         )
 
     def search_vector_db(

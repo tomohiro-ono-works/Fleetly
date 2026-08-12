@@ -208,48 +208,6 @@ def _plot_radar(
     return _save_figure(fig, folder, file_name, mode)
 
 
-# 既存の直接呼び出しコード互換のため、トップレベル関数も残す
-def plot_combined_bar_line(json_data, x_col, bar_col, line_col, title, folder, file_name, mode="png"):
-    return _plot_combined_bar_line(json_data, x_col, bar_col, line_col, title, folder, file_name, mode)
-
-
-def plot_stacked_bar(json_data, x_col, y_cols, title, folder, file_name, is_percent=False, mode="png"):
-    return _plot_stacked_bar(json_data, x_col, y_cols, title, folder, file_name, is_percent, mode)
-
-
-def plot_scorecard(json_data, value_col, title, folder, file_name, mode="png"):
-    return _plot_scorecard(json_data, value_col, title, folder, file_name, mode)
-
-
-def plot_funnel(json_data, stage_col, value_col, title, folder, file_name, mode="png"):
-    return _plot_funnel(json_data, stage_col, value_col, title, folder, file_name, mode)
-
-
-def plot_radar(
-    json_data,
-    theta_col="",
-    r_col="",
-    name="series",
-    title="レーダーチャート",
-    folder="",
-    file_name="radar",
-    mode="png",
-    value_cols=None,
-):
-    radar_value_cols = _ensure_list(value_cols, field_name="value_cols") if value_cols else None
-    return _plot_radar(
-        json_data,
-        theta_col,
-        r_col,
-        name,
-        title,
-        folder,
-        file_name,
-        mode,
-        value_cols=radar_value_cols,
-    )
-
-
 class PlotlyConnector(BaseConnector):
     def execute(self, action: str, params: dict, context: dict) -> Any:
         if action == "plot_combined_bar_line":
@@ -290,10 +248,13 @@ class PlotlyConnector(BaseConnector):
             raise ValueError("file_name が指定されていません。")
         return folder, file_name, mode
 
-    def plot_combined_bar_line(self, params: dict, context: dict) -> str:
+    def _build_plot_result(self, file_path: str, file_name: str) -> pd.DataFrame:
+        return self.build_execution_metadata(target=file_name, path=file_path)
+
+    def plot_combined_bar_line(self, params: dict, context: dict) -> pd.DataFrame:
         data = self._get_input_data(params, context)
         folder, file_name, mode = self._get_output_options(params, default_file_name="combined_bar_line")
-        return _plot_combined_bar_line(
+        file_path = _plot_combined_bar_line(
             json_data=data,
             x_col=str(params.get("x_col")),
             bar_col=str(params.get("bar_col")),
@@ -303,12 +264,13 @@ class PlotlyConnector(BaseConnector):
             file_name=file_name,
             mode=mode,
         )
+        return self._build_plot_result(file_path, file_name)
 
-    def plot_stacked_bar(self, params: dict, context: dict) -> str:
+    def plot_stacked_bar(self, params: dict, context: dict) -> pd.DataFrame:
         data = self._get_input_data(params, context)
         folder, file_name, mode = self._get_output_options(params, default_file_name="stacked_bar")
         y_cols = _ensure_list(params.get("y_cols"), field_name="y_cols")
-        return _plot_stacked_bar(
+        file_path = _plot_stacked_bar(
             json_data=data,
             x_col=str(params.get("x_col")),
             y_cols=y_cols,
@@ -318,11 +280,12 @@ class PlotlyConnector(BaseConnector):
             is_percent=bool(params.get("is_percent", False)),
             mode=mode,
         )
+        return self._build_plot_result(file_path, file_name)
 
-    def plot_scorecard(self, params: dict, context: dict) -> str:
+    def plot_scorecard(self, params: dict, context: dict) -> pd.DataFrame:
         data = self._get_input_data(params, context)
         folder, file_name, mode = self._get_output_options(params, default_file_name="scorecard")
-        return _plot_scorecard(
+        file_path = _plot_scorecard(
             json_data=data,
             value_col=str(params.get("value_col")),
             title=str(params.get("title", "スコアカード")),
@@ -330,11 +293,12 @@ class PlotlyConnector(BaseConnector):
             file_name=file_name,
             mode=mode,
         )
+        return self._build_plot_result(file_path, file_name)
 
-    def plot_funnel(self, params: dict, context: dict) -> str:
+    def plot_funnel(self, params: dict, context: dict) -> pd.DataFrame:
         data = self._get_input_data(params, context)
         folder, file_name, mode = self._get_output_options(params, default_file_name="funnel")
-        return _plot_funnel(
+        file_path = _plot_funnel(
             json_data=data,
             stage_col=str(params.get("stage_col")),
             value_col=str(params.get("value_col")),
@@ -343,13 +307,14 @@ class PlotlyConnector(BaseConnector):
             file_name=file_name,
             mode=mode,
         )
+        return self._build_plot_result(file_path, file_name)
 
-    def plot_radar(self, params: dict, context: dict) -> str:
+    def plot_radar(self, params: dict, context: dict) -> pd.DataFrame:
         data = self._get_input_data(params, context)
         folder, file_name, mode = self._get_output_options(params, default_file_name="radar")
         value_cols_param = params.get("value_cols")
         value_cols = _ensure_list(value_cols_param, field_name="value_cols") if value_cols_param else None
-        return _plot_radar(
+        file_path = _plot_radar(
             json_data=data,
             theta_col=str(params.get("theta_col", "")),
             r_col=str(params.get("r_col", "")),
@@ -360,3 +325,4 @@ class PlotlyConnector(BaseConnector):
             mode=mode,
             value_cols=value_cols,
         )
+        return self._build_plot_result(file_path, file_name)

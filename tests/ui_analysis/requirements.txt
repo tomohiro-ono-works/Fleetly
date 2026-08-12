@@ -1,0 +1,5 @@
+# Phase 1/2 uses only Python standard library.
+# Future phases may add:
+# pydantic>=2
+# networkx
+# matplotlib

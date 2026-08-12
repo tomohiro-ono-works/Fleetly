@@ -1,0 +1,21 @@
+profiles:
+  - security_profile_id: 'connector.read'
+    risk: 'read'
+    validation: 'automatic'
+    requires_confirmation: false
+  - security_profile_id: 'connector.read_path'
+    risk: 'read_path'
+    validation: 'automatic'
+    requires_confirmation: false
+  - security_profile_id: 'connector.write'
+    risk: 'write'
+    validation: 'automatic'
+    requires_confirmation: false
+  - security_profile_id: 'connector.execute'
+    risk: 'execute'
+    validation: 'automatic'
+    requires_confirmation: false
+  - security_profile_id: 'connector.host'
+    risk: 'host'
+    validation: 'automatic'
+    requires_confirmation: false

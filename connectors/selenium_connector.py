@@ -9,17 +9,10 @@ import uuid
 
 from connectors.base_connector import BaseConnector
 from core.security_policies import is_web_target_allowed
-
-SESSION_STORE: dict[str, dict] = {}
-LAST_SESSION_KEY: str = ""
-DEFAULT_SESSION_KEY = "__default__"
+from app.runtime.managed_resources import managed_resource_registry
 
 
-def clear_session_runtime(session_key: str | None) -> None:
-    key = str(session_key or "").strip()
-    if not key:
-        return
-    runtime = SESSION_STORE.pop(key, None)
+def _cleanup_runtime(runtime) -> None:
     if not isinstance(runtime, dict):
         return
     driver = runtime.get("driver")
@@ -28,6 +21,12 @@ def clear_session_runtime(session_key: str | None) -> None:
             driver.quit()
         except Exception:
             pass
+    runtime["driver"] = None
+    runtime["tabs"] = {}
+
+
+def clear_session_runtime(session_key: str | None) -> None:
+    managed_resource_registry.release(session_key)
 
 
 try:
@@ -109,21 +108,15 @@ class SeleniumConnector(BaseConnector):
             raise ValueError(f"Web allowlist で許可されていない URL へ遷移しました: {current_url}")
         session_key = self._store_runtime(context, runtime)
 
-        rows = [{
-            "status": "success",
-            "action": "navigate",
-            "window_id": window_id,
-            "tab_id": tab_id,
-            "url": current_url,
-            "title": driver.title,
-            self.SESSION_ID_COLUMN: session_key,
-        }]
-        df = self.to_dataframe(rows)
+        df = self.build_execution_metadata(
+            job_id=session_key,
+            target=current_url,
+            path=current_url,
+        )
         return self._save_output(params, context, df)
 
     def dom_action(self, params: dict, context: dict) -> Any:
         self._require(params, ["operation"])
-        runtime = context.get(self.RUNTIME_KEY)
         driver = self._get_page(params, context)
         timeout_ms = int(params.get("timeout_ms") or self.DEFAULT_TIMEOUT_MS)
         operation = str(params["operation"]).strip().lower()
@@ -210,15 +203,11 @@ class SeleniumConnector(BaseConnector):
         else:
             raise ValueError(f"Unknown dom_action operation: {operation}")
 
-        rows = [{
-            "status": "success",
-            "action": "dom_action",
-            "operation": operation,
-            "selector": params.get("selector", ""),
-            "timeout_ms": timeout_ms,
-            self.SESSION_ID_COLUMN: self._current_session_id(context),
-        }]
-        df = self.to_dataframe(rows)
+        df = self.build_execution_metadata(
+            job_id=self._current_session_id(context),
+            target=params.get("selector") or operation,
+            path="",
+        )
         return self._save_output(params, context, df)
 
     def dom_get(self, params: dict, context: dict) -> Any:
@@ -321,15 +310,11 @@ class SeleniumConnector(BaseConnector):
         else:
             raise ValueError(f"Unknown wait until: {until}")
 
-        rows = [{
-            "status": "success",
-            "action": "wait",
-            "until": until,
-            "selector": params.get("selector"),
-            "value": params.get("value"),
-            self.SESSION_ID_COLUMN: self._current_session_id(context),
-        }]
-        df = self.to_dataframe(rows)
+        df = self.build_execution_metadata(
+            job_id=self._current_session_id(context),
+            target=params.get("selector") or params.get("value") or until,
+            path="",
+        )
         return self._save_output(params, context, df)
 
     def screenshot(self, params: dict, context: dict) -> Any:
@@ -348,15 +333,11 @@ class SeleniumConnector(BaseConnector):
         else:
             raise ValueError(f"Unknown screenshot target: {target}")
 
-        rows = [{
-            "status": "success",
-            "action": "screenshot",
-            "target": target,
-            "path": str(path),
-            "full_page": full_page if target == "page" else False,
-            self.SESSION_ID_COLUMN: self._current_session_id(context),
-        }]
-        df = self.to_dataframe(rows)
+        df = self.build_execution_metadata(
+            job_id=self._current_session_id(context),
+            target=target,
+            path=str(path),
+        )
         return self._save_output(params, context, df)
 
     def _ensure_runtime(self, params: dict, context: dict) -> dict:
@@ -367,6 +348,13 @@ class SeleniumConnector(BaseConnector):
             )
 
         runtime = context.get(self.RUNTIME_KEY)
+        runtime_id = str((runtime or {}).get("session_id") or "").strip()
+        if runtime is not None and (
+            not runtime_id
+            or managed_resource_registry.get(runtime_id) is not runtime
+        ):
+            context.pop(self.RUNTIME_KEY, None)
+            runtime = None
         if runtime is None:
             runtime = {
                 "driver": None,
@@ -392,7 +380,7 @@ class SeleniumConnector(BaseConnector):
     def _get_page(self, params: dict, context: dict):
         source_session_key = self._resolve_source_session_key(params, context)
         if source_session_key:
-            runtime = SESSION_STORE.get(source_session_key)
+            runtime = managed_resource_registry.get(source_session_key)
             if runtime is None:
                 raise ValueError(
                     f"source_step_id から参照した Selenium セッションが見つかりません: {source_session_key}"
@@ -415,25 +403,44 @@ class SeleniumConnector(BaseConnector):
         return runtime["driver"]
 
     def _store_runtime(self, context: dict, runtime: dict) -> str:
-        global LAST_SESSION_KEY
         context[self.RUNTIME_KEY] = runtime
-        session_key = self._get_session_key(context)
-        if not session_key:
-            session_key = str(runtime.get("session_id") or "").strip()
-        if not session_key:
-            session_key = f"{DEFAULT_SESSION_KEY}:{uuid.uuid4().hex}"
+        existing_id = str(runtime.get("session_id") or "").strip()
+        if (
+            existing_id
+            and managed_resource_registry.get(existing_id) is runtime
+        ):
+            return existing_id
+        run_id = str(context.get("__run_id") or "").strip()
+        doc_session_id = str(
+            context.get("__doc_session_id")
+            or context.get("__workspace_tab_id")
+            or ""
+        ).strip()
+        step_id = str(context.get("__step_id") or "").strip()
+        run_kind = str(context.get("__run_kind") or "").strip()
+        session_key = managed_resource_registry.register(
+            kind="websession",
+            value=runtime,
+            cleanup=_cleanup_runtime,
+            run_id=run_id,
+            doc_session_id=doc_session_id,
+            step_id=step_id,
+            resource_id=f"websession_{uuid.uuid4().hex}",
+            replace_step=(run_kind == "step"),
+        )
         runtime["session_id"] = session_key
-        SESSION_STORE[session_key] = runtime
-        LAST_SESSION_KEY = session_key
         return session_key
 
     def _restore_runtime(self, context: dict):
-        session_key = self._get_session_key(context)
-        runtime = SESSION_STORE.get(session_key) if session_key else None
-        if runtime is None and LAST_SESSION_KEY:
-            runtime = SESSION_STORE.get(LAST_SESSION_KEY)
-        if runtime is None:
-            runtime = SESSION_STORE.get(DEFAULT_SESSION_KEY)
+        current = context.get(self.RUNTIME_KEY)
+        session_key = str(
+            (current or {}).get("session_id") or ""
+        ).strip()
+        runtime = (
+            managed_resource_registry.get(session_key)
+            if session_key
+            else None
+        )
         if runtime is not None:
             context[self.RUNTIME_KEY] = runtime
         return runtime
@@ -449,31 +456,21 @@ class SeleniumConnector(BaseConnector):
             df = self.to_dataframe(source_val)
         except Exception:
             return str(source_val or "").strip()
-        if self.SESSION_ID_COLUMN not in df.columns or len(df.index) == 0:
-            raise ValueError(
-                f"source_step_id の出力に {self.SESSION_ID_COLUMN} がありません: {source_ref}"
-            )
-        return str(df.iloc[0][self.SESSION_ID_COLUMN] or "").strip()
+        if len(df.index) == 0:
+            raise ValueError(f"source_step_id の出力が空です: {source_ref}")
+        if self.SESSION_ID_COLUMN in df.columns:
+            return str(df.iloc[0][self.SESSION_ID_COLUMN] or "").strip()
+        if "job_id" in df.columns:
+            return str(df.iloc[0]["job_id"] or "").strip()
+        raise ValueError(
+            f"source_step_id の出力に {self.SESSION_ID_COLUMN} または job_id がありません: {source_ref}"
+        )
 
     def _current_session_id(self, context: dict) -> str:
         runtime = context.get(self.RUNTIME_KEY) if isinstance(context, dict) else None
         sid = str((runtime or {}).get("session_id") or "").strip()
         if sid:
             return sid
-        return self._get_session_key(context) or ""
-
-    @staticmethod
-    def _get_session_key(context: dict) -> str:
-        if not isinstance(context, dict):
-            return ""
-        workspace_root = str(context.get("__workspace_root") or "").strip()
-        flow_dir = str(context.get("__flow_dir") or "").strip()
-        if workspace_root or flow_dir:
-            return f"{workspace_root}|{flow_dir}"
-        run_id = str(context.get("__run_id") or "").strip()
-        workspace_tab_id = str(context.get("__workspace_tab_id") or "").strip()
-        if run_id and workspace_tab_id:
-            return f"{workspace_tab_id}:{run_id}"
         return ""
 
     def _resolve_element(self, page, params: dict):

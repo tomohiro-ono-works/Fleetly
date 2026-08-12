@@ -1,6 +1,6 @@
 from typing import Optional, List, Dict, Any
 import os
-from datetime import datetime, date, time, timezone
+from datetime import datetime, date, time
 from decimal import Decimal
 import json
 import re
@@ -16,6 +16,7 @@ from core.type_registry import (
     split_struct_field,
     split_top_level,
 )
+from shared.google_cloud_cli import resolve_gcloud_command
 
 class BQConnector(BaseConnector):
     def __init__(self):
@@ -47,7 +48,15 @@ class BQConnector(BaseConnector):
         import sys
         print("Google Cloudの認証を開始します...")
         try:
-            subprocess.run(["gcloud", "auth", "application-default", "login"], check=True)
+            subprocess.run(
+                [
+                    resolve_gcloud_command(),
+                    "auth",
+                    "application-default",
+                    "login",
+                ],
+                check=True,
+            )
             print("認証が完了しました。")
         except Exception as e:
             print(f"認証の自動起動に失敗しました。手動で 'gcloud auth application-default login' を実行してください。: {e}", file=sys.stderr)
@@ -70,17 +79,6 @@ class BQConnector(BaseConnector):
         return text or None
 
     @staticmethod
-    def _to_utc_iso(value: Any) -> str:
-        if isinstance(value, datetime):
-            dt = value
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            else:
-                dt = dt.astimezone(timezone.utc)
-            return dt.isoformat().replace("+00:00", "Z")
-        return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-
-    @staticmethod
     def _build_bigquery_table_url(project_id: str, dataset_id: str, table_id: str) -> str:
         return (
             "https://console.cloud.google.com/bigquery?ws=!1m5!1m4!4m3!"
@@ -100,27 +98,27 @@ class BQConnector(BaseConnector):
             or getattr(job, "finished", None)
             or getattr(job, "created", None)
         )
-        payload = {
-            "job_id": str(getattr(job, "job_id", "") or ""),
-            "project_id": str(project_id or ""),
-            "dataset_id": str(dataset_id or ""),
-            "table_id": str(table_id or ""),
-            "url": self._build_bigquery_table_url(
+        target_parts = [
+            str(project_id or "").strip(),
+            str(dataset_id or "").strip(),
+            str(table_id or "").strip(),
+        ]
+        target = ".".join(part for part in target_parts if part)
+        path = (
+            self._build_bigquery_table_url(
                 str(project_id or ""),
                 str(dataset_id or ""),
                 str(table_id or ""),
-            ),
-            "excuted_at": completed_at,
-        }
-        schema_items = [
-            {"origin_name": "job_id", "new_name": "job_id", "description": "BigQuery Job ID", "ziz_datatype": "STRING"},
-            {"origin_name": "project_id", "new_name": "project_id", "description": "BigQuery Project ID", "ziz_datatype": "STRING"},
-            {"origin_name": "dataset_id", "new_name": "dataset_id", "description": "BigQuery Dataset ID", "ziz_datatype": "STRING"},
-            {"origin_name": "table_id", "new_name": "table_id", "description": "BigQuery Table ID", "ziz_datatype": "STRING"},
-            {"origin_name": "url", "new_name": "url", "description": "BigQuery Console URL", "ziz_datatype": "STRING"},
-            {"origin_name": "excuted_at", "new_name": "excuted_at", "description": "完了時刻", "ziz_datatype": "TIMESTAMP"},
-        ]
-        return self.attach_dataframe_schema(self.to_dataframe(payload), schema_override=schema_items)
+            )
+            if all(target_parts)
+            else ""
+        )
+        return self.build_execution_metadata(
+            job_id=str(getattr(job, "job_id", "") or ""),
+            target=target,
+            path=path,
+            executed_at=completed_at,
+        )
 
     def _infer_target_table_from_job(self, project_id: str, query_job: Any) -> tuple[str, str]:
         candidates = [
@@ -198,6 +196,56 @@ class BQConnector(BaseConnector):
             )
         else:
             raise ValueError(f"Unknown action: {action}")
+
+    def dry_run(
+        self,
+        action: str,
+        params: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if action not in {"execute_sql", "execute_sql_file"}:
+            return super().dry_run(action, params, context)
+        project_id = str(params.get("project_id") or "").strip()
+        if not project_id:
+            raise ValueError("project_id は必須です。")
+        if action == "execute_sql_file":
+            sql = self._get_query(
+                sql_file=self._normalize_optional_text(
+                    params.get("sql_file")
+                ),
+                encoding=str(params.get("encoding") or "utf-8"),
+            )
+        else:
+            sql = self._get_query(
+                sql=(
+                    self._normalize_optional_text(params.get("sql"))
+                    or self._normalize_optional_text(
+                        params.get("sql_query")
+                    )
+                ),
+            )
+        client = self._get_client(project_id)
+        query_job = client.query(
+            sql,
+            job_config=bigquery.QueryJobConfig(
+                dry_run=True,
+                use_query_cache=False,
+            ),
+        )
+        return {
+            "kind": "dry_run",
+            "strategy": "bigquery_native",
+            "executed": False,
+            "validated": True,
+            "estimated_bytes": int(
+                getattr(query_job, "total_bytes_processed", 0) or 0
+            ),
+            "scope": [
+                "sql_validation",
+                "referenced_resources",
+                "estimated_bytes",
+            ],
+        }
 
     def _get_query(self, sql: Optional[str] = None, sql_file: Optional[str] = None, encoding: str = 'utf-8') -> str:
         """
@@ -542,9 +590,13 @@ class BQConnector(BaseConnector):
 
         if not results:
             schema_columns = [str(field.name) for field in (getattr(query_job, "schema", None) or [])]
-            return self.attach_dataframe_schema(pd.DataFrame(columns=schema_columns), schema_override=schema)
+            return self.attach_dataframe_schema(
+                pd.DataFrame(columns=schema_columns),
+                schema_override=schema,
+                allow_rename=False,
+            )
 
-        return self.attach_dataframe_schema(self.to_dataframe(results), schema_override=schema)
+        return self.attach_dataframe_schema(self.to_dataframe(results), schema_override=schema, allow_rename=False)
 
     def execute_sql_file(
             self,
@@ -573,11 +625,16 @@ class BQConnector(BaseConnector):
         data = context.get(input_data)
         if data is None:
             raise ValueError(f"変数 '{input_data}' にデータがありません。")
-        records = self._to_bq_records(data)
+        source_data = data
+        if schema is not None and str(schema).strip() != "":
+            schema_items = self.parse_schema_definition(schema)
+            source_data = self.apply_schema_to_dataframe(self.to_dataframe(data), schema_items)
+            source_data.attrs["ziz_schema"] = schema_items
+        records = self._to_bq_records(source_data)
         if not records:
             raise ValueError(f"変数 '{input_data}' にデータがありません。")
 
-        resolved_schema = self._resolve_schema_definition(data, schema)
+        resolved_schema = self._resolve_schema_definition(source_data, schema)
 
         # 1. schema に従って BigQuery JSON へ直列化
         records = self._serialize_records_for_schema(records, resolved_schema)

@@ -3,6 +3,7 @@
   const corePkg = packages.core || {};
   const uiPkg = packages.ui || {};
   const bridgeApi = corePkg.bridge || null;
+  const resultsApi = packages.app?.results || null;
   const embeddedMode = new URLSearchParams(window.location.search).get("embedded") === "1";
   const dialogApi = corePkg.dialog || null;
   const { el } = (corePkg.utils || {});
@@ -77,10 +78,10 @@
   window.addEventListener("ziz:evt", handleCoordinateCaptureEvent);
 
   function resolveActiveBridgeApi() {
-    const localBridge = window.zizBridge || (window.zizPackages || {})?.core?.bridge || bridgeApi || null;
+    const localBridge = (window.zizPackages || {})?.core?.bridge || bridgeApi || null;
     if (localBridge?.available?.()) return localBridge;
     if (!embeddedMode) return localBridge;
-    const parentBridge = window.parent?.zizBridge || (window.parent?.zizPackages || {})?.core?.bridge || null;
+    const parentBridge = (window.parent?.zizPackages || {})?.core?.bridge || null;
     if (parentBridge?.available?.()) return parentBridge;
     return localBridge || parentBridge;
   }
@@ -90,17 +91,17 @@
   }
 
   function getShellApi() {
-    return window.zizShell || {};
+    return window.zizPackages?.app?.shell || {};
   }
 
   function getCodeEditorsApi() {
     const core = (window.zizPackages && window.zizPackages.core) || {};
-    return core.codeEditors || window.codeEditors || null;
+    return core.codeEditors || null;
   }
 
   function getUiSuggestApi() {
     const ui = (window.zizPackages && window.zizPackages.ui) || {};
-    return ui.suggest || uiPkg.suggest || window.uiSuggest || null;
+    return ui.suggest || uiPkg.suggest || null;
   }
 
   async function ensureCodeEditorsApi() {
@@ -162,11 +163,6 @@
 
   async function ensureRuntimeContextDefaults() {
     if (runtimeContextDefaultsCache) return getRuntimeContextDefaults();
-    const statusDefaults = normalizeRuntimeContextDefaults(window.__zizBridgeStatus?.runtime_context_defaults);
-    if (statusDefaults) {
-      runtimeContextDefaultsCache = statusDefaults;
-      return getRuntimeContextDefaults();
-    }
     const activeBridge = resolveActiveBridgeApi();
     if (!activeBridge?.available?.()) return getRuntimeContextDefaults();
     if (runtimeContextDefaultsPromise) return runtimeContextDefaultsPromise;
@@ -174,7 +170,6 @@
       .then((status) => {
         const nextDefaults = normalizeRuntimeContextDefaults(status?.runtime_context_defaults);
         if (nextDefaults) runtimeContextDefaultsCache = nextDefaults;
-        if (status) window.__zizBridgeStatus = status;
         return getRuntimeContextDefaults();
       })
       .catch(() => getRuntimeContextDefaults())
@@ -357,11 +352,9 @@
     const fromForm = toSchemaText(sourceSchema);
     if (fromForm) return fromForm;
 
-    const activeBridge = resolveActiveBridgeApi();
-    if (!activeBridge?.call) return "";
+    if (!resultsApi?.getSchema) return "";
     try {
-      const schemaDto = await activeBridge.call("result.getSchema", {
-        mode: String(state?.appMode || ""),
+      const schemaDto = await resultsApi.getSchema({
         step_id: String(sourceNode.stepName || "")
       });
       const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
@@ -506,6 +499,51 @@
 
   function stringifySchemaItems(items) {
     return JSON.stringify(normalizeSimpleSchemaItems(items), null, 2);
+  }
+
+  function getSchemaEditorPolicy(config, node) {
+    const connectorId = String(node?.connector || "").trim();
+    const actionId = String(node?.action || "").trim();
+    const action = (config?.actions?.[connectorId] || [])
+      .find((item) => item.id === actionId) || null;
+    const policy = action
+      ? config?.dataAreaPolicies?.[action.dataAreaPolicyId] || null
+      : null;
+    const schemaMode = String(policy?.schema || "readonly");
+    return {
+      readOnly: schemaMode === "readonly",
+      allowRename: schemaMode === "editable"
+    };
+  }
+
+  function normalizeSchemaItemsForPolicy(items, policy) {
+    const normalized = normalizeSimpleSchemaItems(items);
+    if (policy?.allowRename !== false) return normalized;
+    return normalized.map((item) => {
+      const canonicalName = String(item.origin_name || item.new_name || "").trim();
+      return {
+        ...item,
+        origin_name: canonicalName,
+        new_name: canonicalName
+      };
+    });
+  }
+
+  function normalizeSchemaTextForPolicy(value, policy) {
+    if (policy?.allowRename !== false) return String(value || "");
+    const parsed = parseSchemaText(value);
+    if (parsed.invalid) return String(value || "");
+    const normalizedItems = (Array.isArray(parsed.items) ? parsed.items : []).map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+      const nextItem = { ...item };
+      const canonicalName = String(nextItem.origin_name || nextItem.name_ja || nextItem.new_name || nextItem.name_en || "").trim();
+      if (canonicalName) {
+        nextItem.origin_name = canonicalName;
+        nextItem.new_name = canonicalName;
+      }
+      return nextItem;
+    });
+    return JSON.stringify(normalizedItems, null, 2);
   }
 
   function findDuplicateSchemaNames(values) {
@@ -689,12 +727,10 @@
     const fromForm = extractSchemaFieldNames(sourceNode?.form?.schema || "");
     if (fromForm.length) return fromForm;
 
-    const activeBridge = resolveActiveBridgeApi();
-    if (!activeBridge?.call) return [];
+    if (!resultsApi?.getSchema) return [];
 
     try {
-      const schemaDto = await activeBridge.call("result.getSchema", {
-        mode: String(state?.appMode || ""),
+      const schemaDto = await resultsApi.getSchema({
         step_id: String(sourceNode.stepName || "")
       });
       const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
@@ -1044,15 +1080,16 @@
     return { input: hiddenValue, wrapper, skipVarSuggest: true };
   }
 
-  function renderSchemaEditor({ node, field, current, state, onInputChanged, onCommitChanged }) {
+  function renderSchemaEditor({ node, field, current, state, config, onInputChanged, onCommitChanged }) {
     const parsed = parseSchemaText(current);
+    const schemaPolicy = getSchemaEditorPolicy(config, node);
     const canUseInputMode = canUseSchemaFormMode(parsed);
     const preferredModeRaw = String(node?.__schemaEditorMode || "").trim();
     const preferredMode = ["input", "json", "output", "log"].includes(preferredModeRaw) ? preferredModeRaw : "";
     const initialMode = preferredMode === "input"
       ? (canUseInputMode ? "input" : "json")
       : (preferredMode || (canUseInputMode ? "input" : "json"));
-    const wrapper = el("div", { class: "schema-editor" }, []);
+    const wrapper = el("div", { class: `schema-editor${schemaPolicy.readOnly ? " is-readonly" : ""}` }, []);
     const toolbar = el("div", { class: "schema-editor-toolbar" }, []);
     const toolbarMain = el("div", { class: "schema-editor-toolbar-main" }, []);
     const modeSwitch = el("div", { class: "schema-editor-mode" }, []);
@@ -1102,28 +1139,38 @@
       class: "schema-json-input",
       placeholder: '[\n  {\n    "origin_name": "受注日",\n    "new_name": "order_date",\n    "description": "受注日",\n    "ziz_datatype": "DATE"\n  }\n]',
       oninput: (e) => {
-        writeSchemaFormValue(e.target.value);
+        if (schemaPolicy.readOnly) return;
+        const nextValue = normalizeSchemaTextForPolicy(e.target.value, schemaPolicy);
+        if (nextValue !== e.target.value) e.target.value = nextValue;
+        writeSchemaFormValue(nextValue);
         if (onInputChanged) onInputChanged();
         syncHint();
       },
       onchange: (e) => {
-        writeSchemaFormValue(e.target.value);
+        if (schemaPolicy.readOnly) return;
+        const nextValue = normalizeSchemaTextForPolicy(e.target.value, schemaPolicy);
+        if (nextValue !== e.target.value) e.target.value = nextValue;
+        writeSchemaFormValue(nextValue);
         if (onCommitChanged) onCommitChanged();
         syncHint();
       }
     });
-    textarea.value = parsed.raw;
+    if (schemaPolicy.readOnly) textarea.readOnly = true;
+    textarea.value = normalizeSchemaTextForPolicy(parsed.raw, schemaPolicy);
 
     let mode = initialMode;
-    let formItems = normalizeSimpleSchemaItems(parsed.items);
+    let formItems = normalizeSchemaItemsForPolicy(parsed.items, schemaPolicy);
 
     function writeSchemaFormValue(value) {
+      if (schemaPolicy.readOnly) return;
       node.form[field.key] = value;
     }
 
     function syncNodeForm(value, committed) {
-      textarea.value = value;
-      writeSchemaFormValue(value);
+      if (schemaPolicy.readOnly) return;
+      const nextValue = normalizeSchemaTextForPolicy(value, schemaPolicy);
+      textarea.value = nextValue;
+      writeSchemaFormValue(nextValue);
       syncSchemaValidation();
       if (committed) {
         if (onCommitChanged) onCommitChanged();
@@ -1135,7 +1182,9 @@
     function collectFormItems() {
       return Array.from(rowsHost.querySelectorAll(".schema-form-row")).map((row, rowIndex) => ({
         origin_name: row.querySelector("[data-schema-key='origin_name']")?.value || "",
-        new_name: row.querySelector("[data-schema-key='new_name']")?.value || "",
+        new_name: schemaPolicy.allowRename
+          ? (row.querySelector("[data-schema-key='new_name']")?.value || "")
+          : (row.querySelector("[data-schema-key='origin_name']")?.value || ""),
         description: isSchemaSddDescription
           ? (row.querySelector("[data-schema-key='description']")?.value || "")
           : String(formItems[rowIndex]?.description || ""),
@@ -1149,20 +1198,21 @@
 
     async function syncSchemaAutoextractFromResult() {
       if (!shouldApplySchemaAutoextract(field)) return;
-      const activeBridge = resolveActiveBridgeApi();
-      if (!activeBridge?.call) return;
+      if (!resultsApi?.getSchema) return;
       const stepId = String(node?.stepName || "").trim();
       if (!stepId) return;
       const requestSeq = ++autoextractRequestSeq;
       try {
-        const schemaDto = await activeBridge.call("result.getSchema", {
-          mode: String(state?.appMode || ""),
+        const schemaDto = await resultsApi.getSchema({
           step_id: stepId
         });
         if (requestSeq !== autoextractRequestSeq) return;
         const columns = Array.isArray(schemaDto?.columns) ? schemaDto.columns : [];
         if (!columns.length) return;
-        const mergedItems = mergeSchemaItemsKeepingLocalState(formItems, columns);
+        const mergedItems = normalizeSchemaItemsForPolicy(
+          mergeSchemaItemsKeepingLocalState(formItems, columns),
+          schemaPolicy
+        );
         const before = JSON.stringify(normalizeSimpleSchemaItems(formItems));
         const after = JSON.stringify(normalizeSimpleSchemaItems(mergedItems));
         if (before === after) return;
@@ -1172,7 +1222,7 @@
       } catch (error) {
         if (requestSeq !== autoextractRequestSeq) return;
         const code = String(error?.code || "").trim();
-        if (code === "E_NOT_FOUND") return;
+        if (["E_NOT_FOUND", "E_RUN_NOT_FOUND", "E_RESULT_NOT_FOUND", "E_RESULT_NOT_READY"].includes(code)) return;
         console.warn("schema autoextract failed", error);
       }
     }
@@ -1218,7 +1268,7 @@
     function renderOutputPreview(previewDto) {
       const columns = Array.isArray(previewDto?.columns) ? previewDto.columns : [];
       const sourceRows = Array.isArray(previewDto?.rows) ? previewDto.rows : [];
-      const rows = sourceRows.slice(0, 200);
+      const rows = sourceRows.slice(0, 100);
       const schemaByName = buildSchemaByNameFromFormItems(formItems);
       outputPreviewHead.innerHTML = "";
       outputPreviewBody.innerHTML = "";
@@ -1261,8 +1311,8 @@
       }
 
       const rowCount = Number(previewDto?.row_count || sourceRows.length || 0);
-      const truncated = !!previewDto?.truncated || sourceRows.length > 200;
-      setOutputStatus(truncated ? `実行結果（先頭 ${Math.min(rows.length, 200)} / 全 ${rowCount} 行）` : `実行結果（${rowCount} 行）`);
+      const truncated = !!previewDto?.truncated || sourceRows.length > 100;
+      setOutputStatus(truncated ? `実行結果（先頭 ${Math.min(rows.length, 100)} / 全 ${rowCount} 行）` : `実行結果（${rowCount} 行）`);
       outputPreviewWrap.hidden = false;
     }
 
@@ -1281,8 +1331,7 @@
       const requestSeq = ++outputRequestSeq;
       setOutputStatus("実行結果を取得しています...");
       try {
-        const previewDto = await activeBridge.call("result.getPreview", {
-          mode: String(state?.appMode || ""),
+        const previewDto = await resultsApi.getPreview({
           step_id: stepId
         });
         if (requestSeq !== outputRequestSeq) return;
@@ -1290,8 +1339,12 @@
       } catch (error) {
         if (requestSeq !== outputRequestSeq) return;
         const code = String(error?.code || "").trim();
-        if (code === "E_NOT_FOUND") {
+        if (["E_NOT_FOUND", "E_RUN_NOT_FOUND", "E_RESULT_NOT_FOUND"].includes(code)) {
           setOutputStatus("未実行の為、データなし");
+          return;
+        }
+        if (code === "E_RESULT_NOT_READY") {
+          setOutputStatus("実行結果を準備しています。");
           return;
         }
         setOutputStatus(`データ取得に失敗しました。${error?.message ? ` ${error.message}` : ""}`);
@@ -1312,6 +1365,7 @@
       if (!formItems.length) {
         formItems.push({ origin_name: "", new_name: "", description: "", ziz_datatype: "STRING", is_disabled: false });
       }
+      formItems = normalizeSchemaItemsForPolicy(formItems, schemaPolicy);
       formItems.forEach((item, index) => {
         const isDisabled = !!item.is_disabled;
         const row = el("div", { class: `schema-form-row${isDisabled ? " is-disabled" : ""}${!isSchemaSddDescription ? " is-compact" : ""}` }, []);
@@ -1326,18 +1380,21 @@
         if (isDisabled) originInput.disabled = true;
         const newNameInput = el("input", {
           type: "text",
-          value: item.new_name,
+          value: schemaPolicy.allowRename ? item.new_name : item.origin_name,
           "data-schema-key": "new_name",
           placeholder: "新フィールド名",
           oninput: () => {
+            if (!schemaPolicy.allowRename || schemaPolicy.readOnly) return;
             formItems = collectFormItems();
             syncNodeForm(stringifySchemaItems(formItems), false);
           },
           onchange: () => {
+            if (!schemaPolicy.allowRename || schemaPolicy.readOnly) return;
             formItems = collectFormItems();
             syncNodeForm(stringifySchemaItems(formItems), true);
           }
         });
+        if (!schemaPolicy.allowRename || schemaPolicy.readOnly) newNameInput.readOnly = true;
         if (isDisabled) newNameInput.disabled = true;
         const descInput = isSchemaSddDescription
           ? el("input", {
@@ -1346,24 +1403,28 @@
             "data-schema-key": "description",
             placeholder: "説明・日本語名",
             oninput: () => {
+              if (schemaPolicy.readOnly) return;
               formItems = collectFormItems();
               syncNodeForm(stringifySchemaItems(formItems), false);
             },
             onchange: () => {
+              if (schemaPolicy.readOnly) return;
               formItems = collectFormItems();
               syncNodeForm(stringifySchemaItems(formItems), true);
             }
           })
           : null;
+        if (descInput && schemaPolicy.readOnly) descInput.readOnly = true;
         if (descInput && isDisabled) descInput.disabled = true;
         const typeSelect = el("select", {
           "data-schema-key": "ziz_datatype",
           onchange: () => {
+            if (schemaPolicy.readOnly) return;
             formItems = collectFormItems();
             syncNodeForm(stringifySchemaItems(formItems), true);
           }
         });
-        if (isDisabled) typeSelect.disabled = true;
+        if (isDisabled || schemaPolicy.readOnly) typeSelect.disabled = true;
         SIMPLE_SCHEMA_TYPES.forEach((type) => {
           const opt = el("option", { value: type }, [document.createTextNode(type)]);
           if (type === item.ziz_datatype) opt.selected = true;
@@ -1375,6 +1436,7 @@
           title: isDisabled ? "復元" : "削除",
           "aria-label": isDisabled ? "復元" : "削除",
           onclick: () => {
+            if (schemaPolicy.readOnly) return;
             formItems[index].is_disabled = !isDisabled;
             renderFormRows();
             syncNodeForm(stringifySchemaItems(formItems), true);
@@ -1386,6 +1448,7 @@
               alt: "",
               class: "schema-remove-row-btn__icon"
             })]);
+        if (schemaPolicy.readOnly) removeBtn.disabled = true;
         row.appendChild(originInput);
         row.appendChild(newNameInput);
         if (descInput) row.appendChild(descInput);
@@ -1451,7 +1514,7 @@
           syncHint();
           return;
         }
-        formItems = normalizeSimpleSchemaItems(currentParsed.items);
+        formItems = normalizeSchemaItemsForPolicy(currentParsed.items, schemaPolicy);
         renderFormRows();
       }
       mode = nextMode;
@@ -1477,10 +1540,12 @@
     }
 
     addRowBtn.addEventListener("click", () => {
+      if (schemaPolicy.readOnly) return;
       formItems.push({ origin_name: "", new_name: "", description: "", ziz_datatype: "STRING", is_disabled: false });
       renderFormRows();
       syncNodeForm(stringifySchemaItems(formItems), true);
     });
+    if (schemaPolicy.readOnly) addRowBtn.disabled = true;
 
     inputBtn.addEventListener("click", () => {
       setMode("input");
@@ -1787,7 +1852,17 @@
     return [...invalidRefs, ...missingRefs];
   }
 
-  function renderField({ node, field, upstreamSteps, availableVariableNames, hiddenBindings, state, config, onStateChanged }) {
+  function renderField({
+    node,
+    field,
+    upstreamSteps,
+    availableVariableNames,
+    hiddenBindings,
+    state,
+    config,
+    onStateChanged,
+    plainSchemaEditor = false
+  }) {
     if (!isFieldVisibleForNode(node, field)) {
       return el("div", { class: "row", hidden: "hidden" }, []);
     }
@@ -1857,12 +1932,17 @@
       inputEl = rendered.input;
       wrapper = rendered.wrapper;
       field.__skipVarSuggest = !!rendered.skipVarSuggest;
-    } else if (field.kind === "textarea" && (field.key === "schema" || field.key === "schema_add_description")) {
+    } else if (
+      field.kind === "textarea"
+      && (field.key === "schema" || field.key === "schema_add_description")
+      && !plainSchemaEditor
+    ) {
       const rendered = renderSchemaEditor({
         node,
         field,
         current,
         state,
+        config,
         onInputChanged: notifyLocalChanged,
         onCommitChanged: notifyCommitted
       });
@@ -2117,7 +2197,8 @@
             const type = field.kind === "dir" ? "file.pickFolder" : "file.pickFile";
             const currentValue = getFieldCurrentValue(node, field);
             const workspaceTabId = String(
-              window.zizEmbeddedApi?.getWorkspaceTabId?.()
+              node.docSessionId
+              || window.zizEmbeddedApi?.getWorkspaceTabId?.()
               || window.__zizWorkspaceTabId?.()
               || "__standalone__"
             ).trim();
@@ -2306,6 +2387,8 @@
   }
 
   const uiFields = { renderField, getFieldReferenceWarnings, isFieldVisibleForNode };
-  window.uiFields = uiFields;
+  const packagesOut = window.zizPackages = window.zizPackages || {};
+  const uiOut = packagesOut.ui = packagesOut.ui || {};
+  uiOut.fields = uiFields;
 })();
 

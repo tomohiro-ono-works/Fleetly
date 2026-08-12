@@ -9,7 +9,7 @@
   .panel { padding: 12px; }
   .flow-column { width: 88px; min-width: 88px; }
   .flow-edge { width: 36px; min-width: 36px; }
-  #flowchart { min-width: 760px; }
+  body[data-shell-page="dataflow"] #flowchart { min-width: 760px; }
 }
 
 @media (max-width: 640px) {
@@ -36,4 +36,3 @@
     border-radius: 16px;
   }
 }
-

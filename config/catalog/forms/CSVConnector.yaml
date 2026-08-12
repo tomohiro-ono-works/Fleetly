@@ -1,0 +1,105 @@
+forms:
+  - form_schema_id: 'CSVConnector.read_csv'
+    fields:
+      - key: 'file_path'
+        label: 'ファイル'
+        kind: 'file'
+        required: true
+        accept: '.csv,.tsv,.txt'
+      - key: 'encoding'
+        label: '文字コード'
+        kind: 'combo'
+        required: true
+        default: 'utf8'
+        options:
+          - 'utf8'
+          - 'shift_jis'
+          - 'cp932'
+      - key: 'delimiter'
+        label: '区切り文字'
+        kind: 'combo'
+        required: true
+        default: ','
+        allowCustom: false
+        options:
+          - value: ','
+            label: 'カンマ (,)'
+          - value: '\t'
+            label: 'タブ (TAB)'
+          - value: ';'
+            label: 'セミコロン (;)'
+          - value: '|'
+            label: 'パイプ (|)'
+      - key: 'header_row'
+        label: 'ヘッダ行'
+        kind: 'number'
+        required: true
+        default: 1
+      - key: 'data_start_row'
+        label: 'データ開始行'
+        kind: 'number'
+        required: true
+        default: 2
+      - key: 'chunk_size'
+        label: '分割行数'
+        kind: 'number'
+        required: false
+        default: 50000
+      - key: 'date_cleansing'
+        label: '日付クレンジング'
+        kind: 'checkbox'
+        required: false
+        default: true
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+  - form_schema_id: 'CSVConnector.write_csv'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'output_folder'
+        label: '出力フォルダ'
+        kind: 'dir'
+        required: true
+      - key: 'file_name'
+        label: '出力ファイル名'
+        kind: 'text'
+        required: true
+        default: 'output.csv'
+        allowVars: true
+        placeholder: '例: result.csv'
+      - key: 'encoding'
+        label: '文字コード'
+        kind: 'combo'
+        required: true
+        default: 'utf8'
+        options:
+          - 'utf8'
+          - 'shift_jis'
+          - 'cp932'
+      - key: 'delimiter'
+        label: '区切り文字'
+        kind: 'combo'
+        required: true
+        default: ','
+        allowCustom: false
+        options:
+          - value: ','
+            label: 'カンマ (,)'
+          - value: '\t'
+            label: 'タブ (TAB)'
+          - value: ';'
+            label: 'セミコロン (;)'
+          - value: '|'
+            label: 'パイプ (|)'
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true

@@ -2,21 +2,21 @@
   const searchParams = new URLSearchParams(window.location.search);
   if (searchParams.get('embedded') === '1') return;
   const body = document.body;
-  const shell = document.querySelector('.app-shell');
-  const appMain = shell?.querySelector('.app-main');
+  const shell = document.querySelector('.zui-shell');
+  const appMain = shell?.querySelector('.zui-shell__main');
+  const mainHost = appMain?.querySelector('[data-shell-region="main"]');
   const sidebar = shell?.querySelector('.sidebar');
-  if (!body || !shell || !appMain || !sidebar) return;
+  if (!body || !shell || !appMain || !mainHost || !sidebar) return;
 
   const page = String(body.dataset.shellPage || '');
   const isFlowPage = page === 'dataflow';
   if (!isFlowPage) return;
-  if (appMain.querySelector('.workspace-layout')) return;
+  if (mainHost.querySelector('.workspace-layout')) return;
 
-  const main = appMain.querySelector('main');
+  const main = mainHost.querySelector('main');
   if (!main) return;
   const rightSidebar = document.getElementById('rightSidebar');
 
-  shell.classList.remove('app-shell--with-right-sidebar');
   body.classList.add('workspace-enabled');
 
   const workspaceLayout = document.createElement('div');
@@ -53,6 +53,10 @@
   workspaceRegion.appendChild(panes);
   workspaceLayout.appendChild(globalLeftArea);
   workspaceLayout.appendChild(workspaceRegion);
+  if (rightSidebar) {
+    workspaceLayout.classList.add('has-right-sidebar');
+    workspaceLayout.appendChild(rightSidebar);
+  }
 
   const hiddenHost = document.createElement('div');
   hiddenHost.className = 'workspace-flow-hidden-host';
@@ -62,12 +66,9 @@
   dataflowView.dataset.viewType = 'dataflow';
   dataflowView.dataset.tabId = 'tab-dataflow';
   dataflowView.appendChild(main);
-  if (rightSidebar) dataflowView.appendChild(rightSidebar);
   hiddenHost.appendChild(dataflowView);
 
-  appMain.innerHTML = '';
-  appMain.appendChild(workspaceLayout);
-  appMain.appendChild(hiddenHost);
+  mainHost.replaceChildren(workspaceLayout, hiddenHost);
 
   window.zizWorkspaceShell = {
     appShell: shell,

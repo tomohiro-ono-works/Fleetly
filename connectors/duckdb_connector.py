@@ -1,7 +1,7 @@
 ﻿from __future__ import annotations
 
 import os
-from datetime import datetime
+import re
 from typing import Any, Optional
 
 import pandas as pd
@@ -29,12 +29,17 @@ class DuckConnector(BaseConnector):
             db_file = self._require_text(params.get("db_file"), "db_file")
             sql_file = self._require_text(params.get("sql_file"), "sql_file")
             encoding = str(params.get("encoding") or "utf-8")
-            return self.execute_sql_file(db_file=db_file, sql_file=sql_file, encoding=encoding)
+            return self.execute_sql_file(
+                db_file=db_file,
+                sql_file=sql_file,
+                encoding=encoding,
+                schema=params.get("schema"),
+            )
 
         if action == "execute_sql":
             db_file = self._require_text(params.get("db_file"), "db_file")
             sql = self._require_text(params.get("sql"), "sql")
-            return self.execute_sql(db_file=db_file, sql=sql)
+            return self.execute_sql(db_file=db_file, sql=sql, schema=params.get("schema"))
 
         if action == "create_table":
             db_file = self._require_text(params.get("db_file"), "db_file")
@@ -48,6 +53,72 @@ class DuckConnector(BaseConnector):
             )
 
         raise ValueError(f"Unknown action: {action}")
+
+    def dry_run(
+        self,
+        action: str,
+        params: dict[str, Any],
+        context: dict[str, Any],
+    ) -> dict[str, Any]:
+        if action not in {"execute_sql", "execute_sql_file"}:
+            return super().dry_run(action, params, context)
+        if duckdb is None:
+            raise ImportError("duckdb がインストールされていません。")
+        db_file = self._require_text(params.get("db_file"), "db_file")
+        if action == "execute_sql_file":
+            sql_file = self._require_text(params.get("sql_file"), "sql_file")
+            normalized_sql_file = self._normalize_abspath(sql_file)
+            if not os.path.isfile(normalized_sql_file):
+                raise FileNotFoundError(
+                    f"SQLファイルが見つかりません: {normalized_sql_file}"
+                )
+            encoding = str(params.get("encoding") or "utf-8")
+            with open(
+                normalized_sql_file,
+                "r",
+                encoding=encoding,
+            ) as handle:
+                sql = handle.read()
+        else:
+            sql = self._require_text(params.get("sql"), "sql")
+        statement = re.sub(
+            r"(?s)^\s*(?:--[^\n]*\n|/\*.*?\*/\s*)*",
+            "",
+            sql,
+        )
+        first_keyword = (
+            statement.split(None, 1)[0].upper()
+            if statement.strip()
+            else ""
+        )
+        if first_keyword not in {"SELECT", "WITH", "VALUES"}:
+            normalized_db_file = self._normalize_abspath(db_file)
+            if not os.path.exists(normalized_db_file):
+                raise FileNotFoundError(
+                    f"DBファイルが見つかりません: {normalized_db_file}"
+                )
+            return {
+                "kind": "dry_run",
+                "strategy": "duckdb_input_validation",
+                "executed": False,
+                "validated": True,
+                "scope": ["params", "db_file", "sql_presence"],
+                "not_validated": ["sql_execution", "result_schema"],
+            }
+        connection, normalized_db_file = self._connect(db_file)
+        try:
+            rows = connection.execute(f"EXPLAIN {sql}").fetchall()
+        finally:
+            connection.close()
+        return {
+            "kind": "dry_run",
+            "strategy": "duckdb_explain",
+            "executed": False,
+            "validated": True,
+            "db_file": normalized_db_file,
+            "plan_lines": [str(row[-1]) for row in rows[:100]],
+            "scope": ["params", "db_file", "sql_parse", "query_plan"],
+        }
 
     @staticmethod
     def _require_text(value: Any, field_name: str) -> str:
@@ -98,40 +169,36 @@ class DuckConnector(BaseConnector):
         conn = duckdb.connect(db_file)
         conn.close()
         normalized_db_file = self._normalize_abspath(db_file)
-        database_name = os.path.splitext(os.path.basename(normalized_db_file))[0]
+        return self.build_execution_metadata(
+            target=normalized_db_file,
+            path=normalized_db_file,
+        )
 
-        payload = {
-            "file_path": normalized_db_file,
-            "db_file": os.path.basename(normalized_db_file),
-            "database": database_name,
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        return self.attach_dataframe_schema(self.to_dataframe(payload))
-
-    def execute_sql_file(self, db_file: str, sql_file: str, encoding: str = "utf-8") -> Optional[pd.DataFrame]:
+    def execute_sql_file(
+        self,
+        db_file: str,
+        sql_file: str,
+        encoding: str = "utf-8",
+        schema: Any = None,
+    ) -> Optional[pd.DataFrame]:
         normalized_sql_file = self._normalize_abspath(sql_file)
         if not os.path.exists(normalized_sql_file):
             raise FileNotFoundError(f"SQLファイルが見つかりません: {normalized_sql_file}")
         with open(normalized_sql_file, "r", encoding=encoding) as f:
             sql = f.read()
-        return self.execute_sql(db_file=db_file, sql=sql)
+        return self.execute_sql(db_file=db_file, sql=sql, schema=schema)
 
-    def execute_sql(self, db_file: str, sql: str) -> Optional[pd.DataFrame]:
+    def execute_sql(self, db_file: str, sql: str, schema: Any = None) -> Optional[pd.DataFrame]:
         conn, normalized_db_file = self._connect(db_file)
         try:
             cursor = conn.execute(str(sql))
             if cursor.description is None:
-                return self.attach_dataframe_schema(
-                    self.to_dataframe(
-                        {
-                            "db_file": normalized_db_file,
-                            "status": "executed",
-                            "executed_at": datetime.now().isoformat(timespec="seconds"),
-                        }
-                    )
+                return self.build_execution_metadata(
+                    target=normalized_db_file,
+                    path=normalized_db_file,
                 )
             dataframe = cursor.df()
-            return self.attach_dataframe_schema(dataframe)
+            return self.attach_dataframe_schema(dataframe, schema_override=schema, allow_rename=False)
         finally:
             conn.close()
 
@@ -149,7 +216,6 @@ class DuckConnector(BaseConnector):
         try:
             conn.register("_ziz_input_df", dataframe)
             conn.execute(f"CREATE OR REPLACE TABLE \"{normalized_table_name}\" AS SELECT * FROM _ziz_input_df")
-            row_count = int(len(dataframe.index))
         finally:
             try:
                 conn.unregister("_ziz_input_df")
@@ -157,11 +223,7 @@ class DuckConnector(BaseConnector):
                 pass
             conn.close()
 
-        payload = {
-            "db_file": normalized_db_file,
-            "table_name": normalized_table_name,
-            "rows": row_count,
-            "source_step": input_data,
-            "created_at": datetime.now().isoformat(timespec="seconds"),
-        }
-        return self.attach_dataframe_schema(self.to_dataframe(payload))
+        return self.build_execution_metadata(
+            target=f"{normalized_db_file}/{normalized_table_name}",
+            path=normalized_db_file,
+        )

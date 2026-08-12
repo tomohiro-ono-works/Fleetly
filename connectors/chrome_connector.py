@@ -37,12 +37,7 @@ class ChromeConnector(BaseConnector):
         except OSError as error:
             raise ValueError("Chrome の起動に失敗しました。") from error
 
-        result = self.to_dataframe([{
-            "status": "success",
-            "action": self.ACTION_OPEN_IN_CHROME,
-            "url": url,
-            "browser": "chrome",
-        }])
+        result = self.build_execution_metadata(target=url, path=url)
         output_var = str(params.get("output_var") or "").strip()
         if output_var:
             context[output_var] = result

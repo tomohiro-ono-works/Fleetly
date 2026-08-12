@@ -1,0 +1,16 @@
+form_schema_id: 'PythonConnector.execute_python'
+fields:
+  - key: 'script'
+    label: 'スクリプト'
+    kind: 'textarea'
+    codeLanguage: 'python'
+    required: true
+    allowVars: true
+    default: |-
+      def main():
+          output = None
+          return output
+    placeholder: |-
+      def main():
+          output = None
+          return output

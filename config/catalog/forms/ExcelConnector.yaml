@@ -1,0 +1,114 @@
+forms:
+  - form_schema_id: 'ExcelConnector.read_excel'
+    fields:
+      - key: 'file_path'
+        label: 'ファイル'
+        kind: 'file'
+        required: true
+      - key: 'sheet_name'
+        label: 'シート名'
+        kind: 'text'
+        required: true
+        default: 'シート1'
+        allowVars: true
+      - key: 'header_row'
+        label: 'ヘッダ行'
+        kind: 'number'
+        required: true
+        default: 1
+      - key: 'data_start_row'
+        label: 'データ開始行'
+        kind: 'number'
+        required: true
+        default: 2
+      - key: 'chunk_size'
+        label: '分割行数'
+        kind: 'number'
+        required: false
+        default: 50000
+      - key: 'date_cleansing'
+        label: '日付クレンジング'
+        kind: 'checkbox'
+        required: false
+        default: true
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+  - form_schema_id: 'ExcelConnector.write_excel'
+    fields:
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+      - key: 'output_folder'
+        label: '出力フォルダ'
+        kind: 'dir'
+        required: true
+      - key: 'file_name'
+        label: '出力ファイル名'
+        kind: 'text'
+        required: true
+        default: 'output.xlsx'
+        allowVars: true
+        placeholder: '例: result.xlsx'
+      - key: 'sheet_name'
+        label: 'シート名'
+        kind: 'text'
+        required: true
+        default: 'シート1'
+        allowVars: true
+      - key: 'mode'
+        label: '書き込みモード'
+        kind: 'combo'
+        required: true
+        default: 'create_or_replace'
+        options:
+          - 'create_or_replace'
+          - 'create_or_insert'
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+  - form_schema_id: 'ExcelConnector.read_excel_range'
+    fields:
+      - key: 'file_path'
+        label: 'ファイル'
+        kind: 'file'
+        required: true
+      - key: 'sheet_name'
+        label: 'シート名'
+        kind: 'text'
+        required: true
+        default: 'シート1'
+        allowVars: true
+      - key: 'cell_range'
+        label: '読込範囲'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: A1:D100'
+      - key: 'header_row'
+        label: 'ヘッダ行(範囲内)'
+        kind: 'number'
+        required: true
+        default: 1
+      - key: 'data_start_row'
+        label: 'データ開始行(範囲内)'
+        kind: 'number'
+        required: true
+        default: 2
+      - key: 'date_cleansing'
+        label: '日付クレンジング'
+        kind: 'checkbox'
+        required: false
+        default: true
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true

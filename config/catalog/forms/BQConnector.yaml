@@ -1,0 +1,106 @@
+forms:
+  - form_schema_id: 'BQConnector.execute_sql'
+    fields:
+      - key: 'google_auth'
+        label: '認証'
+        kind: 'google-auth-login'
+        buttonLabel: 'Googleログイン'
+      - key: 'project_id'
+        label: 'プロジェクト'
+        kind: 'combo'
+        default: 'defult_project1'
+        options:
+          - 'defult_project1'
+          - 'defult_project2'
+        required: true
+      - key: 'sql'
+        label: 'SQL'
+        kind: 'textarea'
+        codeLanguage: 'sql'
+        required: true
+        allowVars: true
+        placeholder: |-
+          SELECT ...
+          FROM ...
+      - key: 'schema'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+        schema_autoextract: true
+  - form_schema_id: 'BQConnector.execute_sql_file'
+    fields:
+      - key: 'google_auth'
+        label: '認証'
+        kind: 'google-auth-login'
+        buttonLabel: 'Googleログイン'
+      - key: 'project_id'
+        label: 'プロジェクト'
+        kind: 'combo'
+        default: 'defult_project1'
+        options:
+          - 'defult_project1'
+          - 'defult_project2'
+        required: true
+      - key: 'sql_file'
+        label: 'SQLファイル'
+        kind: 'file'
+        required: true
+      - key: 'encoding'
+        label: '文字コード'
+        kind: 'combo'
+        required: true
+        default: 'utf8'
+        options:
+          - 'utf8'
+          - 'shift_jis'
+  - form_schema_id: 'BQConnector.load_data'
+    fields:
+      - key: 'google_auth'
+        label: '認証'
+        kind: 'google-auth-login'
+        buttonLabel: 'Googleログイン'
+      - key: 'project_id'
+        label: 'プロジェクト'
+        kind: 'combo'
+        default: 'defult_project1'
+        options:
+          - 'defult_project1'
+          - 'defult_project2'
+        required: true
+      - key: 'dataset_id'
+        label: 'データセット'
+        kind: 'combo'
+        default: 'defult_dataset1'
+        options:
+          - 'defult_dataset1'
+          - 'defult_dataset2'
+        required: true
+      - key: 'table_id'
+        label: 'テーブル'
+        kind: 'text'
+        required: true
+        default: 'defult_table'
+        allowVars: true
+      - key: 'input_data'
+        label: '入力データ'
+        kind: 'text'
+        required: true
+        allowVars: true
+        placeholder: '例: {{step1}}'
+        schema_autoload: true
+        schema_autoload_target: 'schema_add_description'
+      - key: 'write_disposition'
+        label: '書き込みモード'
+        kind: 'combo'
+        required: true
+        default: 'create_or_replace'
+        options:
+          - 'create_or_replace'
+          - 'create_or_insert'
+      - key: 'schema_add_description'
+        label: 'スキーマ定義'
+        kind: 'textarea'
+        required: false
+        allowVars: true
+        exportKey: 'schema'

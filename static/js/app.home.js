@@ -1,12 +1,12 @@
 (function () {
   const packages = window.zizPackages || {};
   const corePkg = packages.core || {};
-  const uiPkg = packages.ui || {};
   const bridgeApi = corePkg.bridge || null;
+  const workspaceApi = packages.app?.workspace || null;
+  const documentsApi = packages.app?.documents || null;
+  const homeView = packages.app?.homeView || null;
   const dialogApi = corePkg.dialog || null;
-  const shellApi = window.zizShell || {};
-  const renderer = uiPkg.renderer || {};
-  const renderApp = renderer.renderApp;
+  const shellApi = packages.app?.shell || {};
   const STORAGE_KEY_PENDING_FLOW = "ziz.pendingFlow.v1";
   const STORAGE_KEY_PENDING_SIDEBAR_ACTION = "ziz.workspace.pendingSidebarAction.v1";
   const RECENT_ROOTS_CONFIG_SCOPE = "config";
@@ -29,10 +29,6 @@
     refreshToken: 0,
   };
 
-  const homeState = {
-    appMode: "dataflow",
-  };
-
   function showDialog(message, options = {}) {
     if (dialogApi?.show) {
       dialogApi.show(message, options);
@@ -44,8 +40,14 @@
     const message = bridgeApi?.unavailableMessage?.();
     return String(message || "ブリッジ未接続です。再読み込みしてください。");
   }
+  const homeDocSessionId = (() => {
+    const randomPart = window.crypto?.randomUUID?.().replace(/-/g, "")
+      || `${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+    return `docsession_${randomPart}`;
+  })();
+
   function resolveWorkspaceTabId() {
-    return "__home__";
+    return homeDocSessionId;
   }
 
   function showFatal(message, err) {
@@ -56,6 +58,11 @@
     box.className = "flow-fallback";
     box.textContent = `${message}${err ? ` (${err.message || err})` : ""}`;
     host.prepend(box);
+  }
+
+  if (!workspaceApi || !documentsApi) {
+    showFatal("workspace／documents adapterが読み込まれていません。");
+    return;
   }
 
   function writeSessionJson(key, value) {
@@ -160,7 +167,7 @@
   async function loadRecentProjects() {
     if (!bridgeApi?.available?.()) return [];
     try {
-      const payload = await bridgeApi.call("workspace.readText", {
+      const payload = await workspaceApi.readText({
         scope: RECENT_ROOTS_CONFIG_SCOPE,
         rel_path: RECENT_ROOTS_CONFIG_PATH,
       });
@@ -214,13 +221,13 @@
 
   async function ensureWorkflowsRoot() {
     if (!bridgeApi?.available?.()) return "";
-    const rootStatus = await bridgeApi.call("workspace.getRoot", {});
+    const rootStatus = await workspaceApi.getRoot();
     const configRoot = String(rootStatus?.config_path || "").trim();
     const baseDir = getParentDir(configRoot);
     const workflowsPath = joinPath(baseDir, WORKFLOWS_DIR_NAME);
     if (workflowsPath) {
       try {
-        const applied = await bridgeApi.call("workspace.setRoot", { root_path: workflowsPath });
+        const applied = await workspaceApi.setRoot({ root_path: workflowsPath });
         return String(applied?.root_path || workflowsPath);
       } catch (error) {
         if (String(error?.code || "") !== "E_NOT_FOUND") {
@@ -228,28 +235,25 @@
         }
       }
     }
-    const picked = await bridgeApi.call("workspace.pickRoot", {
+    const picked = await workspaceApi.pickRoot({
       title: "プロジェクトルートを選択",
       current_value: workflowsPath || String(rootStatus?.root_path || ""),
     });
     if (!picked?.selected) return "";
-    const applied = await bridgeApi.call("workspace.setRoot", { root_path: String(picked.root_path || "") });
+    const applied = await workspaceApi.setRoot({ root_path: String(picked.root_path || "") });
     return String(applied?.root_path || picked.root_path || "");
   }
 
   function renderHome() {
-    if (typeof renderApp !== "function") {
-      showFatal("renderer が見つかりません");
+    if (typeof homeView?.render !== "function") {
+      showFatal("home viewが見つかりません");
       return;
     }
-    renderApp({
+    homeView.render({
       flowRoot,
       detailRoot,
-      state: homeState,
-      config: {},
-      onStateChanged: renderHome,
-      homeViewModel,
-      onHomeAction: handleHomeAction
+      model: homeViewModel,
+      onAction: handleHomeAction
     });
   }
 
@@ -264,7 +268,7 @@
     try {
       const [recentProjects, templatePayload] = await Promise.all([
         loadRecentProjects(),
-        bridgeApi.call("flow.list", { scope: "local", kind: "template" })
+        documentsApi.list({ scope: "local", kind: "template" })
       ]);
       if (token !== homeViewModel.refreshToken) return;
       homeViewModel.recentProjects = Array.isArray(recentProjects) ? recentProjects.slice(0, 10) : [];
@@ -285,8 +289,11 @@
     storePendingImportedFlow({
       mode,
       file_name: String(payload.file_name || ""),
-      flow: payload.flow,
-      hidden_bindings: payload.hidden_bindings || {}
+      document_ref: String(payload.document_ref || ""),
+      doc_session_id: String(payload.doc_session_id || resolveWorkspaceTabId()),
+      document: payload.document,
+      hidden_bindings: payload.hidden_bindings || {},
+      mtime_ns: String(payload.mtime_ns || "")
     });
     navigateToUrl(buildPageUrlForMode(mode));
   }
@@ -311,38 +318,43 @@
         if (kind === "recent") {
           const rootPath = normalizeRootPath(action?.item?.root_path || action?.item?.display_hint || "");
           if (!rootPath) return;
-          await bridgeApi.call("workspace.setRoot", { root_path: rootPath });
+          await workspaceApi.setRoot({ root_path: rootPath });
           storePendingSidebarAction("explorer");
           navigateToUrl(buildPageUrlForMode("dataflow"));
           return;
         }
-        const token = String(action?.item?.flow_token || "");
+        const token = String(action?.item?.document_token || "");
         if (!token) return;
         if (kind === "template") {
           const rootPath = await ensureWorkflowsRoot();
           if (!rootPath) return;
-          const loaded = await bridgeApi.call("flow.load", {
-            ref: token,
-            workspace_tab_id: resolveWorkspaceTabId(),
+          const loaded = await documentsApi.load({
+            document_token: token,
+            doc_session_id: resolveWorkspaceTabId(),
           });
           if (!loaded || loaded.selected === false) return;
           const fileName = buildAutoSavedTemplateFileName(loaded);
-          await bridgeApi.call("flow.save", {
+          const savedTemplate = await documentsApi.save({
             mode: String(loaded.mode || "dataflow"),
             file_name: fileName,
-            flow: loaded.flow,
+            document_ref: loaded.document_ref,
+            document: loaded.document,
             scope: "root",
             rel_path: fileName,
-            workspace_tab_id: resolveWorkspaceTabId(),
+            doc_session_id: resolveWorkspaceTabId(),
           });
           loaded.file_name = fileName;
+          loaded.document_ref = String(savedTemplate?.document_ref || loaded.document_ref || "");
+          loaded.mtime_ns = String(savedTemplate?.mtime_ns || "");
+          loaded.doc_session_id = resolveWorkspaceTabId();
           openLoadedFlow(loaded);
           return;
         }
-        const payload = await bridgeApi.call("flow.load", {
-          ref: token,
-          workspace_tab_id: resolveWorkspaceTabId(),
+        const payload = await documentsApi.load({
+          document_token: token,
+          doc_session_id: resolveWorkspaceTabId(),
         });
+        payload.doc_session_id = resolveWorkspaceTabId();
         openLoadedFlow(payload);
       } catch (err) {
         showDialog(`読み込みに失敗しました。\n${err?.message || err}`, { kind: "error", title: "読込エラー" });
@@ -355,10 +367,10 @@
       showDialog(getBridgeUnavailableMessage(), { kind: "info", title: "インポート" });
       return;
     }
-    const payload = await bridgeApi.call("flow.load", {
-      ref: null,
-      workspace_tab_id: resolveWorkspaceTabId(),
+    const payload = await documentsApi.load({
+      doc_session_id: resolveWorkspaceTabId(),
     });
+    payload.doc_session_id = resolveWorkspaceTabId();
     openLoadedFlow(payload);
   }
 
